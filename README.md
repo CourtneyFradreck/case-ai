@@ -1,4 +1,6 @@
-# CASE
+# CASE — Cognitive Assistant for Scheduling and Execution
+
+> C.A.S.E inspired by one of the AI systems from Interstellar
 
 **A daily Telegram brief that tells me where I left off.**
 
