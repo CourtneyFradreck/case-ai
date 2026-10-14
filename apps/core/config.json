@@ -1,0 +1,7 @@
+{
+  "idlePrDays": 3,
+  "staleBranchDays": 7,
+  "ignoreBranchPrefixes": ["dependabot/", "renovate/"],
+  "ignoreAuthors": ["dependabot[bot]", "github-actions[bot]"],
+  "maxBriefChars": 3800
+}
