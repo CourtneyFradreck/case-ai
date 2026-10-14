@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** Milestone 0 (skeleton). Not usable yet. This is a personal tool built in the open, not a product.
+> **Status:** Milestone 0 (skeleton) complete. Not usable yet. This is a personal tool built in the open, not a product.
 
 ---
 
@@ -94,7 +94,7 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
 ## Roadmap
 
-- [ ] **M0 Skeleton:** stack deployed, `/brief` replies hello
+- [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
 - [ ] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [ ] **M2 Model brief:** model writes the brief, validator checks every citation
 - [ ] **M3 Intent:** `NEXT.md` parsing, focus buttons
