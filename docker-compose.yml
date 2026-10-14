@@ -37,6 +37,8 @@ services:
       N8N_PROTOCOL: https
       WEBHOOK_URL: https://${N8N_HOST}/
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
       GENERIC_TIMEZONE: Africa/Harare
       TZ: Africa/Harare
     volumes:
