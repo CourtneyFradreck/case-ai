@@ -19,6 +19,8 @@ services:
     environment:
       DATABASE_URL: postgres://case:${POSTGRES_PASSWORD}@postgres:5432/case
       CASE_API_KEY: ${CASE_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      CASE_REPOS: ${CASE_REPOS}
       TZ: Africa/Harare
     depends_on:
       postgres:
