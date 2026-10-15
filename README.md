@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** Milestone 0 (skeleton) complete. Not usable yet. This is a personal tool built in the open, not a product.
+> **Status:** M1 implemented; five-morning verification trial in progress. M2 model-generated briefs are under development on a separate branch.
 
 ---
 
