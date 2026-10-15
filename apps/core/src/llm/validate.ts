@@ -40,7 +40,7 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
   for (const f of allFindings) {
     if (!sent.has(f.id)) {
       brief[f.severity === "info" ? "yesterday" : "attention"].push({ text: f.summary, sources: [f] });
-    } else if (f.severity === "high" && !cited.has(f.id)) {
+    } else if ((f.severity === "high" || f.severity === "medium") && !cited.has(f.id)) {
       brief.attention.push({ text: f.summary, sources: [f] });
       addedBack.push(f.id);
     }

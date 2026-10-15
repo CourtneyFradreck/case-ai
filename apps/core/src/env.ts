@@ -4,14 +4,18 @@ function need(name: string): string {
   return v;
 }
 
-const briefMode = process.env.CASE_BRIEF_MODE ?? "rules";
+let briefMode = (process.env.CASE_BRIEF_MODE ?? "rules").trim();
 if (briefMode !== "rules" && briefMode !== "command" && briefMode !== "all") {
-  throw new Error("Invalid CASE_BRIEF_MODE: expected rules, command or all");
+  console.warn("Invalid CASE_BRIEF_MODE: expected rules, command or all; using rules.");
+  briefMode = "rules";
+} else if (briefMode !== "rules" && !process.env.GEMINI_API_KEY?.trim()) {
+  console.warn("Missing GEMINI_API_KEY for model brief mode; using rules.");
+  briefMode = "rules";
 }
 
 export const env = {
   briefMode,
-  geminiApiKey: briefMode === "rules" ? process.env.GEMINI_API_KEY : need("GEMINI_API_KEY"),
+  geminiApiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
   databaseUrl: need("DATABASE_URL"),
   apiKey: need("CASE_API_KEY"),

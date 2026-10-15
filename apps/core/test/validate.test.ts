@@ -46,6 +46,16 @@ describe("brief validation", () => {
     const result = validate(output({ yesterday: [], focus: [{ ...item, reason: "It failed" }] }), new Map([["F1", high]]), [high]);
     expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [] } });
   });
+  it("adds an uncited medium finding as a plain attention line and records its ID", () => {
+    const medium = finding({ id: "medium", severity: "medium", summary: "New comment from tendai" });
+    const result = validate(output({ yesterday: [] }), new Map([["F1", medium]]), [medium]);
+    expect(result).toEqual({ ok: true, brief: { yesterday: [], attention: [{ text: medium.summary, sources: [medium] }], focus: [] }, dropped: [], addedBack: [medium.id] });
+  });
+  it("keeps cited medium findings without adding them again", () => {
+    const medium = finding({ severity: "medium" });
+    const result = validate(output(), new Map([["F1", medium]]), [medium]);
+    expect(result).toMatchObject({ ok: true, brief: { attention: [] }, addedBack: [] });
+  });
   it("adds excluded private findings as plain lines in their matching sections", () => {
     const privateInfo = finding({ id: "private-info", repo: "me/secret" });
     const privateHigh = finding({ id: "private-high", repo: "me/secret", severity: "high" });
