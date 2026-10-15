@@ -1,25 +1,33 @@
 import { Octokit } from "@octokit/rest";
 import { env } from "../env.js";
 import { inWindow, type Window } from "../time.js";
-import type { RepoSnapshot, Branch, Commit, CiRun } from "../types.js";
+import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment } from "../types.js";
 
 const gh = new Octokit({ auth: env.githubToken, userAgent: "case-ai" });
 
 export async function collectAll(repos: string[], w: Window, ignoreAuthors: string[]) {
+  let myLogin: string | null = null;
+  try {
+    const { data } = await gh.users.getAuthenticated();
+    myLogin = data.login;
+  } catch {
+    // Missing identity must never turn comments into requests for attention.
+  }
   const out: RepoSnapshot[] = [];
   // 3 repos at a time: fast, and gentle on the API
   for (let i = 0; i < repos.length; i += 3) {
-    const batch = repos.slice(i, i + 3).map((r) => collectRepo(r, w, ignoreAuthors));
+    const batch = repos.slice(i, i + 3).map((r) => collectRepo(r, w, ignoreAuthors, myLogin));
     out.push(...(await Promise.all(batch)));
   }
   return out;
 }
 
-async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[]): Promise<RepoSnapshot> {
+async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
   const [owner, repo] = fullName.split("/");
   const empty: RepoSnapshot = {
     repo: fullName, private: false, defaultBranch: "main",
     commits: [], openPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
+    closedIssues: [], comments: [], openIssueCount: 0, lastCommitAt: null,
   };
 
   try {
@@ -80,6 +88,26 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[])
     const issues = await gh.paginate(gh.issues.listForRepo, {
       owner, repo, state: "all", since, per_page: 100,
     });
+    const issuesByNumber = new Map(issues.map((i) => [i.number, i]));
+    const comments: IssueComment[] = [];
+    try {
+      const list = await gh.paginate(gh.issues.listCommentsForRepo, { owner, repo, since, per_page: 100 });
+      for (const c of list) {
+        if (!inWindow(c.created_at, w)) continue;
+        const author = c.user?.login ?? "unknown";
+        if (c.user?.type === "Bot" || ignoreAuthors.includes(author)) continue;
+        const issueNumber = Number(c.issue_url.split("/").pop());
+        const issue = issuesByNumber.get(issueNumber);
+        if (!issue) continue;
+        comments.push({
+          id: c.id, issueNumber, issueTitle: issue.title, isPr: !!issue.pull_request,
+          author, url: c.html_url, createdAt: c.created_at,
+          mine: myLogin === null || author === myLogin,
+        });
+      }
+    } catch {
+      // Comments are optional; retain all other repo data if unavailable.
+    }
 
     // 5. CI: latest completed run per workflow on the default branch
     const ciRuns: CiRun[] = [];
@@ -114,6 +142,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[])
 
     return {
       repo: fullName,
+      error: undefined,
       private: meta.private,
       defaultBranch: base,
       commits: [...seen.values()],
@@ -128,6 +157,13 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[])
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
         .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at })),
+      closedIssues: issues
+        .filter((i) => !i.pull_request && inWindow(i.closed_at, w))
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),
+      comments,
+      openIssueCount: Math.max(0, meta.open_issues_count - open.length),
+      lastCommitAt: branches.reduce<string | null>((latest, b) =>
+        latest === null || new Date(b.lastCommitAt) > new Date(latest) ? b.lastCommitAt : latest, null),
       branches,
       ciRuns,
     };

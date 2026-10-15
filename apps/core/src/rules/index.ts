@@ -7,6 +7,7 @@ export interface RuleConfig {
   staleBranchDays: number;
   oldBranchDays: number;
   ciMaxAgeDays: number;
+  activeRepoDays: number;
   ignoreBranchPrefixes: string[];
 }
 
@@ -140,6 +141,64 @@ export function newIssues(s: RepoSnapshot): Finding[] {
   }));
 }
 
+export function closedIssues(s: RepoSnapshot): Finding[] {
+  return s.closedIssues.map((i) => ({
+    id: fid("issue_closed", s.repo, String(i.number)),
+    rule: "issue_closed",
+    severity: "info",
+    repo: s.repo,
+    summary: `Closed issue #${i.number} "${i.title}" in ${s.repo}`,
+    sources: [{ label: "issue", url: i.url }],
+  }));
+}
+
+export function issueComments(s: RepoSnapshot): Finding[] {
+  const byIssue = new Map<number, typeof s.comments>();
+  for (const c of s.comments) byIssue.set(c.issueNumber, [...(byIssue.get(c.issueNumber) ?? []), c]);
+  const reportedIssues = new Set([...s.newIssues, ...s.closedIssues].map((i) => i.number));
+  const findings: Finding[] = [];
+  for (const [n, comments] of byIssue) {
+    const others = comments.filter((c) => !c.mine);
+    const mine = comments.filter((c) => c.mine);
+    if (others.length) {
+      const first = others[0];
+      const authors = [...new Set(others.map((c) => c.author))];
+      findings.push({
+        id: fid("issue_comments", s.repo, String(n), "others"),
+        rule: "issue_comments",
+        severity: "medium",
+        repo: s.repo,
+        summary: `${plural(others.length, "new comment")} on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo} (from ${authors.join(", ")})`,
+        sources: [{ label: "comment", url: first.url }],
+      });
+    }
+    if (mine.length && !reportedIssues.has(n)) {
+      const first = mine[0];
+      findings.push({
+        id: fid("issue_comments", s.repo, String(n), "mine"),
+        rule: "issue_comments",
+        severity: "info",
+        repo: s.repo,
+        summary: `You commented on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo}${mine.length > 1 ? ` (${plural(mine.length, "comment")})` : ""}`,
+        sources: [{ label: "comment", url: first.url }],
+      });
+    }
+  }
+  return findings;
+}
+
+export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
+  if (s.lastCommitAt === null || !(daysSince(s.lastCommitAt, now) <= cfg.activeRepoDays) || s.openIssueCount <= 0) return [];
+  return [{
+    id: fid("open_issues", s.repo),
+    rule: "open_issues",
+    severity: "low",
+    repo: s.repo,
+    summary: `${s.repo} has ${plural(s.openIssueCount, "open issue")}`,
+    sources: [{ label: "issues", url: `https://github.com/${s.repo}/issues` }],
+  }];
+}
+
 const order: Record<Severity, number> = { high: 0, medium: 1, low: 2, info: 3 };
 
 export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig): Finding[] {
@@ -153,6 +212,9 @@ export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig): Fin
       ...yesterdaysCommits(s),
       ...mergedPrs(s),
       ...newIssues(s),
+      ...closedIssues(s),
+      ...issueComments(s),
+      ...openIssues(s, now, cfg),
     ]),
   ]
     .sort((a, b) => order[a.severity] - order[b.severity] || (b.ageDays ?? 0) - (a.ageDays ?? 0));

@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { idlePrs, staleBranches, failingCi, oldBranches, runRules, yesterdaysCommits } from "../src/rules/index.js";
+import { idlePrs, staleBranches, failingCi, oldBranches, runRules, yesterdaysCommits, closedIssues, issueComments, openIssues } from "../src/rules/index.js";
 import { snap, NOW, daysAgo } from "./fixtures.js";
 
-const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, ignoreBranchPrefixes: ["dependabot/", "copilot/"] };
+const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/", "copilot/"] };
 const br = (name: string, ahead: number, age: number) =>
   ({ name, sha: "x", lastCommitAt: daysAgo(age), aheadBy: ahead, url: "u" });
 const pr = (n: number, updated: string, draft = false) =>
@@ -95,5 +95,47 @@ describe("commit counts", () => {
   it.each([1, 3])("pluralizes %s commits", (count) => {
     const commits = Array.from({ length: count }, (_, i) => ({ sha: String(i), message: "fix", url: "u", author: "me", date: daysAgo(1), branch: "main" }));
     expect(yesterdaysCommits(snap({ commits }))[0].summary).toBe(`me/demo: ${count} ${count === 1 ? "commit" : "commits"} on main`);
+  });
+});
+
+describe("issue activity rules", () => {
+  const url = "https://github.com/me/demo/issues/8";
+  const comment = (id: number, author: string, mine = false, issueNumber = 8, isPr = false) => ({ id, author, mine, issueNumber, isPr, issueTitle: "title", url: `${url}#issuecomment-${id}`, createdAt: daysAgo(1) });
+  const closed = { number: 8, title: "title", url, closedAt: daysAgo(1) };
+  it("reports closed issues as info with issue sources and stable IDs", () => {
+    const s = snap({ closedIssues: [closed] });
+    expect(closedIssues(s)).toEqual([expect.objectContaining({ rule: "issue_closed", severity: "info", repo: "me/demo", summary: 'Closed issue #8 "title" in me/demo', sources: [{ label: "issue", url }] })]);
+    expect(closedIssues(s)[0].id).toBe(closedIssues(snap({ closedIssues: [{ ...closed, closedAt: daysAgo(2) }] }))[0].id);
+  });
+  it("groups others' comments per issue with unique logins in first-seen order", () => {
+    const s = snap({ comments: [comment(1, "tendai"), comment(2, "rufaro"), comment(3, "tendai"), comment(4, "alex", false, 9, true)] });
+    expect(issueComments(s)).toEqual([
+      expect.objectContaining({ id: createHash("sha1").update("issue_comments|me/demo|8|others").digest("hex").slice(0, 10), severity: "medium", summary: '3 new comments on issue #8 "title" in me/demo (from tendai, rufaro)', sources: [{ label: "comment", url: `${url}#issuecomment-1` }] }),
+      expect.objectContaining({ severity: "medium", summary: '1 new comment on PR #9 "title" in me/demo (from alex)' }),
+    ]);
+  });
+  it("splits my comments into info with a count only for multiple comments", () => {
+    const s = snap({ comments: [comment(1, "tendai"), comment(2, "me", true), comment(3, "me", true), comment(4, "me", true), comment(5, "me", true, 9, true)] });
+    const mine = issueComments(s).filter((f) => f.severity === "info");
+    expect(mine).toEqual([
+      expect.objectContaining({ id: createHash("sha1").update("issue_comments|me/demo|8|mine").digest("hex").slice(0, 10), summary: 'You commented on issue #8 "title" in me/demo (3 comments)', sources: [{ label: "comment", url: `${url}#issuecomment-2` }] }),
+      expect.objectContaining({ summary: 'You commented on PR #9 "title" in me/demo' }),
+    ]);
+  });
+  it.each(["opened", "closed"])("suppresses only my comments on an issue %s yesterday", (state) => {
+    const s = snap({ comments: [comment(1, "me", true), comment(2, "tendai")], ...(state === "opened" ? { newIssues: [{ number: 8, title: "title", url, createdAt: daysAgo(1) }] } : { closedIssues: [closed] }) });
+    expect(issueComments(s)).toEqual([expect.objectContaining({ severity: "medium" })]);
+  });
+  it.each([1, 14])("counts %s open issues at the seven-day boundary", (count) => {
+    expect(openIssues(snap({ lastCommitAt: daysAgo(7), openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `me/demo has ${count} open ${count === 1 ? "issue" : "issues"}`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
+  });
+  it.each([[daysAgo(8), 14], [null, 14], [daysAgo(1), 0]])("omits inactive or empty issue counts (%s, %s)", (lastCommitAt, openIssueCount) => {
+    expect(openIssues(snap({ lastCommitAt, openIssueCount }), NOW, cfg)).toEqual([]);
+  });
+  it("integrates the three rules and excludes errored snapshots", () => {
+    const s = snap({ closedIssues: [closed], comments: [comment(1, "tendai")], lastCommitAt: daysAgo(1), openIssueCount: 14 });
+    expect(runRules([s], NOW, cfg)).toEqual([...issueComments(s), ...openIssues(s, NOW, cfg), ...closedIssues(s)]);
+    expect(runRules([{ ...s, error: "unavailable" }], NOW, cfg)).toEqual([]);
+    expect(issueComments(snap())).toEqual([]);
   });
 });

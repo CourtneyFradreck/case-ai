@@ -29,6 +29,8 @@ export async function storeSnapshots(runId: number, snaps: RepoSnapshot[]) {
       ...s.commits.map((c) => ["commit", c.sha, c.message, c.url, c.date, c] as const),
       ...[...s.openPrs, ...s.mergedPrs].map((p) => ["pr", String(p.number), p.title, p.url, p.mergedAt ?? p.updatedAt, p] as const),
       ...s.newIssues.map((i) => ["issue", String(i.number), i.title, i.url, i.createdAt, i] as const),
+      ...s.closedIssues.map((i) => ["issue_closed", String(i.number), i.title, i.url, i.closedAt, i] as const),
+      ...s.comments.map((c) => ["issue_comment", String(c.id), c.issueTitle, c.url, c.createdAt, c] as const),
       ...s.branches.map((b) => ["branch", b.name, b.name, b.url, b.lastCommitAt, b] as const),
       ...s.ciRuns.map((r) => ["ci_run", String(r.workflowId), r.workflowName, r.url, r.finishedAt, r] as const),
     ];
