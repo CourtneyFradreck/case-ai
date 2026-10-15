@@ -110,4 +110,4 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
 ## License
 
-MIT
+[MIT License](LICENSE)
