@@ -1,0 +1,10 @@
+{
+  "idlePrDays": 3,
+  "staleBranchDays": 7,
+  "oldBranchDays": 60,
+  "ciMaxAgeDays": 30,
+  "activeRepoDays": 7,
+  "ignoreBranchPrefixes": ["dependabot/", "renovate/", "copilot/"],
+  "ignoreAuthors": ["dependabot[bot]", "github-actions[bot]"],
+  "maxBriefChars": 3800
+}

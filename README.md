@@ -95,7 +95,7 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 ## Roadmap
 
 - [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
-- [ ] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
+- [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [ ] **M2 Model brief:** model writes the brief, validator checks every citation
 - [ ] **M3 Intent:** `NEXT.md` parsing, focus buttons
 - [ ] **M4 Non-code:** `/log` and an evening check-in
@@ -110,4 +110,4 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
 ## License
 
-MIT
+[MIT License](LICENSE)

@@ -1,0 +1,249 @@
+{
+  "name": "case: brief",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -64,
+        0
+      ],
+      "id": "7a255774-7f86-49d3-864d-1c554485760d",
+      "name": "Telegram Trigger",
+      "webhookId": "6c28d8b7-68d8-4237-8556-e90fc39708d7",
+      "credentials": {
+        "telegramApi": {
+          "id": "1WoFUhq2eTGLI4IL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "670b7e55-83ac-4c5a-a71b-4a083e5c1065",
+              "leftValue": "={{ $json.message.chat.id }}",
+              "rightValue": "5840249884",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "73d8415e-42f6-4b6a-8ddf-ba337cc96dc7",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/brief",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        96,
+        112
+      ],
+      "id": "727436ff-e45d-440f-9f1e-a157c5c456b1",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://core:8080/brief",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "source",
+              "value": "command"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        -96
+      ],
+      "id": "40dd89e7-84ca-4f72-9516-7aa62a4c9ba9",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "yRhCf4Y9BKwkJdLT",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Building your brief…",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        256,
+        -16
+      ],
+      "id": "3ba85f2b-587d-460e-8fc0-60f93ee307f8",
+      "name": "Ack",
+      "webhookId": "62874a33-4572-48c2-8cb5-e6101e4b7bce",
+      "credentials": {
+        "telegramApi": {
+          "id": "1WoFUhq2eTGLI4IL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        -176
+      ],
+      "id": "98791965-aa06-4dbe-87d9-fb9e5cf239d9",
+      "name": "Telegram (send the brief)",
+      "webhookId": "d5fac0f5-4a82-411b-90a8-730114aa1a18",
+      "credentials": {
+        "telegramApi": {
+          "id": "1WoFUhq2eTGLI4IL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=   Couldn't build the brief: {{ $json.error.message }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        160
+      ],
+      "id": "4568c64f-6667-4b90-b1a2-11351ea2f676",
+      "name": "Brief failed",
+      "webhookId": "3effdd8c-a2cc-4bea-97a8-f5ec4a9d3926",
+      "credentials": {
+        "telegramApi": {
+          "id": "1WoFUhq2eTGLI4IL",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Telegram (send the brief)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Brief failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ack": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "190d2380-ca11-4688-83cb-0124c457a0d0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03b4a2e2a67521f58a48955a6de92c1c32659433bb491860e0327bbca1f3550d"
+  },
+  "nodeGroups": [],
+  "id": "2nPfBhtpQQACRA7E",
+  "tags": []
+}
