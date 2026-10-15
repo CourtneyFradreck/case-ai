@@ -1,4 +1,5 @@
 {
+  "userName": "Courtney",
   "idlePrDays": 3,
   "staleBranchDays": 7,
   "oldBranchDays": 60,

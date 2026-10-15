@@ -1,5 +1,6 @@
 import type { Finding, RepoSnapshot } from "../types.js";
 import type { Window } from "../time.js";
+import { DateTime } from "luxon";
 import { renderModelBrief } from "../render.js";
 import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
@@ -45,14 +46,14 @@ function serialize(brief: ValidBrief, aliasToFinding: Map<string, Finding>, find
   };
 }
 
-export async function generateModelBrief(findings: Finding[], snaps: RepoSnapshot[], w: Window, cfg: ModelBriefConfig, provider: BriefModel): Promise<ModelBriefResult> {
+export async function generateModelBrief(findings: Finding[], snaps: RepoSnapshot[], w: Window, cfg: ModelBriefConfig, provider: BriefModel, now: DateTime = DateTime.now()): Promise<ModelBriefResult> {
   const input = buildInput(findings, snaps, w.label, cfg);
   const meta: BriefMeta = { model: provider.name, json: { brief: null, aliases: Object.fromEntries([...input.aliasToFinding].map(([alias, f]) => [alias, f.id])), raw: null, responses: [], dropped: [], addedBack: [], attempts: 0, fallbackReason: null } };
   const complete = (result: Extract<ReturnType<typeof validate>, { ok: true }>) => {
     meta.json.dropped = result.dropped;
     meta.json.addedBack = result.addedBack;
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars) };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now }) };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings);

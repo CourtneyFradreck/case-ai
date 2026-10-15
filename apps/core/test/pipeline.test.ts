@@ -41,7 +41,7 @@ describe("model pipeline", () => {
     expect(mocks.generate).toHaveBeenCalledTimes(usesModel ? 1 : 0);
     if (usesModel) expect(result.text).toContain("Model progress");
     else {
-      expect(result).toEqual({ runId: 7, text: render([finding()], [snap()], yesterdayWindow(), 3800) });
+      expect(result).toEqual({ runId: 7, text: render([finding()], [snap()], yesterdayWindow(), 3800, undefined, { userName: "Courtney" }) });
       expect(mocks.storeBrief).toHaveBeenCalledWith(7, result.text, undefined);
     }
     expect(console.info).toHaveBeenCalledTimes(1);
@@ -59,7 +59,7 @@ describe("model pipeline", () => {
     if (failure === "exception") mocks.generate.mockRejectedValue(new Error("unavailable"));
     else mocks.generate.mockResolvedValue({ raw: "invalid", model: "test-model" });
     const result = await runBrief("command");
-    expect(result.text).toBe(render([finding()], [snap()], yesterdayWindow(), 3800, "Rule-only brief: model unavailable"));
+    expect(result.text).toBe(render([finding()], [snap()], yesterdayWindow(), 3800, "Rule-only brief: model unavailable", { userName: "Courtney" }));
     expect(mocks.generate).toHaveBeenCalledTimes(2);
     expect(mocks.storeBrief.mock.calls[0][2]).toMatchObject({ json: { attempts: 2, fallbackReason: failure === "exception" ? "provider_error" : "invalid_json" } });
     expect(mocks.finishRun).toHaveBeenCalledWith(7, "ok");

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { DateTime } from "luxon";
 import { env } from "./env.js";
 import { pool } from "./db.js";
 import { yesterdayWindow } from "./time.js";
@@ -13,31 +14,32 @@ const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "con
 
 export class BusyError extends Error {}
 
-export async function runBrief(source: "schedule" | "command") {
+export async function runBrief(source: "schedule" | "command", now: DateTime = DateTime.now()) {
   const lock = await pool.connect();
   const { rows } = await lock.query("SELECT pg_try_advisory_lock(777) AS ok");
   if (!rows[0].ok) { lock.release(); throw new BusyError("A brief is already being built"); }
 
-  const w = yesterdayWindow();
+  const w = yesterdayWindow(now);
   const runId = await startRun(source, w);
   let meta: BriefMeta | undefined;
   try {
     const snaps = await collectAll(env.repos, w, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
-    const findings = runRules(snaps, new Date(), config);
+    const findings = runRules(snaps, now.toJSDate(), config);
     await storeFindings(runId, findings);
-    let text = render(findings, snaps, w, config.maxBriefChars);
+    const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now });
+    let text = renderRules();
     const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");
     if (useModel && findings.length) {
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief(findings, snaps, w, config, provider);
+        const result = await generateModelBrief(findings, snaps, w, config, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
-        text = "text" in result ? result.text : render(findings, snaps, w, config.maxBriefChars, "Rule-only brief: model unavailable");
+        text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
       } catch {
         meta = fallbackMeta(env.geminiModel, "model_error");
-        text = render(findings, snaps, w, config.maxBriefChars, "Rule-only brief: model unavailable");
+        text = renderRules("Rule-only brief: model unavailable");
       }
     }
     await storeBrief(runId, text, meta);

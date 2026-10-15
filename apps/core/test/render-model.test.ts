@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, renderModelBrief } from "../src/render.js";
 import type { ValidBrief } from "../src/llm/schema.js";
 import { finding, snap } from "./fixtures.js";
+import { DateTime } from "luxon";
 
 const w = { start: new Date("2026-10-12T22:00:00Z"), end: new Date("2026-10-13T22:00:00Z"), label: "Tuesday 13 Oct" };
 const empty = (): ValidBrief => ({ yesterday: [], attention: [], focus: [] });
@@ -24,8 +25,8 @@ describe("model rendering", () => {
   });
   it("skips empty sections, keeps section order, and includes failed repos", () => {
     const item = { text: "Progress", sources: [finding()] };
-    const text = renderModelBrief({ ...empty(), yesterday: [item], attention: [item] }, [snap({ error: "GitHub 404" })], w, 3800);
-    expect(text).toContain("Good morning. Here's Tuesday 13 Oct.");
+    const text = renderModelBrief({ ...empty(), yesterday: [item], attention: [item] }, [snap({ error: "GitHub 404" })], w, 3800, { userName: "Courtney", now: DateTime.fromISO("2026-10-14T05:00:00Z") });
+    expect(text).toContain("Good morning, Courtney. Here's Tuesday 13 Oct.");
     expect(text.indexOf("Yesterday")).toBeLessThan(text.indexOf("Needs attention"));
     expect(text).not.toContain("Today, I'd suggest");
     expect(text).toContain("Couldn't read: me/demo (GitHub 404)");

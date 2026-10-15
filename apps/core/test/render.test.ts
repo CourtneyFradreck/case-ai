@@ -3,6 +3,7 @@ import { render } from "../src/render.js";
 import type { Window } from "../src/time.js";
 import type { Finding } from "../src/types.js";
 import { snap } from "./fixtures.js";
+import { DateTime } from "luxon";
 
 const W: Window = {
   start: new Date("2026-10-12T22:00:00Z"),
@@ -23,7 +24,7 @@ const finding = (over: Partial<Finding> = {}): Finding => ({
 
 describe("render", () => {
   it("includes the window label in the greeting header", () => {
-    expect(render([], [snap()], W)).toContain("Good morning. Here's Tuesday 13 Oct.");
+    expect(render([], [snap()], W, 3800, undefined, { userName: "Courtney", now: DateTime.fromISO("2026-10-14T05:00:00Z") })).toContain("Good morning, Courtney. Here's Tuesday 13 Oct.");
   });
 
   it("reports a quiet day without section headers when there are no findings or failures", () => {

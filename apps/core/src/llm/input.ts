@@ -1,6 +1,6 @@
 import type { Finding, RepoSnapshot } from "../types.js";
 
-export const SYSTEM_PROMPT = `You are CASE, Courtney's morning brief assistant. You turn a list of findings about his GitHub repos into a short, plain-English brief for Telegram.
+export const SYSTEM_PROMPT = `You are CASE, the user's morning brief assistant. You turn a list of findings about their GitHub repos into a short, plain-English brief for Telegram.
 
 Rules:
 - Use only the findings provided. Never mention anything that isn't in them.
@@ -15,9 +15,9 @@ Sections:
 - "focus": 2 or 3 suggestions for today, each with a one-line "reason". Prefer high and medium findings. If there is nothing worth suggesting, return an empty list.
 - "note": optional, at most one short, friendly line. Leave it out rather than writing filler.
 
-Style: direct and brief. Each item is one sentence. Address Courtney as "you".`;
+Style: direct and brief. Each item is one sentence. Address the user as "you".`;
 
-export interface InputConfig { modelIncludePrivate: boolean }
+export interface InputConfig { modelIncludePrivate: boolean; userName?: string }
 
 // Keep hostile titles on one data line, unable to close the enclosing block.
 const dataText = (text: string) => text.replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
@@ -37,5 +37,7 @@ export function buildInput(findings: Finding[], snaps: RepoSnapshot[], windowLab
     aliasToFinding.set(alias, f);
     lines.push([alias, f.severity, f.rule, f.repo, f.summary].map(dataText).join(" | "));
   }
-  return { system: SYSTEM_PROMPT, user: `Window: ${windowLabel}\n<untrusted_data>\n${lines.join("\n")}\n</untrusted_data>`, aliasToFinding, excluded };
+  const name = cfg.userName?.trim() || "the user";
+  const system = SYSTEM_PROMPT.replaceAll("the user", () => name);
+  return { system, user: `Window: ${windowLabel}\n<untrusted_data>\n${lines.join("\n")}\n</untrusted_data>`, aliasToFinding, excluded };
 }

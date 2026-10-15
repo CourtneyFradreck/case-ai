@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateModelBrief } from "../src/llm/brief.js";
 import { finding, snap } from "./fixtures.js";
+import { DateTime } from "luxon";
 
 const w = { start: new Date("2026-10-12T22:00:00Z"), end: new Date("2026-10-13T22:00:00Z"), label: "Tuesday 13 Oct" };
 const cfg = { modelIncludePrivate: false, modelTimeoutMs: 1000, maxBriefChars: 3800 };
@@ -37,5 +38,11 @@ describe("model brief generation", () => {
     expect(generate).not.toHaveBeenCalled();
     expect(result).toMatchObject({ model: null, json: { attempts: 0, fallbackReason: null } });
     expect("text" in result && result.text).toContain("me/demo: 3 commits on main");
+  });
+  it("passes the configured name to the model prompt and renders with the injected time", async () => {
+    const generate = vi.fn().mockResolvedValue({ raw, model: "test" });
+    const result = await generateModelBrief([finding()], [snap()], w, { ...cfg, userName: "Alex" }, { name: "test", generate }, DateTime.fromISO("2026-10-14T16:00:00Z"));
+    expect(generate.mock.calls[0][0]).toContain('Address Alex as "you".');
+    expect("text" in result && result.text).toContain("Good evening, Alex. Here's Tuesday 13 Oct.");
   });
 });

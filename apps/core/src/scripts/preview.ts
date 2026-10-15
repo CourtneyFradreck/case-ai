@@ -24,13 +24,14 @@ async function main() {
   const w = yesterdayWindow(DateTime.fromJSDate(NOW));
   const findings = runRules(previewSnapshots, NOW, config);
   const provider = new GeminiBriefModel(apiKey, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite", config.modelTimeoutMs);
-  const result = await generateModelBrief(findings, previewSnapshots, w, config, provider);
+  const now = DateTime.now();
+  const result = await generateModelBrief(findings, previewSnapshots, w, config, provider, now);
   console.log("Raw JSON:");
   for (const raw of result.json.responses ?? []) console.log(raw);
   console.log("Validation report:");
   console.log(JSON.stringify({ model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ...result.json, raw: undefined, responses: undefined }, null, 2));
   console.log("Telegram text:");
-  console.log("text" in result ? result.text : render(findings, previewSnapshots, w, config.maxBriefChars, "Rule-only brief: model unavailable"));
+  console.log("text" in result ? result.text : render(findings, previewSnapshots, w, config.maxBriefChars, "Rule-only brief: model unavailable", { userName: config.userName, now }));
   if ("fallbackReason" in result) process.exitCode = 1;
 }
 
