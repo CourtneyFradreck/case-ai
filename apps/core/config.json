@@ -6,5 +6,7 @@
   "activeRepoDays": 7,
   "ignoreBranchPrefixes": ["dependabot/", "renovate/", "copilot/"],
   "ignoreAuthors": ["dependabot[bot]", "github-actions[bot]"],
-  "maxBriefChars": 3800
+  "maxBriefChars": 3800,
+  "modelIncludePrivate": false,
+  "modelTimeoutMs": 20000
 }
