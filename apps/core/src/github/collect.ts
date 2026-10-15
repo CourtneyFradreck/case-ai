@@ -84,11 +84,19 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[])
     // 5. CI: latest completed run per workflow on the default branch
     const ciRuns: CiRun[] = [];
     try {
+      let activeWorkflowIds: Set<number> | undefined;
+      try {
+        const workflows = await gh.paginate(gh.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
+        activeWorkflowIds = new Set(workflows.filter((w) => w.state === "active").map((w) => w.id));
+      } catch {
+        // Keep CI data when workflow metadata is unavailable.
+      }
       const { data } = await gh.actions.listWorkflowRunsForRepo({
         owner, repo, branch: base, exclude_pull_requests: true, per_page: 30,
       });
       const latest = new Map<number, (typeof data.workflow_runs)[number]>();
       for (const r of data.workflow_runs) {
+        if (activeWorkflowIds && !activeWorkflowIds.has(r.workflow_id)) continue;
         if (r.status === "completed" && !latest.has(r.workflow_id)) latest.set(r.workflow_id, r);
       }
       for (const r of latest.values()) {
