@@ -7,6 +7,7 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { render } from "./render.js";
 import { startRun, finishRun, storeSnapshots, storeFindings, storeBrief } from "./store.js";
+import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
 
@@ -19,19 +20,36 @@ export async function runBrief(source: "schedule" | "command") {
 
   const w = yesterdayWindow();
   const runId = await startRun(source, w);
+  let meta: BriefMeta | undefined;
   try {
     const snaps = await collectAll(env.repos, w, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
     const findings = runRules(snaps, new Date(), config);
     await storeFindings(runId, findings);
-    const text = render(findings, snaps, w, config.maxBriefChars);
-    await storeBrief(runId, text);
+    let text = render(findings, snaps, w, config.maxBriefChars);
+    const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");
+    if (useModel && findings.length) {
+      try {
+        const { GeminiBriefModel } = await import("./llm/gemini.js");
+        const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
+        const result = await generateModelBrief(findings, snaps, w, config, provider);
+        meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
+        text = "text" in result ? result.text : render(findings, snaps, w, config.maxBriefChars, "Rule-only brief: model unavailable");
+      } catch {
+        meta = fallbackMeta(env.geminiModel, "model_error");
+        text = render(findings, snaps, w, config.maxBriefChars, "Rule-only brief: model unavailable");
+      }
+    }
+    await storeBrief(runId, text, meta);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     return { runId, text };
   } catch (e) {
     await finishRun(runId, "failed", String(e));
     throw e;
   } finally {
+    console.info(JSON.stringify({ event: "brief", runId, mode: env.briefMode, model: meta?.model ?? null,
+      attempts: meta?.json.attempts ?? 0, inputTokens: meta?.inputTokens ?? null, outputTokens: meta?.outputTokens ?? null,
+      dropped: meta?.json.dropped.length ?? 0, fallbackReason: meta?.json.fallbackReason ?? null }));
     await lock.query("SELECT pg_advisory_unlock(777)");
     lock.release();
   }

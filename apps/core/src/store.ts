@@ -1,6 +1,7 @@
 import { pool } from "./db.js";
 import type { Window } from "./time.js";
 import type { RepoSnapshot, Finding } from "./types.js";
+import type { BriefMeta } from "./llm/brief.js";
 
 export async function startRun(source: string, w: Window) {
   const { rows } = await pool.query(
@@ -57,6 +58,13 @@ export async function storeFindings(runId: number, findings: Finding[]) {
   }
 }
 
-export async function storeBrief(runId: number, text: string) {
+export async function storeBrief(runId: number, text: string, meta?: BriefMeta) {
+  if (meta) {
+    await pool.query(
+      "INSERT INTO briefs(run_id, text, model, input_tokens, output_tokens, json) VALUES ($1,$2,$3,$4,$5,$6)",
+      [runId, text, meta.model, meta.inputTokens ?? null, meta.outputTokens ?? null, JSON.stringify(meta.json)],
+    );
+    return;
+  }
   await pool.query("INSERT INTO briefs(run_id, text) VALUES ($1,$2)", [runId, text]);
 }
