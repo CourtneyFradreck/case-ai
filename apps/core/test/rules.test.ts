@@ -115,7 +115,7 @@ describe("issue activity rules", () => {
     ]);
   });
   it("splits my comments into info with a count only for multiple comments", () => {
-    const s = snap({ comments: [comment(1, "tendai"), comment(2, "me", true), comment(3, "me", true), comment(4, "me", true), comment(5, "me", true, 9, true)] });
+    const s = snap({ comments: [comment(1, "tendai"), ...[2, 3, 4].map((id) => ({ ...comment(id, "me", true), createdAt: daysAgo(1.1) })), comment(5, "me", true, 9, true)] });
     const mine = issueComments(s).filter((f) => f.severity === "info");
     expect(mine).toEqual([
       expect.objectContaining({ id: createHash("sha1").update("issue_comments|me/demo|8|mine").digest("hex").slice(0, 10), summary: 'You commented on issue #8 "title" in me/demo (3 comments)', sources: [{ label: "comment", url: `${url}#issuecomment-2` }] }),
@@ -127,13 +127,54 @@ describe("issue activity rules", () => {
     expect(issueComments(s)).toEqual([expect.objectContaining({ severity: "medium" })]);
   });
   it.each([1, 14])("counts %s open issues at the seven-day boundary", (count) => {
-    expect(openIssues(snap({ lastCommitAt: daysAgo(7), openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `me/demo has ${count} open ${count === 1 ? "issue" : "issues"}`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
+    expect(openIssues(snap({ branches: [br("main", 0, 7)], openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `me/demo has ${count} open ${count === 1 ? "issue" : "issues"}`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
   });
-  it.each([[daysAgo(8), 14], [null, 14], [daysAgo(1), 0]])("omits inactive or empty issue counts (%s, %s)", (lastCommitAt, openIssueCount) => {
-    expect(openIssues(snap({ lastCommitAt, openIssueCount }), NOW, cfg)).toEqual([]);
+  it.each([[8, 14], [null, 14], [1, 0]])("omits inactive or empty issue counts (%s, %s)", (age, openIssueCount) => {
+    expect(openIssues(snap({ branches: age === null ? [] : [br("main", 0, age)], openIssueCount }), NOW, cfg)).toEqual([]);
+  });
+  it.each(["dependabot/", "copilot/"])("ignores recent %s branches when counting activity", (prefix) => {
+    for (const branches of [[br(`${prefix}x`, 1, 1)], [br("main", 0, 8), br(`${prefix}x`, 1, 1)]]) {
+      expect(openIssues(snap({ branches, openIssueCount: 14 }), NOW, cfg)).toEqual([]);
+    }
+  });
+  it("uses the newest eligible branch regardless of branch order or open PRs", () => {
+    const branches = [br("main", 0, 20), br("feature", 1, 2), br("dependabot/x", 1, 0)];
+    const s = snap({ branches, openIssueCount: 14, openPrs: [{ ...pr(1, daysAgo(1)), headRef: "feature" }] });
+    expect(openIssues(s, NOW, cfg)).toHaveLength(1);
+    expect(openIssues({ ...s, branches: [...branches].reverse() }, NOW, cfg)).toEqual(openIssues(s, NOW, cfg));
+  });
+  it.each([false, true])("reports an answered conversation as one info finding (PR: %s)", (isPr) => {
+    const reply = { ...comment(2, "me", true, 8, isPr), createdAt: daysAgo(0.5) };
+    const original = comment(1, "tendai", false, 8, isPr);
+    const comments = [reply, original];
+    const s = snap({ comments });
+    expect(issueComments(s)).toEqual([expect.objectContaining({
+      id: createHash("sha1").update("issue_comments|me/demo|8|others").digest("hex").slice(0, 10),
+      severity: "info", summary: `tendai commented on ${isPr ? "PR" : "issue"} #8 "title" in me/demo, you replied`,
+      sources: [{ label: "comment", url: original.url }],
+    })]);
+    expect(s.comments).toEqual([reply, original]);
+  });
+  it("keeps medium when the latest comment is someone else's, regardless of input order", () => {
+    const latest = { ...comment(3, "rufaro"), createdAt: daysAgo(0.5) };
+    const mine = { ...comment(2, "me", true), createdAt: daysAgo(0.75) };
+    const original = comment(1, "tendai");
+    expect(issueComments(snap({ comments: [latest, mine, original] }))).toEqual([
+      expect.objectContaining({ severity: "medium", summary: '2 new comments on issue #8 "title" in me/demo (from tendai, rufaro)', sources: [{ label: "comment", url: original.url }] }),
+      expect.objectContaining({ severity: "info", summary: 'You commented on issue #8 "title" in me/demo' }),
+    ]);
+  });
+  it("lists unique authors chronologically in an answered conversation", () => {
+    const comments = [
+      { ...comment(4, "me", true), createdAt: daysAgo(0.5) },
+      { ...comment(3, "tendai"), createdAt: daysAgo(0.6) },
+      { ...comment(2, "rufaro"), createdAt: daysAgo(0.7) },
+      comment(1, "tendai"),
+    ];
+    expect(issueComments(snap({ comments }))).toEqual([expect.objectContaining({ severity: "info", summary: 'tendai, rufaro commented on issue #8 "title" in me/demo, you replied' })]);
   });
   it("integrates the three rules and excludes errored snapshots", () => {
-    const s = snap({ closedIssues: [closed], comments: [comment(1, "tendai")], lastCommitAt: daysAgo(1), openIssueCount: 14 });
+    const s = snap({ closedIssues: [closed], comments: [comment(1, "tendai")], branches: [br("main", 0, 1)], openIssueCount: 14 });
     expect(runRules([s], NOW, cfg)).toEqual([...issueComments(s), ...openIssues(s, NOW, cfg), ...closedIssues(s)]);
     expect(runRules([{ ...s, error: "unavailable" }], NOW, cfg)).toEqual([]);
     expect(issueComments(snap())).toEqual([]);

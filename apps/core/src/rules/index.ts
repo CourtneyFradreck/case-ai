@@ -158,21 +158,25 @@ export function issueComments(s: RepoSnapshot): Finding[] {
   const reportedIssues = new Set([...s.newIssues, ...s.closedIssues].map((i) => i.number));
   const findings: Finding[] = [];
   for (const [n, comments] of byIssue) {
+    comments.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const others = comments.filter((c) => !c.mine);
     const mine = comments.filter((c) => c.mine);
+    const replied = others.length > 0 && comments[comments.length - 1].mine;
     if (others.length) {
       const first = others[0];
       const authors = [...new Set(others.map((c) => c.author))];
       findings.push({
         id: fid("issue_comments", s.repo, String(n), "others"),
         rule: "issue_comments",
-        severity: "medium",
+        severity: replied ? "info" : "medium",
         repo: s.repo,
-        summary: `${plural(others.length, "new comment")} on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo} (from ${authors.join(", ")})`,
+        summary: replied
+          ? `${authors.join(", ")} commented on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo}, you replied`
+          : `${plural(others.length, "new comment")} on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo} (from ${authors.join(", ")})`,
         sources: [{ label: "comment", url: first.url }],
       });
     }
-    if (mine.length && !reportedIssues.has(n)) {
+    if (mine.length && !replied && !reportedIssues.has(n)) {
       const first = mine[0];
       findings.push({
         id: fid("issue_comments", s.repo, String(n), "mine"),
@@ -188,7 +192,11 @@ export function issueComments(s: RepoSnapshot): Finding[] {
 }
 
 export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
-  if (s.lastCommitAt === null || !(daysSince(s.lastCommitAt, now) <= cfg.activeRepoDays) || s.openIssueCount <= 0) return [];
+  const lastCommitAt = s.branches
+    .filter((b) => !cfg.ignoreBranchPrefixes.some((p) => b.name.startsWith(p)))
+    .reduce<string | null>((latest, b) =>
+      latest === null || new Date(b.lastCommitAt) > new Date(latest) ? b.lastCommitAt : latest, null);
+  if (lastCommitAt === null || !(daysSince(lastCommitAt, now) <= cfg.activeRepoDays) || s.openIssueCount <= 0) return [];
   return [{
     id: fid("open_issues", s.repo),
     rule: "open_issues",

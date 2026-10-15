@@ -35,7 +35,6 @@ export interface RepoSnapshot {
   closedIssues: ClosedIssue[];
   comments: IssueComment[];
   openIssueCount: number;
-  lastCommitAt: string | null;
   branches: Branch[];
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
   error?: string;         // set if this repo couldn't be read

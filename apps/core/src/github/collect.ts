@@ -27,7 +27,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
   const empty: RepoSnapshot = {
     repo: fullName, private: false, defaultBranch: "main",
     commits: [], openPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
-    closedIssues: [], comments: [], openIssueCount: 0, lastCommitAt: null,
+    closedIssues: [], comments: [], openIssueCount: 0,
   };
 
   try {
@@ -162,8 +162,6 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
         .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),
       comments,
       openIssueCount: Math.max(0, meta.open_issues_count - open.length),
-      lastCommitAt: branches.reduce<string | null>((latest, b) =>
-        latest === null || new Date(b.lastCommitAt) > new Date(latest) ? b.lastCommitAt : latest, null),
       branches,
       ciRuns,
     };

@@ -122,15 +122,17 @@ describe("issue activity collection", () => {
     const [s] = await collect();
     expect(s).toMatchObject({ private: true, comments: [], openIssueCount: 14, error: undefined });
   });
-  it("uses the newest branch head as lastCommitAt, or null without branches", async () => {
-    expect((await collect())[0].lastCommitAt).toBeNull();
+  it("retains each branch's head timestamp without a repo-wide timestamp", async () => {
+    expect((await collect())[0]).not.toHaveProperty("lastCommitAt");
     branches = [{ name: "main", commit: { sha: "old" } }, { name: "feature", commit: { sha: "new" } }];
     gh.repos.getCommit.mockImplementation(async ({ ref }) => ({ data: { commit: { committer: { date: ref === "new" ? daysAgo(2) : daysAgo(10) } } } }));
     gh.repos.compareCommitsWithBasehead.mockResolvedValue({ data: { ahead_by: 1 } });
-    expect((await collect())[0].lastCommitAt).toBe(daysAgo(2));
+    const [s] = await collect();
+    expect(s.branches.map((b) => b.lastCommitAt)).toEqual([daysAgo(10), daysAgo(2)]);
+    expect(s).not.toHaveProperty("lastCommitAt");
   });
   it("keeps safe defaults for a failed repo", async () => {
     gh.repos.get.mockRejectedValue(new Error("unavailable"));
-    expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, lastCommitAt: null, error: "unavailable" });
+    expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "unavailable" });
   });
 });
