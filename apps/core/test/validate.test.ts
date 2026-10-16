@@ -27,12 +27,14 @@ describe("brief validation", () => {
     }
   });
   it("strips URLs from text, reasons and the note, and drops text emptied by stripping", () => {
-    const result = validate(output({ yesterday: [{ ...item, text: "https://evil.test" }], attention: [{ ...item, text: "Review https://evil.test now" }], focus: [{ ...item, text: "Fix www.evil.test CI", reason: "Because http://evil.test it failed" }], note: "Visit WWW.evil.test please" }), aliases, [f]);
+    const medium = finding({ id: "review", severity: "medium" });
+    const high = finding({ id: "ci", severity: "high" });
+    const result = validate(output({ yesterday: [{ ...item, text: "https://evil.test" }], attention: [{ text: "Review https://evil.test now", sources: ["F2"] }], focus: [{ text: "Fix www.evil.test CI", reason: "Because http://evil.test it failed", sources: ["F3"] }], note: "Visit WWW.evil.test please" }), new Map([["F1", f], ["F2", medium], ["F3", high]]), [f, medium, high]);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.brief.yesterday).toEqual([]);
       expect(result.brief.attention[0].text).toBe("Review  now");
-      expect(result.brief.focus[0]).toMatchObject({ text: "Fix  CI", reason: "Because  it failed" });
+      expect(result.brief.attention[1].text).toBe("Fix  CI (Because  it failed)");
       expect(result.brief.note).toBe("Visit  please");
     }
   });
@@ -41,10 +43,10 @@ describe("brief validation", () => {
     const result = validate(output({ yesterday: [], attention: [], focus: [] }), new Map([["F1", high]]), [high]);
     expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: high.summary, sources: [high] }] }, addedBack: [high.id] });
   });
-  it("counts a focus citation as high coverage", () => {
+  it("folds a focus citation into attention without repeating it", () => {
     const high = finding({ severity: "high" });
     const result = validate(output({ yesterday: [], focus: [{ ...item, reason: "It failed" }] }), new Map([["F1", high]]), [high]);
-    expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [] } });
+    expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [{ text: "You made progress. (It failed)", sources: [high] }], focus: [] } });
   });
   it("adds an uncited medium finding as a plain attention line and records its ID", () => {
     const medium = finding({ id: "medium", severity: "medium", summary: "New comment from tendai" });
@@ -53,12 +55,12 @@ describe("brief validation", () => {
   });
   it("keeps cited medium findings without adding them again", () => {
     const medium = finding({ severity: "medium" });
-    const result = validate(output(), new Map([["F1", medium]]), [medium]);
-    expect(result).toMatchObject({ ok: true, brief: { attention: [] }, addedBack: [] });
+    const result = validate(output({ yesterday: [], attention: [item] }), new Map([["F1", medium]]), [medium]);
+    expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: item.text, sources: [medium] }] }, addedBack: [] });
   });
   it("adds excluded private findings as plain lines in their matching sections", () => {
-    const privateInfo = finding({ id: "private-info", repo: "me/secret" });
-    const privateHigh = finding({ id: "private-high", repo: "me/secret", severity: "high" });
+    const privateInfo = finding({ id: "private-info", repo: "me/secret", sources: [{ label: "commit", url: "https://github.com/me/secret/commit/abc" }] });
+    const privateHigh = finding({ id: "private-high", repo: "me/secret", severity: "high", sources: [{ label: "run", url: "https://github.com/me/secret/actions/runs/1" }] });
     expect(validate(output(), aliases, [f, privateInfo, privateHigh])).toMatchObject({ ok: true, brief: {
       yesterday: [{ text: item.text, sources: [f] }, { text: privateInfo.summary, sources: [privateInfo] }],
       attention: [{ text: privateHigh.summary, sources: [privateHigh] }],

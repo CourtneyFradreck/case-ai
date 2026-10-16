@@ -4,7 +4,7 @@
 
 **A daily Telegram brief that tells me where I left off.**
 
-Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in each repo and the notes I've logged, then sends me a short brief: what I worked on yesterday, what's unfinished, and what to focus on today. Every line links back to the commit, issue, PR or note it came from.
+Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in each repo and the notes I've logged, then sends me a short brief: what needs my attention, followed by what I worked on most recently. The recap uses the last active day within the past week, or both weekend days on Monday. Dates follow Africa/Harare time. Every line links back to the commit, issue, PR or note it came from.
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
@@ -18,7 +18,7 @@ I work across several projects at once. Commits record what changed, but not whe
 
 ## What it does (v1 goals)
 
-- Summarises yesterday's commits, issues and PRs across my personal repos
+- Summarises the most recent active day's commits, issues and PRs across my personal repos
 - Lists unfinished work: open PRs, unmerged branches, failing CI, open `NEXT.md` items
 - Suggests two or three things to focus on today, each with a reason
 - Lets me reply to pick a focus, or log non-code work with `/log`

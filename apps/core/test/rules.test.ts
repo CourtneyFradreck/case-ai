@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { idlePrs, staleBranches, failingCi, oldBranches, runRules, yesterdaysCommits, closedIssues, issueComments, openIssues } from "../src/rules/index.js";
+import { idlePrs, staleBranches, failingCi, oldBranches, runRules, recapCommits, closedIssues, issueComments, openIssues } from "../src/rules/index.js";
 import { snap, NOW, daysAgo } from "./fixtures.js";
 
 const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/", "copilot/"] };
@@ -94,7 +94,7 @@ describe("branch ages", () => {
 describe("commit counts", () => {
   it.each([1, 3])("pluralizes %s commits", (count) => {
     const commits = Array.from({ length: count }, (_, i) => ({ sha: String(i), message: "fix", url: "u", author: "me", date: daysAgo(1), branch: "main" }));
-    expect(yesterdaysCommits(snap({ commits }))[0].summary).toBe(`me/demo: ${count} ${count === 1 ? "commit" : "commits"} on main`);
+    expect(recapCommits(snap({ commits }))[0].summary).toBe(`${count} ${count === 1 ? "commit" : "commits"} on main in me/demo`);
   });
 });
 
@@ -175,7 +175,7 @@ describe("issue activity rules", () => {
   });
   it("integrates the three rules and excludes errored snapshots", () => {
     const s = snap({ closedIssues: [closed], comments: [comment(1, "tendai")], branches: [br("main", 0, 1)], openIssueCount: 14 });
-    expect(runRules([s], NOW, cfg)).toEqual([...issueComments(s), ...openIssues(s, NOW, cfg), ...closedIssues(s)]);
+    expect(runRules([s], NOW, cfg)).toEqual([...issueComments(s), ...openIssues(s, NOW, cfg)]);
     expect(runRules([{ ...s, error: "unavailable" }], NOW, cfg)).toEqual([]);
     expect(issueComments(snap())).toEqual([]);
   });

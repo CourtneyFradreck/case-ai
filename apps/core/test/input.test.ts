@@ -62,6 +62,15 @@ describe("model input", () => {
     expect(input.system).toContain('Address Alex as "you".');
     expect(input.system).not.toContain("Courtney");
   });
+  it("asks for a warm, grounded voice and a recap for the selected period", () => {
+    const input = buildInput([publicFinding], snaps, "over the weekend", { modelIncludePrivate: false, userName: "Courtney" });
+    expect(input.user).toContain("Recap period: over the weekend");
+    expect(input.system).toContain("capable personal assistant talking to Courtney in second person");
+    expect(input.system).toContain("2-4 most meaningful items per branch");
+    expect(input.system).toContain("Never invent activity");
+    expect(input.system).toContain("No corporate filler");
+    expect(input.system).toContain("No emoji beyond the existing status dots");
+  });
   it.each([undefined, "", "   "])("addresses the user when the name is %s", (userName) => {
     const input = buildInput([publicFinding], snaps, "day", { modelIncludePrivate: false, userName });
     expect(input.system).toContain("You are CASE, the user's morning brief assistant.");

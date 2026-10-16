@@ -25,7 +25,7 @@ describe("model pipeline", () => {
     mocks.env.briefMode = "rules";
     mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
     mocks.startRun.mockResolvedValue(7);
-    mocks.collectAll.mockResolvedValue([snap()]);
+    mocks.collectAll.mockResolvedValue([snap({ commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] })]);
     mocks.runRules.mockReturnValue([finding()]);
     mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [] }), model: "test-model", inputTokens: 10, outputTokens: 4 });
   });
@@ -67,8 +67,9 @@ describe("model pipeline", () => {
   });
   it("skips the model on a quiet day", async () => {
     mocks.env.briefMode = "all";
+    mocks.collectAll.mockResolvedValue([snap()]);
     mocks.runRules.mockReturnValue([]);
-    expect((await runBrief("command")).text).toContain("Quiet day");
+    expect((await runBrief("command")).text).toContain("Nothing new in the past week.");
     expect(mocks.generate).not.toHaveBeenCalled();
     expect(mocks.storeBrief.mock.calls[0][2]).toBeUndefined();
   });

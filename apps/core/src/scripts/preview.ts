@@ -4,7 +4,7 @@ import { GeminiBriefModel } from "../llm/gemini.js";
 import { generateModelBrief } from "../llm/brief.js";
 import { render } from "../render.js";
 import { runRules } from "../rules/index.js";
-import { yesterdayWindow } from "../time.js";
+import { selectRecap } from "../recap.js";
 import { DateTime } from "luxon";
 import type { RepoSnapshot } from "../types.js";
 
@@ -21,8 +21,8 @@ async function main() {
   // Load test fixtures through tsx, keeping them outside the production tsc root.
   const fixturesUrl = new URL("../../test/fixtures.js", import.meta.url);
   const { previewSnapshots, NOW } = await import(fixturesUrl.href) as { previewSnapshots: RepoSnapshot[]; NOW: Date };
-  const w = yesterdayWindow(DateTime.fromJSDate(NOW));
-  const findings = runRules(previewSnapshots, NOW, config);
+  const { window: w, snapshots } = selectRecap(previewSnapshots, DateTime.fromJSDate(NOW));
+  const findings = runRules(snapshots, NOW, config, w);
   const provider = new GeminiBriefModel(apiKey, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite", config.modelTimeoutMs);
   const now = DateTime.now();
   const result = await generateModelBrief(findings, previewSnapshots, w, config, provider, now);

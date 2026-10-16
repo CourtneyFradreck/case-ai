@@ -108,6 +108,20 @@ describe("issue activity collection", () => {
     issues = [{ ...issue(8), closed_at: yesterday }, { ...issue(9, true), closed_at: yesterday }, { ...issue(10), closed_at: daysAgo(100) }, issue(11)] as typeof issues;
     expect((await collect())[0].closedIssues).toEqual([{ number: 8, title: "Title 8", url: issues[0].html_url, closedAt: yesterday }]);
   });
+  it("collects PR openings from both open and closed PRs using the creation date", async () => {
+    const pr = (number: number, created_at: string) => ({ number, title: `PR ${number}`, html_url: `https://github.com/me/demo/pull/${number}`, head: { ref: "feature" }, created_at, updated_at: yesterday, draft: false });
+    openPrs = [pr(1, yesterday), pr(2, daysAgo(10)), pr(3, w.end.toISOString())];
+    gh.pulls.list.mockResolvedValue({ data: [{ ...pr(4, yesterday), merged_at: yesterday }] });
+    const [s] = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.openedPrs.map((p) => p.number)).toEqual([1, 4]);
+    expect(s.openedPrs.map((p) => p.createdAt)).toEqual([yesterday, yesterday]);
+    expect(s.mergedPrs.map((p) => p.number)).toEqual([4]);
+  });
+  it("retains current issue state so closed new issues are not subtracted from open counts", async () => {
+    issues = [{ ...issue(8), created_at: yesterday, state: "closed" }] as typeof issues;
+    expect((await collect())[0].newIssues).toMatchObject([{ number: 8, state: "closed" }]);
+  });
   it.each([[14, 2, 12], [1, 2, 0]])("subtracts %s total items minus %s open PRs to get %s issues", async (total, prs, expected) => {
     gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: total } });
     openPrs = Array.from({ length: prs }, (_, i) => ({ number: i, title: "PR", html_url: "u", head: { ref: "feature" }, updated_at: yesterday }));

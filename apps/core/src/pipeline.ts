@@ -3,7 +3,8 @@ import path from "node:path";
 import { DateTime } from "luxon";
 import { env } from "./env.js";
 import { pool } from "./db.js";
-import { yesterdayWindow } from "./time.js";
+import { pastWeekWindow } from "./time.js";
+import { selectRecap } from "./recap.js";
 import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { render } from "./render.js";
@@ -19,13 +20,14 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   const { rows } = await lock.query("SELECT pg_try_advisory_lock(777) AS ok");
   if (!rows[0].ok) { lock.release(); throw new BusyError("A brief is already being built"); }
 
-  const w = yesterdayWindow(now);
-  const runId = await startRun(source, w);
+  const history = pastWeekWindow(now);
+  const runId = await startRun(source, history);
   let meta: BriefMeta | undefined;
   try {
-    const snaps = await collectAll(env.repos, w, config.ignoreAuthors);
+    const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
-    const findings = runRules(snaps, now.toJSDate(), config);
+    const { window: w, snapshots } = selectRecap(snaps, now);
+    const findings = runRules(snapshots, now.toJSDate(), config, w);
     await storeFindings(runId, findings);
     const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now });
     let text = renderRules();

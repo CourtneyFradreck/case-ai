@@ -26,7 +26,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
   const [owner, repo] = fullName.split("/");
   const empty: RepoSnapshot = {
     repo: fullName, private: false, defaultBranch: "main",
-    commits: [], openPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
+    commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
     closedIssues: [], comments: [], openIssueCount: 0,
   };
 
@@ -57,7 +57,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       });
     }
 
-    // 2. Yesterday's commits on any branch that moved, de-duplicated by SHA
+    // 2. Activity-window commits on any branch that moved, de-duplicated by SHA
     const seen = new Map<string, Commit>();
     for (const b of branches.filter((b) => new Date(b.lastCommitAt) >= w.start)) {
       const list = await gh.paginate(gh.repos.listCommits, {
@@ -65,7 +65,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       });
       for (const c of list) {
         const author = c.author?.login ?? c.commit.author?.name ?? "unknown";
-        if (seen.has(c.sha) || ignoreAuthors.includes(author)) continue;
+        if (seen.has(c.sha) || ignoreAuthors.includes(author) || !inWindow(c.commit.committer?.date, w)) continue;
         seen.set(c.sha, {
           sha: c.sha,
           message: c.commit.message.split("\n")[0],
@@ -148,7 +148,11 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       commits: [...seen.values()],
       openPrs: open.map((p) => ({
         number: p.number, title: p.title, url: p.html_url,
-        draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at,
+        draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
+      })),
+      openedPrs: [...open, ...closed].filter((p) => inWindow(p.created_at, w)).map((p) => ({
+        number: p.number, title: p.title, url: p.html_url,
+        draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
       })),
       mergedPrs: closed.filter((p) => inWindow(p.merged_at, w)).map((p) => ({
         number: p.number, title: p.title, url: p.html_url,
@@ -156,7 +160,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       })),
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state })),
       closedIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.closed_at, w))
         .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),

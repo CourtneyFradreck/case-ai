@@ -8,7 +8,7 @@ import { DateTime } from "luxon";
 const W: Window = {
   start: new Date("2026-10-12T22:00:00Z"),
   end: new Date("2026-10-13T22:00:00Z"),
-  label: "Tuesday 13 Oct",
+  label: "yesterday",
 };
 
 let n = 0;
@@ -18,20 +18,20 @@ const finding = (over: Partial<Finding> = {}): Finding => ({
   severity: "info",
   repo: "me/demo",
   summary: "Something happened",
-  sources: [{ label: "commit", url: "https://github.com/me/demo/commit/abc" }],
+  sources: [{ label: "commit", url: `https://github.com/me/demo/commit/${n}` }],
   ...over,
 });
 
 describe("render", () => {
-  it("includes the window label in the greeting header", () => {
-    expect(render([], [snap()], W, 3800, undefined, { userName: "Courtney", now: DateTime.fromISO("2026-10-14T05:00:00Z") })).toContain("Good morning, Courtney. Here's Tuesday 13 Oct.");
+  it("uses today's date in the greeting header", () => {
+    expect(render([], [snap()], W, 3800, undefined, { userName: "Courtney", now: DateTime.fromISO("2026-10-16T05:00:00Z") })).toContain("<b>Good morning, Courtney. Here's your morning brief.</b>\nFriday, 16 Oct 2026");
   });
 
   it("reports a quiet day without section headers when there are no findings or failures", () => {
     const out = render([], [snap()], W);
-    expect(out).toContain("Quiet day");
-    expect(out).not.toContain("Needs attention");
-    expect(out).not.toContain("Yesterday");
+    expect(out).toContain("Nothing new in the past week.");
+    expect(out).not.toContain("Here's what needs your attention");
+    expect(out).not.toContain("Here's what you worked on");
   });
 
   it("escapes HTML in finding summaries", () => {
@@ -75,8 +75,8 @@ describe("render", () => {
       ],
       [snap()], W,
     );
-    const attention = out.indexOf("Needs attention");
-    const yesterday = out.indexOf("Yesterday");
+    const attention = out.indexOf("Here's what needs your attention");
+    const yesterday = out.indexOf("Here's what you worked on yesterday");
     expect(attention).toBeGreaterThan(-1);
     expect(yesterday).toBeGreaterThan(attention);
     expect(out.indexOf("🔴 HIGH-ITEM")).toBeGreaterThan(attention);

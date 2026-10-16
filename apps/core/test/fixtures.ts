@@ -4,7 +4,7 @@ export const NOW = new Date("2026-10-14T05:00:00Z"); // 07:00 Harare
 
 export const snap = (over: Partial<RepoSnapshot> = {}): RepoSnapshot => ({
   repo: "me/demo", private: false, defaultBranch: "main",
-  commits: [], openPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
+  commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
   closedIssues: [], comments: [], openIssueCount: 0,
   ...over,
 });

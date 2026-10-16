@@ -14,8 +14,8 @@ export interface Finding {
 }
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }
-export interface Pr { number: number; title: string; url: string; draft: boolean; headRef: string; updatedAt: string; mergedAt?: string | null }
-export interface Issue { number: number; title: string; url: string; createdAt: string }
+export interface Pr { number: number; title: string; url: string; draft: boolean; headRef: string; updatedAt: string; createdAt?: string; mergedAt?: string | null }
+export interface Issue { number: number; title: string; url: string; createdAt: string; state?: string }
 export interface ClosedIssue { number: number; title: string; url: string; closedAt: string }
 export interface IssueComment {
   id: number; issueNumber: number; issueTitle: string; isPr: boolean;
@@ -30,6 +30,7 @@ export interface RepoSnapshot {
   defaultBranch: string;
   commits: Commit[];
   openPrs: Pr[];
+  openedPrs: Pr[];
   mergedPrs: Pr[];
   newIssues: Issue[];
   closedIssues: ClosedIssue[];

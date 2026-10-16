@@ -2,6 +2,7 @@ import type { Finding, RepoSnapshot, Source } from "./types.js";
 import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
 import type { ValidBrief, ValidItem } from "./llm/schema.js";
+import { deduplicateFindings, organizeBrief } from "./sections.js";
 
 export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -13,6 +14,11 @@ const icon = { high: "🔴", medium: "🟡", low: "⚪", info: "•" } as const;
 const rank = { high: 0, medium: 1, low: 2, info: 3 } as const;
 
 function line(f: Finding): string[] {
+  if (f.rule === "old_branches") {
+    const names = f.sources.map((s) => s.label).join(", ");
+    const summary = esc(f.summary).replace(esc(names), () => f.sources.map(link).join(", "));
+    return [`${icon[f.severity]} ${summary}`];
+  }
   const out = [`${icon[f.severity]} ${esc(f.summary)} [${f.sources.map(link).join(", ")}]`];
   for (const d of f.details ?? []) out.push(`   – ${esc(d)}`);
   return out;
@@ -20,11 +26,20 @@ function line(f: Finding): string[] {
 
 export interface GreetingOptions { userName?: string; now?: DateTime }
 
-function header(w: Window, options: GreetingOptions): string {
-  const hour = (options.now ?? DateTime.now()).setZone(ZONE).hour;
+function header(options: GreetingOptions): string[] {
+  const today = (options.now ?? DateTime.now()).setZone(ZONE).setLocale("en");
+  const hour = today.hour;
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const name = options.userName?.trim();
-  return `<b>${greeting}${name ? `, ${esc(name)}` : ""}. Here's ${esc(w.label)}.</b>`;
+  return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}. Here's your morning brief.</b>`, today.toFormat("cccc, d LLL yyyy")];
+}
+
+function sections(attention: string[], recap: string[], w: Window): string[] {
+  const parts: string[] = [];
+  if (attention.length) parts.push("", "<b>Here's what needs your attention</b>", ...attention);
+  if (recap.length) parts.push("", `<b>Here's what you worked on ${esc(w.label.replace(/^on /, ""))}</b>`, ...recap);
+  else if (!w.label || !attention.length) parts.push("", "Nothing new in the past week.");
+  return parts;
 }
 
 function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer?: string): string {
@@ -37,19 +52,13 @@ function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer
 }
 
 export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}): string {
+  findings = deduplicateFindings(findings);
   // Stable sort: keeps the caller's order within a severity (e.g. oldest first from rules)
   const attention = findings
     .filter((f) => f.severity !== "info")
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts: string[] = [header(w, greeting)];
-
-  if (!attention.length && !yesterday.length) {
-    parts.push("", "Quiet day: no commits, PRs or issues in your tracked repos, and nothing needs attention.");
-  } else {
-    if (attention.length) parts.push("", "<b>Needs attention</b>", ...attention.flatMap(line));
-    if (yesterday.length) parts.push("", "<b>Yesterday</b>", ...yesterday.flatMap(line));
-  }
+  const parts = [...header(greeting), ...sections(attention.flatMap(line), yesterday.flatMap(line), w)];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -80,10 +89,13 @@ function modelLinks(item: ValidItem): string {
 }
 
 export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Window, maxChars = 3800, greeting: GreetingOptions = {}): string {
-  const parts = [header(w, greeting)];
-  if (brief.yesterday.length) parts.push("", "<b>Yesterday</b>", ...brief.yesterday.map((i) => `- ${esc(i.text)} ${modelLinks(i)}`));
-  if (brief.attention.length) parts.push("", "<b>Needs attention</b>", ...brief.attention.map((i) => `- ${esc(i.text)} ${modelLinks(i)}`));
-  if (brief.focus.length) parts.push("", "<b>Today, I'd suggest</b>", ...brief.focus.map((i, n) => `${n + 1}. ${esc(i.text)} (${esc(i.reason)}) ${modelLinks(i)}`));
+  brief = organizeBrief(brief, [...brief.attention, ...brief.yesterday, ...brief.focus].flatMap((i) => i.sources));
+  const modelLine = (i: ValidItem) => {
+    if (i.sources.length === 1 && i.sources[0].rule === "old_branches") return line(i.sources[0])[0];
+    const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
+    return `${icon[severity]} ${esc(i.text)} ${modelLinks(i)}`;
+  };
+  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), brief.yesterday.map(modelLine), w)];
   if (brief.note) parts.push("", `<i>${esc(brief.note)}</i>`);
   return finish(parts, snaps, maxChars);
 }

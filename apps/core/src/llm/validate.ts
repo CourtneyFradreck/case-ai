@@ -1,5 +1,6 @@
 import type { Finding } from "../types.js";
 import { BriefJson, type ValidBrief, type ValidItem, type AliasBrief, type ValidFocus } from "./schema.js";
+import { organizeBrief } from "../sections.js";
 
 export interface DropReason { section: "yesterday" | "attention" | "focus"; index: number; reason: string; aliases?: string[] }
 export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[] } | { ok: false; reason: string };
@@ -46,5 +47,5 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
     }
   }
   if (!brief.yesterday.length && !brief.attention.length && !brief.focus.length && allFindings.length) return { ok: false, reason: "empty_brief" };
-  return { ok: true, brief, dropped, addedBack };
+  return { ok: true, brief: organizeBrief(brief, allFindings), dropped, addedBack };
 }
