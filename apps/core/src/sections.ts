@@ -20,12 +20,13 @@ export function deduplicateFindings(findings: Finding[]): Finding[] {
 export function organizeBrief(brief: ValidBrief, findings: Finding[]): ValidBrief {
   const allowed = new Map(deduplicateFindings(findings).map((f) => [f.id, f]));
   const seen = new Set<string>();
-  const result: ValidBrief = { yesterday: [], attention: [], focus: [], ...(brief.note ? { note: brief.note } : {}) };
+  const result: ValidBrief = { yesterday: [], attention: [], focus: [], ...(brief.note ? { note: brief.note, noteSources: brief.noteSources } : {}) };
   const add = (item: ValidItem, section: "attention" | "yesterday") => {
     const sources = item.sources.filter((f) => allowed.has(f.id) && !seen.has(f.id));
     if (!sources.length) return;
     const matches = (f: Finding) => (f.severity === "info" ? "yesterday" : "attention") === section;
     if (sources.length === item.sources.length && sources.every(matches) &&
+      !(section === "yesterday" && sources.length > 1) &&
       !(sources.length > 1 && sources.some((f) => f.rule === "old_branches"))) {
       result[section].push(item);
       sources.forEach((f) => seen.add(f.id));

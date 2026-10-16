@@ -2,6 +2,10 @@ export type Severity = "high" | "medium" | "low" | "info";
 
 export interface Source { label: string; url: string }
 
+export type Activity =
+  | { kind: "commits"; count: number; branch: string; messages: string[] }
+  | { kind: "pr" | "issue"; action: "Opened" | "Merged" | "Closed"; number: number; title: string };
+
 export interface Finding {
   id: string;
   rule: string;
@@ -11,6 +15,7 @@ export interface Finding {
   details?: string[];     // optional sub-lines (e.g. commit messages)
   sources: Source[];
   ageDays?: number;       // for sorting within a severity
+  activity?: Activity;   // structured recap facts, independent of model wording
 }
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }

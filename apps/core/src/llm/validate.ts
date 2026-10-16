@@ -1,6 +1,7 @@
 import type { Finding } from "../types.js";
 import { BriefJson, type ValidBrief, type ValidItem, type AliasBrief, type ValidFocus } from "./schema.js";
 import { organizeBrief } from "../sections.js";
+import { closingLine } from "./closing.js";
 
 export interface DropReason { section: "yesterday" | "attention" | "focus"; index: number; reason: string; aliases?: string[] }
 export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[] } | { ok: false; reason: string };
@@ -33,8 +34,10 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
   brief.attention = resolve(result.data.attention, "attention");
   brief.focus = resolve(result.data.focus, "focus") as ValidFocus[];
   if (result.data.note !== undefined) {
-    const note = stripUrls(result.data.note);
-    if (note) brief.note = note;
+    const aliases = [...new Set(result.data.noteSources ?? [])];
+    const sources = aliases.flatMap((alias) => aliasToFinding.has(alias) ? [aliasToFinding.get(alias)!] : []);
+    const note = sources.length === aliases.length ? closingLine(stripUrls(result.data.note), sources) : undefined;
+    if (note) { brief.note = note; brief.noteSources = sources; }
   }
   const cited = new Set([...brief.yesterday, ...brief.attention, ...brief.focus].flatMap((i) => i.sources.map((f) => f.id)));
   const sent = new Set([...aliasToFinding.values()].map((f) => f.id));

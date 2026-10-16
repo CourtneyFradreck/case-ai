@@ -11,10 +11,10 @@ describe("model rendering", () => {
   it("escapes all model text, including focus reasons and notes", () => {
     const f = finding();
     const ci = finding({ id: "ci", severity: "high", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
-    const text = renderModelBrief({ yesterday: [{ text: "<script> & progress", sources: [f] }], attention: [], focus: [{ text: "Fix <CI>", reason: "It failed & needs <help>", sources: [ci] }], note: "<hello> & bye" }, [snap()], w, 3800);
+    const text = renderModelBrief({ yesterday: [{ text: "<script> & progress", sources: [f] }], attention: [], focus: [{ text: "Fix <CI>", reason: "It failed & needs <help>", sources: [ci] }], note: "<CI> still needs attention & a fix.", noteSources: [ci] }, [snap()], w, 3800);
     expect(text).toContain("• &lt;script&gt; &amp; progress");
     expect(text).toContain("🔴 Fix &lt;CI&gt; (It failed &amp; needs &lt;help&gt;)");
-    expect(text).toContain("<i>&lt;hello&gt; &amp; bye</i>");
+    expect(text).toContain("<i>&lt;CI&gt; still needs attention &amp; a fix.</i>");
     expect(text).not.toContain("<script>");
   });
   it("deduplicates stored source URLs and limits links to three per item", () => {

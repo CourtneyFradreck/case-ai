@@ -66,7 +66,11 @@ describe("model input", () => {
     const input = buildInput([publicFinding], snaps, "over the weekend", { modelIncludePrivate: false, userName: "Courtney" });
     expect(input.user).toContain("Recap period: over the weekend");
     expect(input.system).toContain("capable personal assistant talking to Courtney in second person");
-    expect(input.system).toContain("2-4 most meaningful items per branch");
+    expect(input.system).toContain("2-3 most meaningful highlights per branch");
+    expect(input.system).toContain('Start each bullet with a verb or count, never "You"');
+    expect(input.system).toContain("Do not repeat repo names inside bullets");
+    expect(input.system).toContain('Cite that finding\'s aliases in "noteSources"');
+    expect(input.system).toContain("No generic encouragement, no exclamation marks");
     expect(input.system).toContain("Never invent activity");
     expect(input.system).toContain("No corporate filler");
     expect(input.system).toContain("No emoji beyond the existing status dots");

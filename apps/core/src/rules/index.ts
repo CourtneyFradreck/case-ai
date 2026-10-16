@@ -116,6 +116,7 @@ export function recapCommits(s: RepoSnapshot): Finding[] {
       repo: s.repo,
       summary: `${plural(commits.length, "commit")} on ${branch} in ${s.repo}`,
       details: sorted.slice(-3).map((c) => c.message),
+      activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-3).map((c) => c.message) },
       sources: [{ label: commits.length > 1 ? "diff" : "commit", url }],
     };
   });
@@ -126,6 +127,7 @@ export function openedPrs(s: RepoSnapshot): Finding[] {
   return s.openedPrs.filter((p) => !merged.has(p.number)).map((p) => ({
     id: fid("opened_pr", s.repo, String(p.number)), rule: "opened_pr", severity: "info",
     repo: s.repo, summary: `Opened PR #${p.number} "${p.title}" in ${s.repo}`,
+    activity: { kind: "pr" as const, action: "Opened" as const, number: p.number, title: p.title },
     sources: [{ label: "PR", url: p.url }],
   }));
 }
@@ -137,6 +139,7 @@ export function mergedPrs(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Merged PR #${p.number} "${p.title}" in ${s.repo}`,
+    activity: { kind: "pr" as const, action: "Merged" as const, number: p.number, title: p.title },
     sources: [{ label: "PR", url: p.url }],
   }));
 }
@@ -148,6 +151,7 @@ export function newIssues(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Opened issue #${i.number} "${i.title}" in ${s.repo}`,
+    activity: { kind: "issue" as const, action: "Opened" as const, number: i.number, title: i.title },
     sources: [{ label: "issue", url: i.url }],
   }));
 }
@@ -159,6 +163,7 @@ export function closedIssues(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Closed issue #${i.number} "${i.title}" in ${s.repo}`,
+    activity: { kind: "issue" as const, action: "Closed" as const, number: i.number, title: i.title },
     sources: [{ label: "issue", url: i.url }],
   }));
 }

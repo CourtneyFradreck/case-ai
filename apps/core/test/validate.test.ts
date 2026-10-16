@@ -29,13 +29,14 @@ describe("brief validation", () => {
   it("strips URLs from text, reasons and the note, and drops text emptied by stripping", () => {
     const medium = finding({ id: "review", severity: "medium" });
     const high = finding({ id: "ci", severity: "high" });
-    const result = validate(output({ yesterday: [{ ...item, text: "https://evil.test" }], attention: [{ text: "Review https://evil.test now", sources: ["F2"] }], focus: [{ text: "Fix www.evil.test CI", reason: "Because http://evil.test it failed", sources: ["F3"] }], note: "Visit WWW.evil.test please" }), new Map([["F1", f], ["F2", medium], ["F3", high]]), [f, medium, high]);
+    const result = validate(output({ yesterday: [{ ...item, text: "https://evil.test" }], attention: [{ text: "Review https://evil.test now", sources: ["F2"] }], focus: [{ text: "Fix www.evil.test CI", reason: "Because http://evil.test it failed", sources: ["F3"] }], note: "CI needs attention https://evil.test", noteSources: ["F3"] }), new Map([["F1", f], ["F2", medium], ["F3", high]]), [f, medium, high]);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.brief.yesterday).toEqual([]);
       expect(result.brief.attention[0].text).toBe("Review  now");
       expect(result.brief.attention[1].text).toBe("Fix  CI (Because  it failed)");
-      expect(result.brief.note).toBe("Visit  please");
+      expect(result.brief.note).toBe("CI needs attention");
+      expect(result.brief.noteSources).toEqual([high]);
     }
   });
   it("adds uncited high findings after dropping invalid items", () => {

@@ -41,7 +41,8 @@ function serialize(brief: ValidBrief, aliasToFinding: Map<string, Finding>, find
   for (const f of findings) if (!byId.has(f.id)) byId.set(f.id, `F${byId.size + 1}`);
   const items = <T extends { sources: Finding[] }>(list: T[]) => list.map((i) => ({ ...i, sources: i.sources.map((f) => byId.get(f.id)!) }));
   return {
-    brief: { ...brief, yesterday: items(brief.yesterday), attention: items(brief.attention), focus: items(brief.focus) },
+    brief: { ...brief, yesterday: items(brief.yesterday), attention: items(brief.attention), focus: items(brief.focus),
+      ...(brief.noteSources ? { noteSources: brief.noteSources.map((f) => byId.get(f.id)!) } : {}) },
     aliases: Object.fromEntries([...byId].map(([id, alias]) => [alias, id])),
   };
 }

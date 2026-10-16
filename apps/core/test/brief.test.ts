@@ -13,7 +13,7 @@ describe("model brief generation", () => {
     const generate = vi.fn().mockResolvedValueOnce({ raw: "invalid", model: "test", inputTokens: 10, outputTokens: 2 }).mockResolvedValueOnce({ raw, model: "test", inputTokens: 12, outputTokens: 8 });
     const result = await generateModelBrief([finding()], [snap()], w, cfg, { name: "test", generate });
     expect(result).toMatchObject({ model: "test", inputTokens: 22, outputTokens: 10, json: { attempts: 2, fallbackReason: null, raw, brief: { yesterday: [{ text: "You made progress.", sources: ["F1"] }] } } });
-    expect("text" in result && result.text).toContain("You made progress.");
+    expect("text" in result && result.text).toContain("• Made progress.");
     expect(generate).toHaveBeenCalledTimes(2);
   });
   it("records fallback metadata after two invalid outputs", async () => {
@@ -37,7 +37,7 @@ describe("model brief generation", () => {
     const result = await generateModelBrief([finding()], [snap({ private: true })], w, cfg, { name: "test", generate });
     expect(generate).not.toHaveBeenCalled();
     expect(result).toMatchObject({ model: null, json: { attempts: 0, fallbackReason: null } });
-    expect("text" in result && result.text).toContain("me/demo: 3 commits on main");
+    expect("text" in result && result.text).toContain("<b>demo</b>\n• 3 commits on main.");
   });
   it("passes the configured name to the model prompt and renders with the injected time", async () => {
     const generate = vi.fn().mockResolvedValue({ raw, model: "test" });

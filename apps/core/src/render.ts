@@ -3,6 +3,8 @@ import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
 import type { ValidBrief, ValidItem } from "./llm/schema.js";
 import { deduplicateFindings, organizeBrief } from "./sections.js";
+import { activityAmount, bulletText, recapKind, recapText } from "./recap-text.js";
+import { closingLine } from "./llm/closing.js";
 
 export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -25,6 +27,21 @@ function line(f: Finding): string[] {
 }
 
 export interface GreetingOptions { userName?: string; now?: DateTime }
+
+function recapLines(items: ValidItem[], model = false): string[] {
+  const groups = new Map<string, { amount: number; items: ValidItem[] }>();
+  for (const item of items) {
+    const f = item.sources[0];
+    const group = groups.get(f.repo) ?? { amount: 0, items: [] };
+    group.amount += activityAmount(f);
+    group.items.push(item);
+    groups.set(f.repo, group);
+  }
+  return [...groups].sort(([repoA, a], [repoB, b]) => b.amount - a.amount || repoA.localeCompare(repoB))
+    .flatMap(([repo, group]) => ["", `<b>${esc(repo.split("/").pop()!)}</b>`,
+      ...group.items.sort((a, b) => recapKind(a.sources[0]) - recapKind(b.sources[0]) || activityAmount(b.sources[0]) - activityAmount(a.sources[0]))
+        .map((item) => `• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`)]);
+}
 
 function header(options: GreetingOptions): string[] {
   const today = (options.now ?? DateTime.now()).setZone(ZONE).setLocale("en");
@@ -58,7 +75,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info")
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections(attention.flatMap(line), yesterday.flatMap(line), w)];
+  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w)];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -74,6 +91,8 @@ function truncate(parts: string[], maxChars: number): string {
       kept.push(p);
       len += p.length + 1;
     }
+    // Repo and section headings should not survive without their first item.
+    while (kept.length && (!kept.at(-1) || /^<b>.*<\/b>$/.test(kept.at(-1)!))) kept.pop();
     const cut = parts.length - kept.length;
     text = kept.join("\n") + `\n\n<i>+${cut} more line(s) not shown</i>`;
   }
@@ -93,9 +112,10 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
   const modelLine = (i: ValidItem) => {
     if (i.sources.length === 1 && i.sources[0].rule === "old_branches") return line(i.sources[0])[0];
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
-    return `${icon[severity]} ${esc(i.text)} ${modelLinks(i)}`;
+    return `${icon[severity]} ${esc(bulletText(i.text))} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), brief.yesterday.map(modelLine), w)];
-  if (brief.note) parts.push("", `<i>${esc(brief.note)}</i>`);
+  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w)];
+  const note = closingLine(brief.note, brief.noteSources);
+  if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);
 }
