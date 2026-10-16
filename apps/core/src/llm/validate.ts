@@ -4,14 +4,16 @@ import { organizeBrief } from "../sections.js";
 import { closingLine } from "./closing.js";
 
 export interface DropReason { section: "yesterday" | "attention" | "focus"; index: number; reason: string; aliases?: string[] }
-export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[] } | { ok: false; reason: string };
+export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[] } | { ok: false; reason: string; detail?: string };
 const stripUrls = (text: string) => text.replace(/https?:\/\/\S+|www\.\S+/gi, "").trim();
 
 export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[]): ValidationResult {
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return { ok: false, reason: "invalid_json" }; }
+  try { parsed = JSON.parse(raw); } catch (error) {
+    return { ok: false, reason: "invalid_json", detail: error instanceof Error ? error.message : "Invalid JSON response" };
+  }
   const result = BriefJson.safeParse(parsed);
-  if (!result.success) return { ok: false, reason: result.error.message };
+  if (!result.success) return { ok: false, reason: "invalid_schema", detail: result.error.message };
   const dropped: DropReason[] = [];
   const addedBack: string[] = [];
   const brief: ValidBrief = { yesterday: [], attention: [], focus: [] };

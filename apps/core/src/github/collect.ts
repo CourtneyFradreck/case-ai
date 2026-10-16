@@ -57,15 +57,31 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       });
     }
 
-    // 2. Activity-window commits on any branch that moved, de-duplicated by SHA
+    // 2. PRs and the commits already covered by a merge in this window.
+    const open = await gh.paginate(gh.pulls.list, { owner, repo, state: "open", per_page: 100 });
+    const { data: closed } = await gh.pulls.list({
+      owner, repo, state: "closed", sort: "updated", direction: "desc", per_page: 50,
+    });
+    const merged = closed.filter((p) => inWindow(p.merged_at, w));
+    const mergedShas = new Set<string>();
+    for (const p of merged) {
+      const commits = await gh.paginate(gh.pulls.listCommits, { owner, repo, pull_number: p.number, per_page: 100 });
+      for (const c of commits) mergedShas.add(c.sha);
+    }
+
+    // 3. Walk the default branch first so shared SHAs belong to it, then
+    // feature branches. PR commits and merge commits are covered by the PR line.
     const seen = new Map<string, Commit>();
-    for (const b of branches.filter((b) => new Date(b.lastCommitAt) >= w.start)) {
+    const activeBranches = branches.filter((b) => new Date(b.lastCommitAt) >= w.start)
+      .sort((a, b) => Number(b.name === base) - Number(a.name === base));
+    for (const b of activeBranches) {
       const list = await gh.paginate(gh.repos.listCommits, {
         owner, repo, sha: b.name, since, until, per_page: 100,
       });
       for (const c of list) {
         const author = c.author?.login ?? c.commit.author?.name ?? "unknown";
-        if (seen.has(c.sha) || ignoreAuthors.includes(author) || !inWindow(c.commit.committer?.date, w)) continue;
+        if (c.parents.length > 1 || mergedShas.has(c.sha) || seen.has(c.sha) ||
+          ignoreAuthors.includes(author) || !inWindow(c.commit.committer?.date, w)) continue;
         seen.set(c.sha, {
           sha: c.sha,
           message: c.commit.message.split("\n")[0],
@@ -77,12 +93,6 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
         });
       }
     }
-
-    // 3. Pull requests
-    const open = await gh.paginate(gh.pulls.list, { owner, repo, state: "open", per_page: 100 });
-    const { data: closed } = await gh.pulls.list({
-      owner, repo, state: "closed", sort: "updated", direction: "desc", per_page: 50,
-    });
 
     // 4. Issues (this endpoint also returns PRs, so filter them out)
     const issues = await gh.paginate(gh.issues.listForRepo, {
@@ -154,7 +164,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
         number: p.number, title: p.title, url: p.html_url,
         draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
       })),
-      mergedPrs: closed.filter((p) => inWindow(p.merged_at, w)).map((p) => ({
+      mergedPrs: merged.map((p) => ({
         number: p.number, title: p.title, url: p.html_url,
         draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
       })),

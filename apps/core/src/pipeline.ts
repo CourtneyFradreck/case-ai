@@ -39,8 +39,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
         const result = await generateModelBrief(findings, snaps, w, config, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
-      } catch {
-        meta = fallbackMeta(env.geminiModel, "model_error");
+      } catch (error) {
+        meta = fallbackMeta(env.geminiModel, "model_error", error instanceof Error ? error.message : String(error));
         text = renderRules("Rule-only brief: model unavailable");
       }
     }
@@ -51,9 +51,10 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     await finishRun(runId, "failed", String(e));
     throw e;
   } finally {
-    console.info(JSON.stringify({ event: "brief", runId, mode: env.briefMode, model: meta?.model ?? null,
+    console.info(JSON.stringify({ event: "brief", runId, source, mode: env.briefMode, model: meta?.model ?? null,
       attempts: meta?.json.attempts ?? 0, inputTokens: meta?.inputTokens ?? null, outputTokens: meta?.outputTokens ?? null,
-      dropped: meta?.json.dropped.length ?? 0, fallbackReason: meta?.json.fallbackReason ?? null }));
+      dropped: meta?.json.dropped.length ?? 0, fallbackReason: meta?.json.fallbackReason ?? null,
+      fallbackDetail: meta?.json.fallbackReason ? (meta.json.fallbackDetail ?? meta.json.fallbackReason).slice(0, 200) : null }));
     await lock.query("SELECT pg_advisory_unlock(777)");
     lock.release();
   }

@@ -17,12 +17,13 @@ export interface BriefAudit {
   addedBack: string[];
   attempts: number;
   fallbackReason: string | null;
+  fallbackDetail?: string | null;
 }
 export interface BriefMeta { model: string | null; inputTokens?: number; outputTokens?: number; json: BriefAudit }
 export type ModelBriefResult = BriefMeta & ({ text: string } | { fallbackReason: string });
 
-export function fallbackMeta(model: string | null, reason: string): BriefMeta & { fallbackReason: string } {
-  return { model, fallbackReason: reason, json: { brief: null, aliases: {}, raw: null, dropped: [], addedBack: [], attempts: 0, fallbackReason: reason } };
+export function fallbackMeta(model: string | null, reason: string, detail = reason): BriefMeta & { fallbackReason: string } {
+  return { model, fallbackReason: reason, json: { brief: null, aliases: {}, raw: null, dropped: [], addedBack: [], attempts: 0, fallbackReason: reason, fallbackDetail: detail.slice(0, 200) } };
 }
 
 class ModelTimeoutError extends Error {}
@@ -49,7 +50,7 @@ function serialize(brief: ValidBrief, aliasToFinding: Map<string, Finding>, find
 
 export async function generateModelBrief(findings: Finding[], snaps: RepoSnapshot[], w: Window, cfg: ModelBriefConfig, provider: BriefModel, now: DateTime = DateTime.now()): Promise<ModelBriefResult> {
   const input = buildInput(findings, snaps, w.label, cfg);
-  const meta: BriefMeta = { model: provider.name, json: { brief: null, aliases: Object.fromEntries([...input.aliasToFinding].map(([alias, f]) => [alias, f.id])), raw: null, responses: [], dropped: [], addedBack: [], attempts: 0, fallbackReason: null } };
+  const meta: BriefMeta = { model: provider.name, json: { brief: null, aliases: Object.fromEntries([...input.aliasToFinding].map(([alias, f]) => [alias, f.id])), raw: null, responses: [], dropped: [], addedBack: [], attempts: 0, fallbackReason: null, fallbackDetail: null } };
   const complete = (result: Extract<ReturnType<typeof validate>, { ok: true }>) => {
     meta.json.dropped = result.dropped;
     meta.json.addedBack = result.addedBack;
@@ -59,9 +60,10 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings);
     if (result.ok) { meta.model = null; return complete(result); }
-    return fallbackMeta(null, result.reason);
+    return fallbackMeta(null, result.reason, result.detail);
   }
   let fallbackReason = "model_error";
+  let fallbackDetail = "Model generation failed";
   for (let attempt = 1; attempt <= 2; attempt++) {
     meta.json.attempts = attempt;
     try {
@@ -74,11 +76,15 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
       const result = validate(response.raw, input.aliasToFinding, findings);
       if (result.ok) return complete(result);
       fallbackReason = result.reason;
+      fallbackDetail = result.detail ?? result.reason;
     } catch (error) {
       fallbackReason = error instanceof ModelTimeoutError ? "model_timeout" : "provider_error";
+      fallbackDetail = error instanceof ModelTimeoutError ? `Model timed out after ${cfg.modelTimeoutMs} ms`
+        : error instanceof Error ? error.message : String(error);
     }
   }
   meta.json.brief = null;
   meta.json.fallbackReason = fallbackReason;
+  meta.json.fallbackDetail = fallbackDetail.slice(0, 200);
   return { ...meta, fallbackReason };
 }

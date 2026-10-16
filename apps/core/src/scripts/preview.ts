@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { GeminiBriefModel } from "../llm/gemini.js";
 import { generateModelBrief } from "../llm/brief.js";
@@ -18,20 +18,44 @@ async function main() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "your_gemini_api_key") throw new Error("Set GEMINI_API_KEY in your environment or .env to run the preview.");
   const config = JSON.parse(readFileSync(new URL("../../config.json", import.meta.url), "utf8"));
+  const oct15 = process.argv.includes("--oct15");
   // Load test fixtures through tsx, keeping them outside the production tsc root.
   const fixturesUrl = new URL("../../test/fixtures.js", import.meta.url);
-  const { previewSnapshots, NOW } = await import(fixturesUrl.href) as { previewSnapshots: RepoSnapshot[]; NOW: Date };
+  let { previewSnapshots, NOW } = await import(fixturesUrl.href) as { previewSnapshots: RepoSnapshot[]; NOW: Date };
+  if (oct15) {
+    const fixtureUrl = new URL("../../test/fixtures/oct15.js", import.meta.url);
+    const fixture = await import(fixtureUrl.href) as { OCT15_NOW: Date; oct15Fixture(): { expected: RepoSnapshot } };
+    previewSnapshots = [fixture.oct15Fixture().expected];
+    NOW = fixture.OCT15_NOW;
+  }
   const { window: w, snapshots } = selectRecap(previewSnapshots, DateTime.fromJSDate(NOW));
   const findings = runRules(snapshots, NOW, config, w);
   const provider = new GeminiBriefModel(apiKey, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite", config.modelTimeoutMs);
-  const now = DateTime.now();
+  const now = oct15 ? DateTime.fromJSDate(NOW) : DateTime.now();
+  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now });
+  const save = (path: string, text: string) => {
+    if (!oct15) return;
+    const out = new URL("../../../../out/", import.meta.url);
+    mkdirSync(out, { recursive: true });
+    writeFileSync(new URL(`${path}.html`, out), `<!doctype html><meta charset="utf-8"><title>CASE 15 Oct fixture</title><body style="font:16px/1.6 system-ui;max-width:900px;margin:3rem auto;padding:0 1rem;white-space:pre-wrap">${text}</body>`, "utf8");
+    writeFileSync(new URL(`${path}.txt`, out), text.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"), "utf8");
+  };
+  if (oct15) {
+    const template = renderRules();
+    save("oct15-template", template);
+    console.log("Template brief (15 Oct fixture):");
+    console.log(template);
+    save("oct15-fallback", renderRules("Rule-only brief: model unavailable"));
+  }
   const result = await generateModelBrief(findings, previewSnapshots, w, config, provider, now);
   console.log("Raw JSON:");
   for (const raw of result.json.responses ?? []) console.log(raw);
   console.log("Validation report:");
   console.log(JSON.stringify({ model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, ...result.json, raw: undefined, responses: undefined }, null, 2));
   console.log("Telegram text:");
-  console.log("text" in result ? result.text : render(findings, previewSnapshots, w, config.maxBriefChars, "Rule-only brief: model unavailable", { userName: config.userName, now }));
+  const text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
+  console.log(text);
+  save("oct15-model", text);
   if ("fallbackReason" in result) process.exitCode = 1;
 }
 

@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
-    "preview": "tsx src/scripts/preview.ts"
+    "preview": "tsx src/scripts/preview.ts",
+    "preview:oct15": "tsx src/scripts/preview.ts --oct15"
   },
   "dependencies": {
     "@google/genai": "^2.30.0",

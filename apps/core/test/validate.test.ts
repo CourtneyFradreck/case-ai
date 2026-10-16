@@ -16,7 +16,10 @@ describe("brief validation", () => {
   it("reports schema violations", () => {
     const result = validate(output({ focus: [{ ...item, reason: "" }] }), aliases, [f]);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain("reason");
+    if (!result.ok) {
+      expect(result.reason).toBe("invalid_schema");
+      expect(result.detail).toContain("reason");
+    }
   });
   it("removes unknown aliases and drops items with no known sources", () => {
     const result = validate(output({ yesterday: [{ ...item, sources: ["missing", "F1"] }, { ...item, sources: ["missing"] }] }), aliases, [f]);

@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOW, daysAgo } from "./fixtures.js";
+import { oct15Fixture, OCT15_NOW, OCT15_WINDOW } from "./fixtures/oct15.js";
+import { runRules } from "../src/rules/index.js";
+import { render, renderModelBrief } from "../src/render.js";
+import { DateTime } from "luxon";
 
 const gh = vi.hoisted(() => ({
   paginate: vi.fn(),
   repos: { get: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
-  pulls: { list: vi.fn() },
+  pulls: { list: vi.fn(), listCommits: vi.fn() },
   issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn() },
   users: { getAuthenticated: vi.fn() },
   actions: { listRepoWorkflows: vi.fn(), listWorkflowRunsForRepo: vi.fn() },
@@ -48,6 +52,73 @@ describe("workflow collection", () => {
   it("drops all runs when no workflows are active", async () => {
     gh.paginate.mockResolvedValue([]);
     expect((await collect())[0].ciRuns).toEqual([]);
+  });
+});
+
+describe("15 Oct commit attribution regression", () => {
+  let fixture: ReturnType<typeof oct15Fixture>;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    fixture = oct15Fixture();
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "CourtneyFradreck" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: 1 } });
+    gh.repos.getCommit.mockImplementation(async ({ ref }) => ({ data: [fixture.direct, ...fixture.featureCommits].find((c) => c.sha === ref) }));
+    gh.repos.compareCommitsWithBasehead.mockResolvedValue({ data: { ahead_by: 9 } });
+    gh.pulls.list.mockResolvedValue({ data: [fixture.mergedPr] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockImplementation(async (endpoint, params) => {
+      if (endpoint === gh.repos.listBranches) return fixture.branches;
+      if (endpoint === gh.repos.listCommits) return fixture.branchCommits[params.sha as keyof typeof fixture.branchCommits];
+      if (endpoint === gh.pulls.listCommits) return fixture.prCommits;
+      if (endpoint === gh.issues.listForRepo) return [fixture.issue];
+      return [];
+    });
+  });
+  const collect = async () => (await collectAll([fixture.repo], OCT15_WINDOW, []))[0];
+  const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: [] };
+
+  it("attributes only nine unique feature commits and the direct main commit, keeping the merged PR", async () => {
+    expect(fixture.branchCommits[fixture.feature]).toHaveLength(15);
+    expect(fixture.branchCommits.main).toHaveLength(7);
+    const snapshot = await collect();
+    expect(snapshot.error).toBeUndefined();
+    expect(snapshot).toEqual({ ...fixture.expected, error: undefined });
+    expect(snapshot.commits.filter((c) => c.branch === fixture.feature)).toHaveLength(9);
+    expect(snapshot.commits.filter((c) => c.branch === "main").map((c) => c.sha)).toEqual([fixture.direct.sha]);
+    expect(snapshot.commits.map((c) => c.sha)).not.toContain(fixture.merge.sha);
+    expect(gh.paginate.mock.calls.filter(([endpoint]) => endpoint === gh.repos.listCommits).map(([, params]) => params.sha)).toEqual(["main", fixture.feature]);
+    expect(gh.paginate.mock.calls.filter(([endpoint]) => endpoint === gh.pulls.listCommits)).toEqual([
+      [gh.pulls.listCommits, { owner: "CourtneyFradreck", repo: "case-ai", pull_number: 2, per_page: 100 }],
+    ]);
+    const findings = runRules([snapshot], OCT15_NOW, cfg, OCT15_WINDOW);
+    const options = { userName: "Courtney", now: DateTime.fromJSDate(OCT15_NOW) };
+    const template = render(findings, [snapshot], OCT15_WINDOW, 3800, undefined, options);
+    const model = renderModelBrief({ yesterday: findings.map((f) => ({ text: f.summary, sources: [f] })), attention: [], focus: [] }, [snapshot], OCT15_WINDOW, 3800, options);
+    for (const text of [template, model]) {
+      expect(text).toContain("9 commits on feat/m2-model-brief");
+      expect(text).toContain("A README update on main.");
+      expect(text).toContain('Merged PR #2 "GitHub morning brief pipeline and activity rules".');
+      expect(text).not.toContain("15 commits");
+      expect(text).not.toContain("Merge pull request");
+    }
+    expect(model).toBe(template);
+  });
+  it("gives shared non-PR commits to the default branch and skips all merge commits", async () => {
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    const snapshot = await collect();
+    expect(snapshot.error).toBeUndefined();
+    expect(snapshot.commits.filter((c) => c.branch === "main")).toHaveLength(6);
+    expect(snapshot.commits.filter((c) => c.branch === fixture.feature)).toHaveLength(9);
+    expect(snapshot.commits.map((c) => c.sha)).not.toContain(fixture.merge.sha);
+    expect(gh.paginate.mock.calls.filter(([endpoint]) => endpoint === gh.pulls.listCommits)).toEqual([]);
+  });
+  it("does not exclude commits for a PR merged outside the collection window", async () => {
+    gh.pulls.list.mockResolvedValue({ data: [{ ...fixture.mergedPr, merged_at: OCT15_WINDOW.end.toISOString() }] });
+    const snapshot = await collect();
+    expect(snapshot.error).toBeUndefined();
+    expect(snapshot.mergedPrs).toEqual([]);
+    expect(snapshot.commits.filter((c) => c.branch === "main")).toHaveLength(6);
+    expect(gh.paginate.mock.calls.filter(([endpoint]) => endpoint === gh.pulls.listCommits)).toEqual([]);
   });
 });
 
