@@ -10,8 +10,14 @@ export function yesterdayWindow(now: DateTime = DateTime.now()): Window {
   return {
     start: start.toUTC().toJSDate(),
     end: today.toUTC().toJSDate(),
-    label: start.toFormat("cccc d LLL"),
+    label: "yesterday",
   };
+}
+
+// Collect completed local days; today's activity belongs in the next brief.
+export function pastWeekWindow(now: DateTime = DateTime.now()): Window {
+  const today = now.setZone(ZONE).startOf("day");
+  return { start: today.minus({ days: 7 }).toJSDate(), end: today.toJSDate(), label: "past week" };
 }
 
 export const inWindow = (iso: string | null | undefined, w: Window) =>
