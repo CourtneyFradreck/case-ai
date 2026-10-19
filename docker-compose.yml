@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: case
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -16,6 +17,7 @@ services:
 
   core:
     build: ./apps/core
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://case:${POSTGRES_PASSWORD}@postgres:5432/case
       CASE_API_KEY: ${CASE_API_KEY}
@@ -31,6 +33,7 @@ services:
 
   n8n:
     image: n8nio/n8n:latest
+    restart: unless-stopped
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
