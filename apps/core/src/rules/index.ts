@@ -103,12 +103,16 @@ export function recapCommits(s: RepoSnapshot): Finding[] {
   for (const c of s.commits) byBranch.set(c.branch, [...(byBranch.get(c.branch) ?? []), c]);
 
   return [...byBranch].map(([branch, commits]) => {
+    // Dates choose the messages shown; history chooses the diff range, since commits pushed together can share a timestamp.
     const sorted = [...commits].sort((a, b) => a.date.localeCompare(b.date));
-    const oldest = sorted[0];
-    const newest = sorted[sorted.length - 1];
-    const url = oldest.parentSha
-      ? `https://github.com/${s.repo}/compare/${oldest.parentSha}...${newest.sha}`
-      : newest.url;
+    const shas = new Set(commits.map((c) => c.sha));
+    const parents = new Set(commits.map((c) => c.parentSha));
+    const roots = commits.filter((c) => !c.parentSha || !shas.has(c.parentSha));
+    const tips = commits.filter((c) => !parents.has(c.sha));
+    const newest = tips.length === 1 ? tips[0] : sorted[sorted.length - 1];
+    // More than one root means a merge brought in a second line of history: link the newest commit alone.
+    const base = roots.length === 1 && commits.length > 1 ? roots[0].parentSha : undefined;
+    const url = base ? `https://github.com/${s.repo}/compare/${base}...${newest.sha}` : newest.url;
     return {
       id: fid("commits", s.repo, branch, newest.sha),
       rule: "commits",
@@ -117,7 +121,7 @@ export function recapCommits(s: RepoSnapshot): Finding[] {
       summary: `${plural(commits.length, "commit")} on ${branch} in ${s.repo}`,
       details: sorted.slice(-3).map((c) => c.message),
       activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-3).map((c) => c.message) },
-      sources: [{ label: commits.length > 1 ? "diff" : "commit", url }],
+      sources: [{ label: base ? "diff" : "commit", url }],
     };
   });
 }
@@ -221,7 +225,7 @@ export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding
     rule: "open_issues",
     severity: "low",
     repo: s.repo,
-    summary: `${s.repo} has ${plural(remaining, covered.size ? "other open issue" : "open issue")}`,
+    summary: `${plural(remaining, covered.size ? "other open issue" : "open issue")} in ${s.repo}`,
     sources: [{ label: "issues", url: `https://github.com/${s.repo}/issues` }],
   }];
 }

@@ -98,6 +98,24 @@ describe("commit counts", () => {
   });
 });
 
+describe("commit diff links", () => {
+  const at = daysAgo(1);
+  const commit = (sha: string, parentSha: string) => ({ sha, parentSha, message: sha, url: `https://github.com/me/demo/commit/${sha}`, author: "me", date: at, branch: "main" });
+  const chain = [commit("A", "P"), commit("B", "A"), commit("C", "B"), commit("D", "C")];
+  it.each([[chain], [[...chain].reverse()], [[chain[2], chain[0], chain[3], chain[1]]], [[chain[1], chain[3], chain[0], chain[2]]]])(
+    "compares parent(A)...D for a chain with identical timestamps in any order (%#)", (commits) => {
+      expect(recapCommits(snap({ commits }))[0].sources).toEqual([{ label: "diff", url: "https://github.com/me/demo/compare/P...D" }]);
+    });
+  it("links only the newest commit when two lines of history have no parent in the set", () => {
+    const commits = [{ ...commit("A", "P"), date: daysAgo(2) }, commit("X", "Q"), { ...commit("B", "A"), date: daysAgo(0.5) }];
+    expect(recapCommits(snap({ commits }))[0].sources).toEqual([{ label: "commit", url: "https://github.com/me/demo/commit/B" }]);
+  });
+  it("still picks the displayed messages by date", () => {
+    const commits = ["A", "B", "C", "D"].map((sha, i) => ({ ...commit(sha, i ? "ABCD"[i - 1] : "P"), date: daysAgo(1 - i / 10) }));
+    expect(recapCommits(snap({ commits: [...commits].reverse() }))[0].details).toEqual(["B", "C", "D"]);
+  });
+});
+
 describe("issue activity rules", () => {
   const url = "https://github.com/me/demo/issues/8";
   const comment = (id: number, author: string, mine = false, issueNumber = 8, isPr = false) => ({ id, author, mine, issueNumber, isPr, issueTitle: "title", url: `${url}#issuecomment-${id}`, createdAt: daysAgo(1) });
@@ -127,7 +145,7 @@ describe("issue activity rules", () => {
     expect(issueComments(s)).toEqual([expect.objectContaining({ severity: "medium" })]);
   });
   it.each([1, 14])("counts %s open issues at the seven-day boundary", (count) => {
-    expect(openIssues(snap({ branches: [br("main", 0, 7)], openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `me/demo has ${count} open ${count === 1 ? "issue" : "issues"}`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
+    expect(openIssues(snap({ branches: [br("main", 0, 7)], openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `${count} open ${count === 1 ? "issue" : "issues"} in me/demo`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
   });
   it.each([[8, 14], [null, 14], [1, 0]])("omits inactive or empty issue counts (%s, %s)", (age, openIssueCount) => {
     expect(openIssues(snap({ branches: age === null ? [] : [br("main", 0, age)], openIssueCount }), NOW, cfg)).toEqual([]);

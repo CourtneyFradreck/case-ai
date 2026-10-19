@@ -11,7 +11,7 @@ const now = DateTime.fromISO("2026-10-16T05:00:00Z");
 const date = "2026-10-15T10:00:00Z";
 const w = { start: new Date("2026-10-14T22:00Z"), end: new Date("2026-10-15T22:00Z"), label: "yesterday" };
 const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: [] };
-const commit = (message: string, branch = "feature", i = 0) => ({ sha: `${branch}-${i}`, parentSha: `parent-${i}`, message, date, branch, author: "me", url: `https://github.com/me/case-ai/commit/${branch}-${i}` });
+const commit = (message: string, branch = "feature", i = 0) => ({ sha: `${branch}-${i}`, parentSha: i ? `${branch}-${i - 1}` : `parent-${branch}`, message, date, branch, author: "me", url: `https://github.com/me/case-ai/commit/${branch}-${i}` });
 const issue = (number: number, title = "feat: Plan the next release") => ({ number, title, url: `https://github.com/me/case-ai/issues/${number}`, createdAt: date });
 const pr = { number: 2, title: "feat(core)!: GitHub morning brief pipeline and activity rules", url: "https://github.com/me/case-ai/pull/2", draft: false, headRef: "feature", updatedAt: date, mergedAt: date };
 const data = [snap({ repo: "me/case-ai", commits: Array.from({ length: 15 }, (_, i) => commit(i % 2 ? "fix: model settings fallbacks" : "feat: personalize brief greetings", "feat/m2-model-brief", i)).concat(commit("feat: update README.md", "main")), mergedPrs: [pr], newIssues: [issue(1, "fix: M1 verification: five-morning trial")] })];

@@ -3,6 +3,9 @@ import { buildInput, SYSTEM_PROMPT } from "../src/llm/input.js";
 import { finding, snap } from "./fixtures.js";
 
 describe("model input", () => {
+  it("tells the model not to add claims a finding doesn't contain", () => {
+    expect(SYSTEM_PROMPT).toContain("Describe each finding using only what its fields state. Do not add urgency, judgements or calls to action (e.g. 'needs your review', 'urgent', 'blocking') that the finding doesn't contain.");
+  });
   const publicFinding = finding();
   const privateFinding = finding({ id: "private", repo: "me/secret", summary: "secret title" });
   const snaps = [snap(), snap({ repo: "me/secret", private: true })];
