@@ -7,14 +7,18 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preview": "tsx src/scripts/preview.ts",
+    "preview:oct15": "tsx src/scripts/preview.ts --oct15"
   },
   "dependencies": {
+    "@google/genai": "^2.30.0",
     "@hono/node-server": "^2.1.5",
     "@octokit/rest": "^22.0.1",
     "hono": "^4.13.13",
     "luxon": "^3.7.2",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/luxon": "^3.7.6",

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { idlePrs, staleBranches, failingCi, oldBranches, runRules, yesterdaysCommits, closedIssues, issueComments, openIssues } from "../src/rules/index.js";
+import { idlePrs, staleBranches, failingCi, oldBranches, runRules, recapCommits, closedIssues, issueComments, openIssues } from "../src/rules/index.js";
 import { snap, NOW, daysAgo } from "./fixtures.js";
 
 const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/", "copilot/"] };
@@ -94,7 +94,25 @@ describe("branch ages", () => {
 describe("commit counts", () => {
   it.each([1, 3])("pluralizes %s commits", (count) => {
     const commits = Array.from({ length: count }, (_, i) => ({ sha: String(i), message: "fix", url: "u", author: "me", date: daysAgo(1), branch: "main" }));
-    expect(yesterdaysCommits(snap({ commits }))[0].summary).toBe(`me/demo: ${count} ${count === 1 ? "commit" : "commits"} on main`);
+    expect(recapCommits(snap({ commits }))[0].summary).toBe(`${count} ${count === 1 ? "commit" : "commits"} on main in me/demo`);
+  });
+});
+
+describe("commit diff links", () => {
+  const at = daysAgo(1);
+  const commit = (sha: string, parentSha: string) => ({ sha, parentSha, message: sha, url: `https://github.com/me/demo/commit/${sha}`, author: "me", date: at, branch: "main" });
+  const chain = [commit("A", "P"), commit("B", "A"), commit("C", "B"), commit("D", "C")];
+  it.each([[chain], [[...chain].reverse()], [[chain[2], chain[0], chain[3], chain[1]]], [[chain[1], chain[3], chain[0], chain[2]]]])(
+    "compares parent(A)...D for a chain with identical timestamps in any order (%#)", (commits) => {
+      expect(recapCommits(snap({ commits }))[0].sources).toEqual([{ label: "diff", url: "https://github.com/me/demo/compare/P...D" }]);
+    });
+  it("links only the newest commit when two lines of history have no parent in the set", () => {
+    const commits = [{ ...commit("A", "P"), date: daysAgo(2) }, commit("X", "Q"), { ...commit("B", "A"), date: daysAgo(0.5) }];
+    expect(recapCommits(snap({ commits }))[0].sources).toEqual([{ label: "commit", url: "https://github.com/me/demo/commit/B" }]);
+  });
+  it("still picks the displayed messages by date", () => {
+    const commits = ["A", "B", "C", "D"].map((sha, i) => ({ ...commit(sha, i ? "ABCD"[i - 1] : "P"), date: daysAgo(1 - i / 10) }));
+    expect(recapCommits(snap({ commits: [...commits].reverse() }))[0].details).toEqual(["B", "C", "D"]);
   });
 });
 
@@ -127,7 +145,7 @@ describe("issue activity rules", () => {
     expect(issueComments(s)).toEqual([expect.objectContaining({ severity: "medium" })]);
   });
   it.each([1, 14])("counts %s open issues at the seven-day boundary", (count) => {
-    expect(openIssues(snap({ branches: [br("main", 0, 7)], openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `me/demo has ${count} open ${count === 1 ? "issue" : "issues"}`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
+    expect(openIssues(snap({ branches: [br("main", 0, 7)], openIssueCount: count }), NOW, cfg)).toEqual([expect.objectContaining({ severity: "low", summary: `${count} open ${count === 1 ? "issue" : "issues"} in me/demo`, sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] })]);
   });
   it.each([[8, 14], [null, 14], [1, 0]])("omits inactive or empty issue counts (%s, %s)", (age, openIssueCount) => {
     expect(openIssues(snap({ branches: age === null ? [] : [br("main", 0, age)], openIssueCount }), NOW, cfg)).toEqual([]);
@@ -175,7 +193,7 @@ describe("issue activity rules", () => {
   });
   it("integrates the three rules and excludes errored snapshots", () => {
     const s = snap({ closedIssues: [closed], comments: [comment(1, "tendai")], branches: [br("main", 0, 1)], openIssueCount: 14 });
-    expect(runRules([s], NOW, cfg)).toEqual([...issueComments(s), ...openIssues(s, NOW, cfg), ...closedIssues(s)]);
+    expect(runRules([s], NOW, cfg)).toEqual([...issueComments(s), ...openIssues(s, NOW, cfg)]);
     expect(runRules([{ ...s, error: "unavailable" }], NOW, cfg)).toEqual([]);
     expect(issueComments(snap())).toEqual([]);
   });

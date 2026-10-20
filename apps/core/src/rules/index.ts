@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { RepoSnapshot, Finding, Severity } from "../types.js";
 import { plural } from "../plural.js";
+import { inWindow, type Window } from "../time.js";
+import { deduplicateFindings } from "../sections.js";
 
 export interface RuleConfig {
   idlePrDays: number;
@@ -96,27 +98,42 @@ export function oldBranches(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig): 
   }];
 }
 
-export function yesterdaysCommits(s: RepoSnapshot): Finding[] {
+export function recapCommits(s: RepoSnapshot): Finding[] {
   const byBranch = new Map<string, typeof s.commits>();
   for (const c of s.commits) byBranch.set(c.branch, [...(byBranch.get(c.branch) ?? []), c]);
 
   return [...byBranch].map(([branch, commits]) => {
+    // Dates choose the messages shown; history chooses the diff range, since commits pushed together can share a timestamp.
     const sorted = [...commits].sort((a, b) => a.date.localeCompare(b.date));
-    const oldest = sorted[0];
-    const newest = sorted[sorted.length - 1];
-    const url = oldest.parentSha
-      ? `https://github.com/${s.repo}/compare/${oldest.parentSha}...${newest.sha}`
-      : newest.url;
+    const shas = new Set(commits.map((c) => c.sha));
+    const parents = new Set(commits.map((c) => c.parentSha));
+    const roots = commits.filter((c) => !c.parentSha || !shas.has(c.parentSha));
+    const tips = commits.filter((c) => !parents.has(c.sha));
+    const newest = tips.length === 1 ? tips[0] : sorted[sorted.length - 1];
+    // More than one root means a merge brought in a second line of history: link the newest commit alone.
+    const base = roots.length === 1 && commits.length > 1 ? roots[0].parentSha : undefined;
+    const url = base ? `https://github.com/${s.repo}/compare/${base}...${newest.sha}` : newest.url;
     return {
       id: fid("commits", s.repo, branch, newest.sha),
       rule: "commits",
       severity: "info" as Severity,
       repo: s.repo,
-      summary: `${s.repo}: ${plural(commits.length, "commit")} on ${branch}`,
+      summary: `${plural(commits.length, "commit")} on ${branch} in ${s.repo}`,
       details: sorted.slice(-3).map((c) => c.message),
-      sources: [{ label: commits.length > 1 ? "diff" : "commit", url }],
+      activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-3).map((c) => c.message) },
+      sources: [{ label: base ? "diff" : "commit", url }],
     };
   });
+}
+
+export function openedPrs(s: RepoSnapshot): Finding[] {
+  const merged = new Set(s.mergedPrs.map((p) => p.number));
+  return s.openedPrs.filter((p) => !merged.has(p.number)).map((p) => ({
+    id: fid("opened_pr", s.repo, String(p.number)), rule: "opened_pr", severity: "info",
+    repo: s.repo, summary: `Opened PR #${p.number} "${p.title}" in ${s.repo}`,
+    activity: { kind: "pr" as const, action: "Opened" as const, number: p.number, title: p.title },
+    sources: [{ label: "PR", url: p.url }],
+  }));
 }
 
 export function mergedPrs(s: RepoSnapshot): Finding[] {
@@ -126,6 +143,7 @@ export function mergedPrs(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Merged PR #${p.number} "${p.title}" in ${s.repo}`,
+    activity: { kind: "pr" as const, action: "Merged" as const, number: p.number, title: p.title },
     sources: [{ label: "PR", url: p.url }],
   }));
 }
@@ -136,7 +154,8 @@ export function newIssues(s: RepoSnapshot): Finding[] {
     rule: "new_issue",
     severity: "info",
     repo: s.repo,
-    summary: `New issue #${i.number} "${i.title}" in ${s.repo}`,
+    summary: `Opened issue #${i.number} "${i.title}" in ${s.repo}`,
+    activity: { kind: "issue" as const, action: "Opened" as const, number: i.number, title: i.title },
     sources: [{ label: "issue", url: i.url }],
   }));
 }
@@ -148,6 +167,7 @@ export function closedIssues(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Closed issue #${i.number} "${i.title}" in ${s.repo}`,
+    activity: { kind: "issue" as const, action: "Closed" as const, number: i.number, title: i.title },
     sources: [{ label: "issue", url: i.url }],
   }));
 }
@@ -192,38 +212,43 @@ export function issueComments(s: RepoSnapshot): Finding[] {
 }
 
 export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
+  const closed = new Set(s.closedIssues.map((i) => i.number));
+  const covered = new Set(s.newIssues.filter((i) => i.state !== "closed" && !closed.has(i.number)).map((i) => i.number));
+  const remaining = Math.max(0, s.openIssueCount - covered.size);
   const lastCommitAt = s.branches
     .filter((b) => !cfg.ignoreBranchPrefixes.some((p) => b.name.startsWith(p)))
     .reduce<string | null>((latest, b) =>
       latest === null || new Date(b.lastCommitAt) > new Date(latest) ? b.lastCommitAt : latest, null);
-  if (lastCommitAt === null || !(daysSince(lastCommitAt, now) <= cfg.activeRepoDays) || s.openIssueCount <= 0) return [];
+  if (lastCommitAt === null || !(daysSince(lastCommitAt, now) <= cfg.activeRepoDays) || remaining <= 0) return [];
   return [{
     id: fid("open_issues", s.repo),
     rule: "open_issues",
     severity: "low",
     repo: s.repo,
-    summary: `${s.repo} has ${plural(s.openIssueCount, "open issue")}`,
+    summary: `${plural(remaining, covered.size ? "other open issue" : "open issue")} in ${s.repo}`,
     sources: [{ label: "issues", url: `https://github.com/${s.repo}/issues` }],
   }];
 }
 
 const order: Record<Severity, number> = { high: 0, medium: 1, low: 2, info: 3 };
 
-export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig): Finding[] {
+export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig, recap?: Window): Finding[] {
   const readable = snaps.filter((s) => !s.error);
-  return [
+  return deduplicateFindings([
     ...oldBranches(readable, now, cfg),
     ...readable.flatMap((s) => [
       ...failingCi(s, now, cfg),
       ...idlePrs(s, now, cfg),
       ...staleBranches(s, now, cfg),
-      ...yesterdaysCommits(s),
+      ...recapCommits(s),
+      ...openedPrs(s),
       ...mergedPrs(s),
       ...newIssues(s),
       ...closedIssues(s),
-      ...issueComments(s),
+      ...issueComments(s).filter((f) => f.severity !== "info" || !recap || (!!recap.label && f.sources.some((source) =>
+        s.comments.some((c) => c.url === source.url && inWindow(c.createdAt, recap))))),
       ...openIssues(s, now, cfg),
     ]),
-  ]
+  ])
     .sort((a, b) => order[a.severity] - order[b.severity] || (b.ageDays ?? 0) - (a.ageDays ?? 0));
 }

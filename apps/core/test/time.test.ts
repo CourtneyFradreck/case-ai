@@ -12,8 +12,8 @@ describe("yesterdayWindow", () => {
     expect(w.end.toISOString()).toBe("2026-10-13T22:00:00.000Z");
   });
 
-  it("labels the window with the previous day's weekday, date and month", () => {
-    expect(yesterdayWindow(now).label).toBe("Tuesday 13 Oct");
+  it("labels the window with the natural recap period", () => {
+    expect(yesterdayWindow(now).label).toBe("yesterday");
   });
 
   it("gives the same window when run just after Harare midnight", () => {
