@@ -99,3 +99,44 @@ describe("model pipeline", () => {
     expect(mocks.finishRun).toHaveBeenCalledWith(7, "failed", "Error: DB unavailable");
   });
 });
+
+describe("intent findings in the pipeline", () => {
+  const next = {
+    status: "ok" as const, sha: "n1", url: "https://github.com/me/demo/blob/main/NEXT.md", lastChangedAt: "2026-10-12T10:00:00Z",
+    items: [{ id: "abcdef0123", text: "Ship the parser", section: "Now", state: "open" as const, line: 2 }],
+  };
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.collectAll.mockResolvedValue([snap({ next })]);
+    mocks.runRules.mockReturnValue([finding()]);
+    mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [] }), model: "test-model" });
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("stores intent findings alongside rule findings without changing the rule brief", async () => {
+    mocks.env.briefMode = "rules";
+    const result = await runBrief("command");
+    const stored = mocks.storeFindings.mock.calls[0][1];
+    expect(mocks.storeFindings).toHaveBeenCalledTimes(1);
+    expect(stored.map((f: { rule: string }) => f.rule)).toEqual(["commits", "next_item"]);
+    expect(stored[1]).toMatchObject({ id: "next_abcdef0123", summary: "Next in me/demo: Ship the parser" });
+    expect(result.text).not.toContain("Ship the parser");
+    mocks.collectAll.mockResolvedValue([snap()]);
+    expect((await runBrief("command")).text).toBe(result.text);
+  });
+  it("keeps intent findings out of the model input", async () => {
+    mocks.env.briefMode = "all";
+    const withNext = await runBrief("command");
+    mocks.collectAll.mockResolvedValue([snap()]);
+    const without = await runBrief("command");
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+    expect(mocks.generate.mock.calls[0]).toEqual(mocks.generate.mock.calls[1]);
+    expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("Ship the parser");
+    expect(withNext.text).toBe(without.text);
+  });
+});

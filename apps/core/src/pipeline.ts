@@ -7,6 +7,7 @@ import { pastWeekWindow } from "./time.js";
 import { selectRecap } from "./recap.js";
 import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
+import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
 import { startRun, finishRun, storeSnapshots, storeFindings, storeBrief } from "./store.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
@@ -28,7 +29,9 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     await storeSnapshots(runId, snaps);
     const { window: w, snapshots } = selectRecap(snaps, now);
     const findings = runRules(snapshots, now.toJSDate(), config, w);
-    await storeFindings(runId, findings);
+    // Stored only: intent findings join the brief and model input in a later milestone.
+    const intent = runIntentRules(snapshots, now.toJSDate(), config);
+    await storeFindings(runId, [...findings, ...intent]);
     const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now });
     let text = renderRules();
     const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");

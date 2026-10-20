@@ -1,4 +1,5 @@
 import type { RepoSnapshot, Finding } from "../src/types.js";
+import { parseNext } from "../src/intent/parse.js";
 
 export const NOW = new Date("2026-10-14T05:00:00Z"); // 07:00 Harare
 
@@ -30,13 +31,20 @@ export const previewSnapshots: RepoSnapshot[] = [
       sha: `abc${i + 1}`, parentSha: i ? `abc${i}` : "abc0", message, branch: "main", author: "CourtneyFradreck", date: daysAgo(1 - i / 100), url: `https://github.com/CourtneyFradreck/case-ai/commit/abc${i + 1}`,
     })),
     closedIssues: [{ number: 12, title: "Quiet answered conversations", closedAt: daysAgo(1), url: "https://github.com/CourtneyFradreck/case-ai/issues/12" }],
+    next: {
+      status: "ok", sha: "n3xt", url: "https://github.com/CourtneyFradreck/case-ai/blob/main/NEXT.md", lastChangedAt: daysAgo(20),
+      items: parseNext("CourtneyFradreck/case-ai", [
+        "## M3 Intent", "", "- [x] Parse NEXT.md in each tracked repo",
+        "- [ ] Model fills focus with sourced reasons", "- [ ] Telegram focus buttons",
+      ].join("\n")),
+    },
   }),
   snap({
     repo: "CourtneyFradreck/portfolio",
     commits: [{ sha: "def1", parentSha: "def0", message: "Refresh project descriptions", branch: "main", author: "CourtneyFradreck", date: daysAgo(1), url: "https://github.com/CourtneyFradreck/portfolio/commit/def1" }],
   }),
   snap({
-    repo: "CourtneyFradreck/private-notes", private: true,
+    repo: "CourtneyFradreck/private-notes", private: true, createdAt: daysAgo(2),
     newIssues: [{ number: 3, title: "Plan the next release", createdAt: daysAgo(1), url: "https://github.com/CourtneyFradreck/private-notes/issues/3" }],
   }),
 ];

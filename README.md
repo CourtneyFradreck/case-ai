@@ -101,7 +101,7 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
 ### Previewing a model brief
 
-From `apps/core`, run `npm install` and `npm run preview`. This calls the live model with synthetic fixtures and needs only `GEMINI_API_KEY` in your environment or `.env`; `GEMINI_MODEL` is optional. It prints raw JSON, the validation report, and the rendered Telegram text without reading GitHub, accessing the database, or sending Telegram messages.
+From `apps/core`, run `npm install` and `npm run preview`. This calls the live model with synthetic fixtures and needs only `GEMINI_API_KEY` in your environment or `.env`; `GEMINI_MODEL` is optional. It prints raw JSON, the validation report, the rendered Telegram text and, separately, the NEXT.md intent findings (stored each run but not yet part of the brief) without reading GitHub, accessing the database, or sending Telegram messages.
 
 Use `npm run preview:oct15` to render the 15 Oct attribution regression fixture through both template and model paths. It also saves template, model, and rule-only fallback previews under `out/`.
 

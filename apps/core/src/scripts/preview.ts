@@ -4,6 +4,7 @@ import { GeminiBriefModel } from "../llm/gemini.js";
 import { generateModelBrief } from "../llm/brief.js";
 import { render } from "../render.js";
 import { runRules } from "../rules/index.js";
+import { runIntentRules } from "../intent/rules.js";
 import { selectRecap } from "../recap.js";
 import { DateTime } from "luxon";
 import type { RepoSnapshot } from "../types.js";
@@ -56,6 +57,11 @@ async function main() {
   const text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
   console.log(text);
   save("oct15-model", text);
+  // Collected and stored, but not part of the brief yet.
+  console.log("Intent findings (not in the brief):");
+  const intent = runIntentRules(snapshots, NOW, config);
+  if (!intent.length) console.log("(none)");
+  for (const f of intent) console.log(`[${f.severity}] ${f.rule}: ${f.summary}${f.details ? ` (${f.details.join("; ")})` : ""} <${f.sources[0]?.url}>`);
   if ("fallbackReason" in result) process.exitCode = 1;
 }
 
