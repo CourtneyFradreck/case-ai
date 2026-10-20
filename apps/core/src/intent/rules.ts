@@ -65,7 +65,7 @@ export function nextStale(s: RepoSnapshot, next: OkNext, now: Date, cfg: IntentC
     .filter((b) => !cfg.ignoreBranchPrefixes?.some((p) => b.name.startsWith(p)))
     .map((b) => daysSince(b.lastCommitAt, now)));
   const days = daysSince(next.lastChangedAt, now);
-  if (!(lastCommitDays <= cfg.activeRepoDays) || !(days > cfg.nextStaleDays)) return [];
+  if (!(lastCommitDays <= cfg.activeRepoDays) || !(days >= cfg.nextStaleDays)) return [];
   return [{
     id: fid("next_stale", s.repo),
     rule: "next_stale",

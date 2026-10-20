@@ -88,11 +88,11 @@ describe("next_missing", () => {
 describe("next_stale", () => {
   const stale = (lastChangedAt: string | null, branches = recent) => rules({ branches, next: okNext("", { lastChangedAt }) }, "next_stale");
 
-  it("fires once NEXT.md is older than nextStaleDays, not at exactly nextStaleDays", () => {
-    expect(stale(daysAgo(14))).toEqual([]);
-    expect(stale(daysAgo(15))).toMatchObject([{
-      severity: "low", ageDays: 15,
-      summary: "NEXT.md in me/demo hasn't changed in 15 days, though you've been committing",
+  it("fires from exactly nextStaleDays, not a day before", () => {
+    expect(stale(daysAgo(13))).toEqual([]);
+    expect(stale(daysAgo(14))).toMatchObject([{
+      severity: "low", ageDays: 14,
+      summary: "NEXT.md in me/demo hasn't changed in 14 days, though you've been committing",
       sources: [{ label: "NEXT.md", url }],
     }]);
   });
