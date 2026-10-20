@@ -101,6 +101,10 @@ describe("next_stale", () => {
     expect(stale(daysAgo(30), [{ ...recent[0], lastCommitAt: daysAgo(8) }])).toEqual([]);
     expect(stale(daysAgo(30), [{ ...recent[0], lastCommitAt: daysAgo(7) }])).toHaveLength(1);
   });
+  it("ignores branches without a commit date", () => {
+    expect(stale(daysAgo(30), [{ ...recent[0], name: "undated", lastCommitAt: "" }, ...recent])).toHaveLength(1);
+    expect(stale(daysAgo(30), [{ ...recent[0], lastCommitAt: "" }])).toEqual([]);
+  });
   it("skips a file with no known last change", () => {
     expect(stale(null)).toEqual([]);
   });
