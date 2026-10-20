@@ -3,6 +3,9 @@ import { fid } from "../id.js";
 import { plural } from "../plural.js";
 import { inWindow, type Window } from "../time.js";
 import { deduplicateFindings } from "../sections.js";
+import { byPriority, daysSince } from "./order.js";
+
+export { byPriority } from "./order.js";
 
 export interface RuleConfig {
   idlePrDays: number;
@@ -12,9 +15,6 @@ export interface RuleConfig {
   activeRepoDays: number;
   ignoreBranchPrefixes: string[];
 }
-
-const daysSince = (iso: string, now: Date) =>
-  Math.floor((now.getTime() - new Date(iso).getTime()) / 86_400_000);
 
 export function failingCi(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
   return s.ciRuns
@@ -227,8 +227,6 @@ export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding
   }];
 }
 
-const order: Record<Severity, number> = { high: 0, medium: 1, low: 2, info: 3 };
-
 export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig, recap?: Window): Finding[] {
   const readable = snaps.filter((s) => !s.error);
   return deduplicateFindings([
@@ -247,5 +245,5 @@ export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig, reca
       ...openIssues(s, now, cfg),
     ]),
   ])
-    .sort((a, b) => order[a.severity] - order[b.severity] || (b.ageDays ?? 0) - (a.ageDays ?? 0));
+    .sort(byPriority);
 }
