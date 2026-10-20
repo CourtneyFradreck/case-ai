@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { RepoSnapshot, Finding, Severity } from "../types.js";
+import { fid } from "../id.js";
 import { plural } from "../plural.js";
 import { inWindow, type Window } from "../time.js";
 import { deduplicateFindings } from "../sections.js";
@@ -12,9 +12,6 @@ export interface RuleConfig {
   activeRepoDays: number;
   ignoreBranchPrefixes: string[];
 }
-
-const fid = (...parts: string[]) =>
-  createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 10);
 
 const daysSince = (iso: string, now: Date) =>
   Math.floor((now.getTime() - new Date(iso).getTime()) / 86_400_000);
