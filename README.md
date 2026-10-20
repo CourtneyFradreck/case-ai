@@ -105,6 +105,25 @@ From `apps/core`, run `npm install` and `npm run preview`. This calls the live m
 
 Use `npm run preview:oct15` to render the 15 Oct attribution regression fixture through both template and model paths. It also saves template, model, and rule-only fallback previews under `out/`.
 
+## NEXT.md
+
+CASE reads a `NEXT.md` file at the root of each tracked repo to learn what you plan to do next. Only that exact path on the default branch is read.
+
+```markdown
+## Collector
+
+- [ ] Parse NEXT.md in each tracked repo
+  - [ ] Handle CRLF line endings
+- [x] Store snapshots
+```
+
+- `#` to `######` headings start a section. Items before any heading have no section.
+- `- [ ] text` or `* [ ] text` is an open item. `- [x]` or `- [X]` is a done item.
+- Indented checkbox lines are items too (indentation is ignored).
+- Everything else is ignored, including any checkbox lines inside ```` ``` ```` code fences.
+
+Each item's ID comes from its text alone: lowercased, with whitespace collapsed and trailing `.,;:` stripped. Reordering items or moving one to another section (such as a "Done" heading) keeps its ID. Editing the wording gives it a new ID. If the same text appears twice, only the first is kept.
+
 ## Roadmap
 
 - [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
