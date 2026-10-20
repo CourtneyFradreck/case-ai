@@ -276,11 +276,14 @@ describe("NEXT.md collection", () => {
     expect(s).toMatchObject({ private: true, defaultBranch: "trunk", openIssueCount: 4 });
     expect(gh.actions.listWorkflowRunsForRepo).toHaveBeenCalled();
   });
-  it("records an error when the commit lookup fails", async () => {
-    gh.repos.listCommits.mockRejectedValue(httpError(502));
+  it("keeps the items with no last change date when the commit lookup returns a 500", async () => {
+    gh.repos.listCommits.mockRejectedValue(httpError(500));
     const s = await collect();
     expect(s.error).toBeUndefined();
-    expect(s.next).toEqual({ status: "error", error: "GitHub 502" });
+    expect(s.next).toMatchObject({ status: "ok", sha: "f1le", lastChangedAt: null });
+    expect(s.next.status === "ok" && s.next.items.map((i) => [i.text, i.state])).toEqual([
+      ["Ship the parser", "open"], ["Write docs", "done"],
+    ]);
   });
   it("records an error when NEXT.md is a directory", async () => {
     gh.repos.getContent.mockResolvedValue({ data: [] });

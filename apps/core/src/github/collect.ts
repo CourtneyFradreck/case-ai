@@ -197,13 +197,19 @@ async function collectNext(owner: string, repo: string, fullName: string, base: 
       return { status: "error", error: "NEXT.md is not a file" };
     }
     const md = Buffer.from(data.content, "base64").toString("utf8");
-    const { data: commits } = await gh.repos.listCommits({ owner, repo, path: "NEXT.md", sha: base, per_page: 1 });
-    const last = commits[0]?.commit;
+    let lastChangedAt: string | null = null;
+    try {
+      const { data: commits } = await gh.repos.listCommits({ owner, repo, path: "NEXT.md", sha: base, per_page: 1 });
+      const last = commits[0]?.commit;
+      lastChangedAt = last?.committer?.date ?? last?.author?.date ?? null;
+    } catch {
+      // The items are still usable without a change date; next_stale just skips.
+    }
     return {
       status: "ok",
       sha: data.sha,
       url: `https://github.com/${fullName}/blob/${encodeURI(base)}/NEXT.md`,
-      lastChangedAt: last?.committer?.date ?? last?.author?.date ?? null,
+      lastChangedAt,
       items: parseNext(fullName, md),
     };
   } catch (e: any) {
