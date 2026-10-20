@@ -3,9 +3,10 @@ import type { RepoSnapshot, Finding } from "../src/types.js";
 export const NOW = new Date("2026-10-14T05:00:00Z"); // 07:00 Harare
 
 export const snap = (over: Partial<RepoSnapshot> = {}): RepoSnapshot => ({
-  repo: "me/demo", private: false, defaultBranch: "main",
+  repo: "me/demo", private: false, defaultBranch: "main", createdAt: "2025-01-01T00:00:00Z",
   commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
   closedIssues: [], comments: [], openIssueCount: 0,
+  next: { status: "missing" },
   ...over,
 });
 

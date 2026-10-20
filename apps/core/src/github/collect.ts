@@ -25,9 +25,10 @@ export async function collectAll(repos: string[], w: Window, ignoreAuthors: stri
 async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
   const [owner, repo] = fullName.split("/");
   const empty: RepoSnapshot = {
-    repo: fullName, private: false, defaultBranch: "main",
+    repo: fullName, private: false, defaultBranch: "main", createdAt: "",
     commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
     closedIssues: [], comments: [], openIssueCount: 0,
+    next: { status: "error", error: "not collected" },
   };
 
   try {
@@ -155,6 +156,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       error: undefined,
       private: meta.private,
       defaultBranch: base,
+      createdAt: meta.created_at,
       commits: [...seen.values()],
       openPrs: open.map((p) => ({
         number: p.number, title: p.title, url: p.html_url,
@@ -178,6 +180,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       openIssueCount: Math.max(0, meta.open_issues_count - open.length),
       branches,
       ciRuns,
+      next: { status: "error", error: "not collected" },
     };
   } catch (e: any) {
     return { ...empty, error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };

@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOW, daysAgo } from "./fixtures.js";
-import { oct15Fixture, OCT15_NOW, OCT15_WINDOW } from "./fixtures/oct15.js";
+import { oct15Fixture, OCT15_NOW, OCT15_WINDOW, OCT15_CREATED_AT } from "./fixtures/oct15.js";
 import { runRules } from "../src/rules/index.js";
 import { render, renderModelBrief } from "../src/render.js";
 import { DateTime } from "luxon";
 
 const gh = vi.hoisted(() => ({
   paginate: vi.fn(),
-  repos: { get: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
+  repos: { get: vi.fn(), getContent: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
   pulls: { list: vi.fn(), listCommits: vi.fn() },
   issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn() },
   users: { getAuthenticated: vi.fn() },
@@ -61,7 +61,8 @@ describe("15 Oct commit attribution regression", () => {
     vi.resetAllMocks();
     fixture = oct15Fixture();
     gh.users.getAuthenticated.mockResolvedValue({ data: { login: "CourtneyFradreck" } });
-    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: 1 } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: 1, created_at: OCT15_CREATED_AT } });
+    gh.repos.getContent.mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
     gh.repos.getCommit.mockImplementation(async ({ ref }) => ({ data: [fixture.direct, ...fixture.featureCommits].find((c) => c.sha === ref) }));
     gh.repos.compareCommitsWithBasehead.mockResolvedValue({ data: { ahead_by: 9 } });
     gh.pulls.list.mockResolvedValue({ data: [fixture.mergedPr] });

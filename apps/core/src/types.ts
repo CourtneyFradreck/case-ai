@@ -16,6 +16,7 @@ export interface Finding {
   sources: Source[];
   ageDays?: number;       // for sorting within a severity
   activity?: Activity;   // structured recap facts, independent of model wording
+  intent?: { itemId: string; section: string | null; state: "open" | "done" };
 }
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }
@@ -29,10 +30,20 @@ export interface IssueComment {
 export interface Branch { name: string; sha: string; lastCommitAt: string; aheadBy: number; url: string }
 export interface CiRun { workflowId: number; workflowName: string; conclusion: string | null; url: string; finishedAt: string }
 
+export interface NextItem {
+  id: string; text: string; section: string | null;
+  state: "open" | "done"; line: number;   // 1-based line number in NEXT.md
+}
+export type NextFile =
+  | { status: "ok"; sha: string; url: string; lastChangedAt: string | null; items: NextItem[] }
+  | { status: "missing" }
+  | { status: "error"; error: string };
+
 export interface RepoSnapshot {
   repo: string;
   private: boolean;
   defaultBranch: string;
+  createdAt: string;
   commits: Commit[];
   openPrs: Pr[];
   openedPrs: Pr[];
@@ -43,5 +54,6 @@ export interface RepoSnapshot {
   openIssueCount: number;
   branches: Branch[];
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
+  next: NextFile;         // NEXT.md on the default branch
   error?: string;         // set if this repo couldn't be read
 }

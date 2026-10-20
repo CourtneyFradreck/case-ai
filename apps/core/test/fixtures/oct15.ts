@@ -9,6 +9,8 @@ const repo = "CourtneyFradreck/case-ai";
 const feature = "feat/m2-model-brief";
 const url = `https://github.com/${repo}`;
 const at = "2026-10-15T18:00:00Z";
+export const OCT15_CREATED_AT = "2026-10-01T09:00:00Z";
+const createdAt = OCT15_CREATED_AT;
 const apiCommit = (sha: string, message: string, parents: string[], date = at) => ({
   sha, html_url: `${url}/commit/${sha}`, author: { login: "CourtneyFradreck" },
   commit: { message, committer: { date }, author: { name: "CourtneyFradreck", date } },
@@ -50,7 +52,7 @@ export function oct15Fixture() {
   // The preview uses this snapshot, and the regression test verifies it against
   // the real collector driven by the API fixtures above.
   const expected: RepoSnapshot = {
-    repo, private: false, defaultBranch: "main",
+    repo, private: false, defaultBranch: "main", createdAt,
     commits: [collectedCommit(direct, "main"), ...[...featureCommits].reverse().map((c) => collectedCommit(c, feature))],
     openPrs: [], openedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, createdAt: at, updatedAt: at }],
     mergedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
@@ -58,6 +60,7 @@ export function oct15Fixture() {
     closedIssues: [], comments: [], openIssueCount: 1,
     branches: branches.map((b) => ({ name: b.name, sha: b.commit.sha, lastCommitAt: b.name === "main" ? direct.commit.committer.date : featureCommits.at(-1)!.commit.committer.date, aheadBy: b.name === "main" ? 0 : 9, url: `${url}/tree/${b.name}` })),
     ciRuns: [],
+    next: { status: "error", error: "not collected" },
   };
   return { repo, feature, branches, branchCommits, prCommits, mergedPr, merge, direct, featureCommits, issue, expected };
 }
