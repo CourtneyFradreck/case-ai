@@ -1,7 +1,8 @@
 import { Octokit } from "@octokit/rest";
 import { env } from "../env.js";
 import { inWindow, type Window } from "../time.js";
-import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment } from "../types.js";
+import { parseNext } from "../intent/parse.js";
+import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment, NextFile } from "../types.js";
 
 const gh = new Octokit({ auth: env.githubToken, userAgent: "case-ai" });
 
@@ -36,6 +37,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     const base = meta.default_branch;
     const since = w.start.toISOString();
     const until = w.end.toISOString();
+    const next = await collectNext(owner, repo, fullName, base);
 
     // 1. Branches: head date and whether unmerged
     const branchList = await gh.paginate(gh.repos.listBranches, { owner, repo, per_page: 100 });
@@ -180,9 +182,32 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       openIssueCount: Math.max(0, meta.open_issues_count - open.length),
       branches,
       ciRuns,
-      next: { status: "error", error: "not collected" },
+      next,
     };
   } catch (e: any) {
     return { ...empty, error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };
+  }
+}
+
+// NEXT.md is optional: a failure here never marks the whole repo as unreadable.
+async function collectNext(owner: string, repo: string, fullName: string, base: string): Promise<NextFile> {
+  try {
+    const { data } = await gh.repos.getContent({ owner, repo, path: "NEXT.md", ref: base });
+    if (Array.isArray(data) || data.type !== "file" || typeof data.content !== "string") {
+      return { status: "error", error: "NEXT.md is not a file" };
+    }
+    const md = Buffer.from(data.content, "base64").toString("utf8");
+    const { data: commits } = await gh.repos.listCommits({ owner, repo, path: "NEXT.md", sha: base, per_page: 1 });
+    const last = commits[0]?.commit;
+    return {
+      status: "ok",
+      sha: data.sha,
+      url: `https://github.com/${fullName}/blob/${encodeURI(base)}/NEXT.md`,
+      lastChangedAt: last?.committer?.date ?? last?.author?.date ?? null,
+      items: parseNext(fullName, md),
+    };
+  } catch (e: any) {
+    if (e?.status === 404) return { status: "missing" };
+    return { status: "error", error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };
   }
 }

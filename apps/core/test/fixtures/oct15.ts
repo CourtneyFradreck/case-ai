@@ -60,7 +60,7 @@ export function oct15Fixture() {
     closedIssues: [], comments: [], openIssueCount: 1,
     branches: branches.map((b) => ({ name: b.name, sha: b.commit.sha, lastCommitAt: b.name === "main" ? direct.commit.committer.date : featureCommits.at(-1)!.commit.committer.date, aheadBy: b.name === "main" ? 0 : 9, url: `${url}/tree/${b.name}` })),
     ciRuns: [],
-    next: { status: "error", error: "not collected" },
+    next: { status: "missing" },
   };
   return { repo, feature, branches, branchCommits, prCommits, mergedPr, merge, direct, featureCommits, issue, expected };
 }

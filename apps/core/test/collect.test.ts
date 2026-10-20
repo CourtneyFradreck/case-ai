@@ -222,3 +222,68 @@ describe("issue activity collection", () => {
     expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "unavailable" });
   });
 });
+
+describe("NEXT.md collection", () => {
+  const md = "# Now\r\n- [ ] Ship the parser\r\n- [x] Write docs\r\n";
+  const file = (content = Buffer.from(md, "utf8").toString("base64")) => ({ data: { type: "file", sha: "f1le", content, encoding: "base64" } });
+  const httpError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "me" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: false, open_issues_count: 0, created_at: daysAgo(2) } });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockResolvedValue([]);
+    gh.repos.getContent.mockResolvedValue(file());
+    gh.repos.listCommits.mockResolvedValue({ data: [{ commit: { committer: { date: daysAgo(3) } } }] });
+  });
+  const collect = async () => (await collectAll(["me/demo"], { start: NOW, end: NOW, label: "test" }, []))[0];
+
+  it("reads NEXT.md on the default branch with its last change date", async () => {
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.createdAt).toBe(daysAgo(2));
+    expect(s.next).toMatchObject({ status: "ok", sha: "f1le", url: "https://github.com/me/demo/blob/trunk/NEXT.md", lastChangedAt: daysAgo(3) });
+    expect(s.next.status === "ok" && s.next.items.map((i) => [i.text, i.section, i.state, i.line])).toEqual([
+      ["Ship the parser", "Now", "open", 2], ["Write docs", "Now", "done", 3],
+    ]);
+    expect(gh.repos.getContent).toHaveBeenCalledWith({ owner: "me", repo: "demo", path: "NEXT.md", ref: "trunk" });
+    expect(gh.repos.listCommits).toHaveBeenCalledWith({ owner: "me", repo: "demo", path: "NEXT.md", sha: "trunk", per_page: 1 });
+  });
+  it("decodes base64 with line breaks and non-ASCII text", async () => {
+    const encoded = Buffer.from("- [ ] Café menu — résumé\n", "utf8").toString("base64").replace(/(.{20})/g, "$1\n");
+    gh.repos.getContent.mockResolvedValue(file(encoded));
+    const s = await collect();
+    expect(s.next.status === "ok" && s.next.items.map((i) => i.text)).toEqual(["Café menu — résumé"]);
+  });
+  it("sets lastChangedAt to null when no commit touched the file", async () => {
+    gh.repos.listCommits.mockResolvedValue({ data: [] });
+    expect((await collect()).next).toMatchObject({ status: "ok", lastChangedAt: null });
+  });
+  it("marks a 404 as missing", async () => {
+    gh.repos.getContent.mockRejectedValue(httpError(404));
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.next).toEqual({ status: "missing" });
+    expect(gh.repos.listCommits).not.toHaveBeenCalled();
+  });
+  it("records a 500 on NEXT.md without failing the repo", async () => {
+    gh.repos.getContent.mockRejectedValue(httpError(500));
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: true, open_issues_count: 4, created_at: daysAgo(2) } });
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.next).toEqual({ status: "error", error: "GitHub 500" });
+    expect(s).toMatchObject({ private: true, defaultBranch: "trunk", openIssueCount: 4 });
+    expect(gh.actions.listWorkflowRunsForRepo).toHaveBeenCalled();
+  });
+  it("records an error when the commit lookup fails", async () => {
+    gh.repos.listCommits.mockRejectedValue(httpError(502));
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.next).toEqual({ status: "error", error: "GitHub 502" });
+  });
+  it("records an error when NEXT.md is a directory", async () => {
+    gh.repos.getContent.mockResolvedValue({ data: [] });
+    expect((await collect()).next).toEqual({ status: "error", error: "NEXT.md is not a file" });
+  });
+});
