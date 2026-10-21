@@ -60,14 +60,18 @@ export function nextMissing(s: RepoSnapshot, now: Date, cfg: IntentConfig, missi
   }];
 }
 
-export function nextStale(s: RepoSnapshot, next: OkNext, now: Date, cfg: IntentConfig): Finding[] {
-  if (next.lastChangedAt === null) return [];
-  const lastCommitDays = Math.min(...s.branches
+// Days since the newest commit on any tracked branch; Infinity when there is none.
+export function lastCommitDays(s: RepoSnapshot, now: Date, cfg: Pick<IntentConfig, "ignoreBranchPrefixes">): number {
+  return Math.min(...s.branches
     // The collector leaves lastCommitAt empty when GitHub gives no date; NaN would poison Math.min.
     .filter((b) => b.lastCommitAt && !cfg.ignoreBranchPrefixes?.some((p) => b.name.startsWith(p)))
     .map((b) => daysSince(b.lastCommitAt, now)));
+}
+
+export function nextStale(s: RepoSnapshot, next: OkNext, now: Date, cfg: IntentConfig): Finding[] {
+  if (next.lastChangedAt === null) return [];
   const days = daysSince(next.lastChangedAt, now);
-  if (!(lastCommitDays <= cfg.activeRepoDays) || !(days >= cfg.nextStaleDays)) return [];
+  if (!(lastCommitDays(s, now, cfg) <= cfg.activeRepoDays) || !(days >= cfg.nextStaleDays)) return [];
   return [{
     id: fid("next_stale", s.repo),
     rule: "next_stale",
