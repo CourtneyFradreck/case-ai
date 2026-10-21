@@ -11,5 +11,6 @@
   "ignoreAuthors": ["dependabot[bot]", "github-actions[bot]"],
   "maxBriefChars": 3800,
   "modelIncludePrivate": false,
-  "modelTimeoutMs": 20000
+  "modelTimeoutMs": 20000,
+  "features": { "focusButtons": false, "snooze": false, "streaks": false, "quietMornings": false }
 }
