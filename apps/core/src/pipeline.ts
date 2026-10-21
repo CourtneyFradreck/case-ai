@@ -35,7 +35,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     await storeFindings(runId, [...findings, ...intent]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
     const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now });
-    let text = renderRules();
+    const ruleText = renderRules();
+    let text = ruleText;
     const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");
     if (useModel && findings.length) {
       try {
@@ -49,7 +50,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
         text = renderRules("Rule-only brief: model unavailable");
       }
     }
-    await storeBrief(runId, text, meta);
+    await storeBrief(runId, text, meta, ruleText);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     return { runId, text };
   } catch (e) {
