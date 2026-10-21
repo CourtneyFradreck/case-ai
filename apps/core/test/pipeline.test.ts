@@ -3,14 +3,14 @@ import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
-  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(),
+  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(),
   env: { briefMode: "rules", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";
@@ -25,6 +25,7 @@ describe("model pipeline", () => {
     mocks.env.briefMode = "rules";
     mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
     mocks.startRun.mockResolvedValue(7);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
     mocks.collectAll.mockResolvedValue([snap({ commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] })]);
     mocks.runRules.mockReturnValue([finding()]);
     mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [] }), model: "test-model", inputTokens: 10, outputTokens: 4 });
@@ -112,6 +113,7 @@ describe("intent findings in the pipeline", () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
     mocks.startRun.mockResolvedValue(7);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
     mocks.collectAll.mockResolvedValue([snap({ next })]);
     mocks.runRules.mockReturnValue([finding()]);
     mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [] }), model: "test-model" });
@@ -128,6 +130,26 @@ describe("intent findings in the pipeline", () => {
     expect(result.text).not.toContain("Ship the parser");
     mocks.collectAll.mockResolvedValue([snap()]);
     expect((await runBrief("command")).text).toBe(result.text);
+  });
+  it("passes the stored history to next_done and stores what it finds", async () => {
+    mocks.env.briefMode = "rules";
+    const gone = "0123456789";
+    mocks.storeNextItems.mockResolvedValue({ history: new Map([["me/demo", { sha: "n0", openIds: new Set(["abcdef0123", gone]) }]]), missingReported: new Set() });
+    await runBrief("command");
+    expect(mocks.storeNextItems).toHaveBeenCalledWith(7, [snap({ next })]);
+    const done = mocks.storeFindings.mock.calls[0][1].filter((f: { rule: string }) => f.rule === "next_done");
+    expect(done).toMatchObject([{ summary: "Finished in me/demo: an item from NEXT.md", intent: { itemId: gone } }]);
+  });
+  it("records next_missing as reported, and skips it for a repo already reported", async () => {
+    mocks.env.briefMode = "rules";
+    mocks.collectAll.mockResolvedValue([snap({ createdAt: "2026-10-12T10:00:00Z" })]);
+    await runBrief("command");
+    expect(mocks.storeFindings.mock.calls[0][1].map((f: { rule: string }) => f.rule)).toContain("next_missing");
+    expect(mocks.markMissingReported).toHaveBeenCalledWith(["me/demo"]);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set(["me/demo"]) });
+    await runBrief("command");
+    expect(mocks.storeFindings.mock.calls[1][1].map((f: { rule: string }) => f.rule)).not.toContain("next_missing");
+    expect(mocks.markMissingReported).toHaveBeenLastCalledWith([]);
   });
   it("keeps intent findings out of the model input", async () => {
     mocks.env.briefMode = "all";

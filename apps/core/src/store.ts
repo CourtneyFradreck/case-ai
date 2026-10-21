@@ -2,7 +2,8 @@ import { pool } from "./db.js";
 import type { Window } from "./time.js";
 import type { RepoSnapshot, Finding } from "./types.js";
 import type { BriefMeta } from "./llm/brief.js";
-import { relink } from "./intent/relink.js";
+import { followRelinks, relink } from "./intent/relink.js";
+import type { IntentHistory } from "./intent/rules.js";
 
 export async function startRun(source: string, w: Window) {
   const { rows } = await pool.query(
@@ -51,28 +52,54 @@ export async function storeSnapshots(runId: number, snaps: RepoSnapshot[]) {
 }
 
 interface NextItemRow {
-  item_id: string; text: string; section: string | null; last_run_id: string | null;
+  item_id: string; text: string; section: string | null; state: "open" | "done"; last_run_id: string | null;
   first_seen: Date; section_changed_at: Date; previous_ids: string[];
 }
 
+interface NextFileRow { sha: string | null; run_id: string | null; missing_reported_at: Date | null }
+
 // Upserts the items of every readable NEXT.md. Missing or errored files leave existing rows alone.
 // An item whose wording was edited since the last run inherits the old item's history.
+// Returns the previous run's state for the intent rules, read before this run overwrites it.
 export async function storeNextItems(runId: number, snaps: RepoSnapshot[]) {
+  const history: IntentHistory = new Map();
+  const missingReported = new Set<string>();
   for (const s of snaps) {
-    if (s.error || s.next.status !== "ok") continue;
+    if (s.error || s.next.status === "error") continue;
+    const prev = (await pool.query<NextFileRow>(
+      "SELECT sha, run_id, missing_reported_at FROM next_files WHERE repo=$1", [s.repo],
+    )).rows[0];
+    if (prev?.missing_reported_at) missingReported.add(s.repo);
+    await pool.query(
+      `INSERT INTO next_files(repo, sha, run_id) VALUES ($1,$2,$3)
+       ON CONFLICT (repo) DO UPDATE SET sha=EXCLUDED.sha, run_id=EXCLUDED.run_id`,
+      [s.repo, s.next.status === "ok" ? s.next.sha : null, runId],
+    );
+    if (s.next.status !== "ok") continue;
+
     const { rows } = await pool.query<NextItemRow>(
-      `SELECT item_id, text, section, last_run_id, first_seen, section_changed_at, previous_ids
+      `SELECT item_id, text, section, state, last_run_id, first_seen, section_changed_at, previous_ids
        FROM next_items WHERE repo=$1`,
       [s.repo],
     );
     const known = new Map(rows.map((r) => [r.item_id, r]));
     const current = new Set(s.next.items.map((i) => i.id));
     // bigint comes back as a string; compare numerically.
-    const lastRun = Math.max(...rows.map((r) => Number(r.last_run_id ?? 0)));
-    const gone = rows.filter((r) => Number(r.last_run_id ?? 0) === lastRun && !current.has(r.item_id))
-      .map((r) => ({ id: r.item_id, text: r.text }));
+    const lastRun = prev ? Number(prev.run_id) : Math.max(...rows.map((r) => Number(r.last_run_id ?? 0)));
+    const lastSeen = rows.filter((r) => Number(r.last_run_id ?? 0) === lastRun);
+    const gone = lastSeen.filter((r) => !current.has(r.item_id)).map((r) => ({ id: r.item_id, text: r.text }));
     const added = s.next.items.filter((i) => !known.has(i.id));
     const from = new Map(relink(gone, added).map((p) => [p.to, known.get(p.from)!]));
+    const previousIds = (id: string) => {
+      const old = from.get(id);
+      return old ? [...old.previous_ids, old.item_id] : known.get(id)?.previous_ids ?? [];
+    };
+
+    // A file that was missing last run has nothing to compare against.
+    if (prev?.sha) {
+      const open = lastSeen.filter((r) => r.state === "open").map((r) => r.item_id);
+      history.set(s.repo, { sha: prev.sha, openIds: followRelinks(open, s.next.items.map((i) => ({ id: i.id, previousIds: previousIds(i.id) }))) });
+    }
 
     for (const i of s.next.items) {
       const old = from.get(i.id);
@@ -88,10 +115,19 @@ export async function storeNextItems(runId: number, snaps: RepoSnapshot[]) {
          old?.first_seen ?? null,
          // An edit that also moved the item to another section counts as a section change.
          old && old.section === i.section ? old.section_changed_at : null,
-         JSON.stringify(old ? [...old.previous_ids, old.item_id] : [])],
+         JSON.stringify(old ? previousIds(i.id) : [])],
       );
     }
   }
+  return { history, missingReported };
+}
+
+// Records that next_missing fired, so it fires only on the first run that sees the repo without NEXT.md.
+export async function markMissingReported(repos: string[]) {
+  if (!repos.length) return;
+  await pool.query(
+    "UPDATE next_files SET missing_reported_at=now() WHERE repo = ANY($1) AND missing_reported_at IS NULL", [repos],
+  );
 }
 
 export async function storeFindings(runId: number, findings: Finding[]) {

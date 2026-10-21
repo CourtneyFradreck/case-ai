@@ -5,7 +5,7 @@ import type { NextFile } from "../src/types.js";
 
 const pool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool }));
-import { storeNextItems } from "../src/store.js";
+import { markMissingReported, storeNextItems } from "../src/store.js";
 
 const url = "https://github.com/me/demo/blob/main/NEXT.md";
 const okNext = (md: string): NextFile => ({ status: "ok", sha: "s1", url, lastChangedAt: null, items: parseNext("me/demo", md) });
@@ -13,10 +13,11 @@ const idFor = (text: string) => parseNext("me/demo", `- [ ] ${text}`)[0].id;
 const FIRST = new Date("2026-09-01T05:00:00Z");
 const MOVED = new Date("2026-09-10T05:00:00Z");
 const row = (text: string, over: object = {}) => ({
-  item_id: idFor(text), text, section: "Now", last_run_id: "6", first_seen: FIRST, section_changed_at: MOVED, previous_ids: [], ...over,
+  item_id: idFor(text), text, section: "Now", state: "open", last_run_id: "6", first_seen: FIRST, section_changed_at: MOVED, previous_ids: [], ...over,
 });
-const withRows = (rows: object[]) =>
-  pool.query.mockImplementation(async (sql: string) => ({ rows: sql.trimStart().startsWith("SELECT") ? rows : [] }));
+const withRows = (rows: object[], file?: object) => pool.query.mockImplementation(async (sql: string) => ({
+  rows: !sql.trimStart().startsWith("SELECT") ? [] : sql.includes("FROM next_files") ? (file ? [file] : []) : rows,
+}));
 const upserts = () => pool.query.mock.calls.filter(([sql]) => sql.includes("INSERT INTO next_items")).map(([, params]) => params);
 
 describe("storeNextItems", () => {
@@ -35,19 +36,27 @@ describe("storeNextItems", () => {
   });
   it("updates text, state, last_seen and run, and moves section_changed_at only on a section change", async () => {
     await storeNextItems(7, [snap({ next: okNext("- [ ] Item") })]);
-    const sql = pool.query.mock.calls[1][0] as string;
+    const sql = pool.query.mock.calls.map(([q]) => q as string).find((q) => q.includes("INSERT INTO next_items"))!;
     expect(sql).toContain("ON CONFLICT (repo, item_id) DO UPDATE");
     expect(sql).toMatch(/SET text=EXCLUDED\.text, state=EXCLUDED\.state, last_seen=now\(\), last_run_id=EXCLUDED\.last_run_id/);
     expect(sql).toMatch(/CASE WHEN next_items\.section IS DISTINCT FROM EXCLUDED\.section\s+THEN now\(\) ELSE next_items\.section_changed_at END/);
     expect(sql).not.toMatch(/SET[\s\S]*(first_seen|previous_ids)/);
   });
-  it("skips errored snapshots and missing or errored files", async () => {
+  it("skips errored snapshots and errored files", async () => {
     await storeNextItems(7, [
       snap({ error: "GitHub 500", next: okNext("- [ ] Item") }),
-      snap({ next: { status: "missing" } }),
       snap({ next: { status: "error", error: "GitHub 500" } }),
     ]);
     expect(pool.query).not.toHaveBeenCalled();
+  });
+  it("records a missing file with no sha and leaves its items alone", async () => {
+    await storeNextItems(7, [snap({ next: { status: "missing" } })]);
+    expect(pool.query.mock.calls.map(([sql]) => sql as string).some((q) => q.includes("next_items"))).toBe(false);
+    expect(pool.query.mock.calls[1]).toEqual([expect.stringContaining("INSERT INTO next_files"), ["me/demo", null, 7]]);
+  });
+  it("records the file sha for this run", async () => {
+    await storeNextItems(7, [snap({ next: okNext("- [ ] Item") })]);
+    expect(pool.query.mock.calls[1]).toEqual([expect.stringContaining("ON CONFLICT (repo) DO UPDATE"), ["me/demo", "s1", 7]]);
   });
 
   it("gives an edited item the old item's history", async () => {
@@ -71,5 +80,51 @@ describe("storeNextItems", () => {
     withRows([row("Ship the parser")]);
     await storeNextItems(7, [snap({ next: okNext("# Now\n- [ ] Write the parser docs") })]);
     expect(upserts()[0].slice(6)).toEqual([null, null, "[]"]);
+  });
+
+  it("only re-links items seen in the run recorded for the file", async () => {
+    withRows([row("Ship the parsre", { last_run_id: "5" }), row("Write docs")], { sha: "s0", run_id: "5", missing_reported_at: null });
+    await storeNextItems(7, [snap({ next: okNext("# Now\n- [ ] Ship the parser\n- [ ] Write docs") })]);
+    expect(upserts()[0].slice(6)).toEqual([FIRST, MOVED, JSON.stringify([idFor("Ship the parsre")])]);
+  });
+});
+
+describe("intent history from storeNextItems", () => {
+  beforeEach(() => vi.resetAllMocks());
+  const file = { sha: "s0", run_id: "6", missing_reported_at: null };
+
+  it("returns the previous sha and the items open in the previous run", async () => {
+    withRows([row("Ship the parser"), row("Write docs", { state: "done" }), row("Old item", { last_run_id: "4" })], file);
+    const { history } = await storeNextItems(7, [snap({ next: okNext("# Now\n- [ ] Ship the parser") })]);
+    expect(history).toEqual(new Map([["me/demo", { sha: "s0", openIds: new Set([idFor("Ship the parser")]) }]]));
+  });
+  it("follows an edit to the new item ID, so a reworded item isn't reported done", async () => {
+    withRows([row("Ship the parsre"), row("Write docs")], file);
+    const { history } = await storeNextItems(7, [snap({ next: okNext("# Now\n- [ ] Ship the parser") })]);
+    expect(history.get("me/demo")!.openIds).toEqual(new Set([idFor("Ship the parser"), idFor("Write docs")]));
+  });
+  it("has no history on the first run or after a missing file", async () => {
+    withRows([]);
+    expect((await storeNextItems(7, [snap({ next: okNext("- [ ] Item") })])).history.size).toBe(0);
+    withRows([], { sha: null, run_id: "6", missing_reported_at: null });
+    expect((await storeNextItems(7, [snap({ next: okNext("- [ ] Item") })])).history.size).toBe(0);
+  });
+  it("returns repos that already had next_missing reported", async () => {
+    withRows([], { sha: null, run_id: "6", missing_reported_at: new Date() });
+    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })])).missingReported).toEqual(new Set(["me/demo"]));
+    withRows([], { sha: null, run_id: "6", missing_reported_at: null });
+    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })])).missingReported.size).toBe(0);
+  });
+});
+
+describe("markMissingReported", () => {
+  beforeEach(() => vi.resetAllMocks());
+  it("sets missing_reported_at once for the given repos", async () => {
+    await markMissingReported(["me/demo"]);
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("missing_reported_at IS NULL"), [["me/demo"]]);
+  });
+  it("skips the query with no repos", async () => {
+    await markMissingReported([]);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
