@@ -21,4 +21,6 @@ export const env = {
   apiKey: need("CASE_API_KEY"),
   githubToken: need("GITHUB_TOKEN"),
   repos: need("CASE_REPOS").split(",").map((r) => r.trim()).filter(Boolean),
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined,
+  telegramChatId: process.env.TELEGRAM_CHAT_ID?.trim() || undefined,
 };
