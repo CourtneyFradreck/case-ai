@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, nextItemsText, parseCommand, parseFocusCallback, ruleFocus, storedFocus } from "../src/focus.js";
+import { chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, nextItemsText, parseCommand, parseFocusCallback, ruleFocus, storedFocus, yesterdayFocus } from "../src/focus.js";
+import { render, renderModelBrief } from "../src/render.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
 
 const cfg = { activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/"] };
@@ -137,5 +138,44 @@ describe("/next replies", () => {
     const text = nextItemsText(many, tracked);
     expect(text.length).toBeLessThanOrEqual(3800);
     expect(text).toMatch(/\+\d+ more line\(s\) not shown<\/i>$/);
+  });
+});
+
+describe("yesterday's focus", () => {
+  const chosen = new Date("2026-10-13T06:00:00Z");
+  const commit = (sha: string, date: string) => ({ sha, message: "Work", url: `https://github.com/me/demo/commit/${sha}`, author: "me", branch: "main", date });
+  const row = (repo: string | null) => ({ item_text: "Ship the parser", repo, created_at: chosen });
+  it("emits nothing without a focus", () => {
+    expect(yesterdayFocus(undefined, [snap()])).toEqual([]);
+  });
+  it("counts the repo's commits since the focus was chosen and links the newest", () => {
+    const snaps = [snap({ commits: [commit("a", "2026-10-13T05:00:00Z"), commit("b", "2026-10-13T09:00:00Z"), commit("c", "2026-10-13T15:00:00Z")] }), snap({ repo: "me/other", commits: [commit("d", "2026-10-13T12:00:00Z")] })];
+    expect(yesterdayFocus(row("me/demo"), snaps)).toEqual([expect.objectContaining({
+      rule: "yesterday_focus", severity: "info", repo: "me/demo",
+      summary: "Yesterday's focus: Ship the parser. 2 commits in me/demo since",
+      sources: [{ label: "commit", url: "https://github.com/me/demo/commit/c" }],
+    })]);
+  });
+  it("says when the repo had no commits since", () => {
+    const [f] = yesterdayFocus(row("me/demo"), [snap({ commits: [commit("a", "2026-10-13T05:00:00Z")] })]);
+    expect(f).toMatchObject({ summary: "Yesterday's focus: Ship the parser. No commits in me/demo since", sources: [{ label: "repo", url: "https://github.com/me/demo" }] });
+  });
+  it("states only what the focus was when there is no readable repo to check", () => {
+    for (const [repo, snaps] of [[null, [snap()]], ["me/demo", [snap({ error: "GitHub 404" })]], ["me/gone", [snap()]]] as const) {
+      expect(yesterdayFocus(row(repo), [...snaps])).toMatchObject([{ summary: "Yesterday's focus: Ship the parser", sources: [] }]);
+    }
+  });
+  it("leads the recap in both renderers, escaped", () => {
+    const w = { start: new Date("2026-10-12T22:00:00Z"), end: new Date("2026-10-13T22:00:00Z"), label: "yesterday" };
+    const previousFocus = yesterdayFocus({ ...row("me/demo"), item_text: "Ship <it>" }, [snap({ commits: [commit("c", "2026-10-13T15:00:00Z")] })]);
+    const lead = `<b>Here's what you worked on yesterday</b>\n• Yesterday's focus: Ship &lt;it&gt;. 1 commit in me/demo since. [<a href="https://github.com/me/demo/commit/c">commit</a>]\n\n<b>demo</b>`;
+    expect(render([finding()], [], w, 3800, undefined, { previousFocus })).toContain(lead);
+    expect(renderModelBrief({ yesterday: [{ text: "Progress", sources: [finding()] }], attention: [], focus: [] }, [], w, 3800, { previousFocus })).toContain(lead);
+  });
+  it("stands alone without a recap and adds no links without sources", () => {
+    const w = { start: new Date("2026-10-07T22:00:00Z"), end: new Date("2026-10-13T22:00:00Z"), label: "" };
+    const text = render([], [], w, 3800, undefined, { previousFocus: yesterdayFocus(row(null), []) });
+    expect(text).toMatch(/\n\n• Yesterday's focus: Ship the parser\.\n\nNothing new in the past week\.$/);
+    expect(text).not.toContain("worked on");
   });
 });

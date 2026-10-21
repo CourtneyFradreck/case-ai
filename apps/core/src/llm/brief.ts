@@ -7,7 +7,8 @@ import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
 import { validate, type DropReason } from "./validate.js";
 
-export interface ModelBriefConfig extends InputConfig { modelTimeoutMs: number; maxBriefChars: number }
+// previousFocus is rendered at the top of the recap and never sent to the model.
+export interface ModelBriefConfig extends InputConfig { modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[] }
 export interface BriefAudit {
   brief: AliasBrief | null;
   aliases: Record<string, string>;
@@ -56,7 +57,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.dropped = result.dropped;
     meta.json.addedBack = result.addedBack;
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus }), focus: result.brief.focus };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus);

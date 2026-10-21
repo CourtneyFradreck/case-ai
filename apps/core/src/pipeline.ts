@@ -10,10 +10,11 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus } from "./store.js";
+import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, ruleFocus, storedFocus } from "./focus.js";
+import { focusKeyboard, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -39,11 +40,13 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported);
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
     const next = features.focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
-    await storeFindings(runId, [...findings, ...intent]);
+    const previousFocus = features.focusButtons
+      ? yesterdayFocus(await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!), snaps) : [];
+    await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
     const rulesFocus = features.focusButtons ? ruleFocus(findings, next, snaps, now.toJSDate(), config) : [];
-    const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now }, rulesFocus);
+    const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now, previousFocus }, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;
     let focus: ValidFocus[] = rulesFocus;
@@ -52,7 +55,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...findings, ...next], snaps, w, { ...config, focus: features.focusButtons }, provider, now);
+        const result = await generateModelBrief([...findings, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;
