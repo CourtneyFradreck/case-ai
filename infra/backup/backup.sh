@@ -26,7 +26,19 @@ fail() {
   # $1 stage, $2 file, $3 error text
   err=$(json_str "$(printf '%s' "$3" | tail -c 500)")
   log "\"status\":\"failed\",\"stage\":\"$1\",\"file\":\"$2\",\"error\":\"$err\""
+  alert "$1" "$2" "$3"
   return 1
+}
+
+# POSTs a short failure message to BACKUP_FAILURE_WEBHOOK, if set.
+alert() {
+  [ -n "${BACKUP_FAILURE_WEBHOOK:-}" ] || return 0
+  short=$(printf '%s' "$3" | tail -c 300)
+  text=$(json_str "CASE backup failed ($1): $short")
+  body="{\"event\":\"backup_failed\",\"at\":\"$(now_iso)\",\"stage\":\"$1\",\"file\":\"$2\",\"error\":\"$(json_str "$short")\",\"text\":\"$text\"}"
+  if ! out=$(wget -q -T 15 -O /dev/null --header "Content-Type: application/json" --post-data "$body" "$BACKUP_FAILURE_WEBHOOK" 2>&1); then
+    log "\"status\":\"alert_failed\",\"error\":\"$(json_str "$out")\""
+  fi
 }
 
 # Deletes case-YYYY-MM-DD.dump.age files (and leftover .partial uploads) dated
