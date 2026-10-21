@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** Milestone 1 (rule-only brief) in trial; M2 (model brief) built, not yet deployed.
+> **Status:** Milestone 1 (rule-only brief) in trial; M2 (model brief) built, not yet deployed; M3 focus suggestions built behind `features.focusButtons`, off by default.
 
 ---
 
@@ -48,6 +48,7 @@ n8n: 7am schedule ──> POST /brief
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
+- **Feature flags** live under `features` in `apps/core/config.json`. Each defaults to `false`; only an explicit `true` turns one on. With every flag off, the brief is the same as before the flag existed.
 
 ## Stack
 
@@ -113,7 +114,7 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
 ### Previewing a model brief
 
-From `apps/core`, run `npm install` and `npm run preview`. This calls the live model with synthetic fixtures and needs only `GEMINI_API_KEY` in your environment or `.env`; `GEMINI_MODEL` is optional. It prints raw JSON, the validation report, the rendered Telegram text and, separately, the NEXT.md intent findings (stored each run but not yet part of the brief) without reading GitHub, accessing the database, or sending Telegram messages.
+From `apps/core`, run `npm install` and `npm run preview`. This calls the live model with synthetic fixtures and needs only `GEMINI_API_KEY` in your environment or `.env`; `GEMINI_MODEL` is optional. It prints raw JSON, the validation report, the rendered Telegram text and, separately, the NEXT.md intent findings without reading GitHub, accessing the database, or sending Telegram messages. With `features.focusButtons` on, open NEXT.md items are sent to the model and the brief includes focus suggestions, as in production; otherwise intent findings are only listed.
 
 Use `npm run preview:oct15` to render the 15 Oct attribution regression fixture through both template and model paths. It also saves template, model, and rule-only fallback previews under `out/`.
 
@@ -173,6 +174,31 @@ CASE reads a `NEXT.md` file at the root of each tracked repo to learn what you p
 Each item's ID comes from its text alone: lowercased, with whitespace collapsed and trailing `.,;:` stripped. Reordering items or moving one to another section (such as a "Done" heading) keeps its ID. Editing the wording gives it a new ID. If the same text appears twice, only the first is kept.
 
 CASE remembers every item it has seen, with when it first appeared and when it last changed section. When you edit an item's wording, CASE re-links the new item to the old one so it keeps that history and isn't reported as finished: an item that disappeared since the last run is paired with a new item when their normalised texts are at least 85% similar (Levenshtein ratio) and each is the other's single best match. Small edits such as typo fixes re-link; rewrites, or edits where two items are equally close, start fresh.
+
+## Focus
+
+With `features.focusButtons` set to `true` in `apps/core/config.json`, the brief suggests two or three things to work on today, and remembers what you pick.
+
+**Suggestions.** A numbered "Today, I'd suggest" section sits between attention and the recap. Each line names the work, gives a short reason and links its source.
+
+- **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, a PR with no activity, an open `NEXT.md` item), and prefers high and medium findings, then `NEXT.md` items in repos with commits. Suggestions with no valid source, an empty reason, or only findings an earlier suggestion already cites are dropped.
+- **Rule-only brief and fallback:** code picks up to three: high findings, then medium, then open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first), each with a fixed reason per rule.
+
+Suggestions are stored on the brief (`briefs.focus`) in button order.
+
+**Picking one.** With `CASE_DELIVERY=core`, the brief has a button per suggestion (`1`, `2`, `3`) and `Something else`. Buttons carry only `f:<briefId>:<n>`, and case-core looks the suggestion up from the stored brief. A tap stores the choice in `core.focus` and replaces the buttons with `Focus: <text>`. Buttons on an earlier day's brief no longer set a focus. `Something else` asks what your focus is, and your next plain message becomes it; that request expires at midnight Africa/Harare. With `CASE_DELIVERY=n8n` there are no buttons, but the commands below still work.
+
+**Commands** (handled by case-core; `/brief` stays with n8n):
+
+| Command | What it does |
+| ------- | ------------ |
+| `/focus <text>` | Sets today's focus, replacing any earlier choice for the day |
+| `/focus` | Shows today's focus |
+| `/next [repo]` | Lists open `NEXT.md` items, grouped by repo, for all tracked repos or one (`owner/repo` or just `repo`) |
+
+Every choice is kept in `core.focus`; the latest one for a date is that day's focus.
+
+**Yesterday's focus.** The next brief opens its recap with yesterday's focus and whether its repo had commits since you picked it, linking the newest commit. A focus you typed has no repo, so the line only says what it was. This line is written by code and never sent to the model.
 
 ## Roadmap
 
