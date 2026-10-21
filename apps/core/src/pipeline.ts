@@ -10,7 +10,8 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns } from "./store.js";
+import { collapseRepeats, countStreaks } from "./streaks.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
@@ -44,18 +45,25 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       ? yesterdayFocus(await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!), snaps) : [];
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
+    // Streaks count previous scheduled runs, so only scheduled briefs collapse repeats.
+    const collapsing = features.streaks && source === "schedule";
+    const past = collapsing ? await previousRuns(runId) : [];
+    const { kept, collapsed, days } = collapsing
+      ? collapseRepeats(findings, countStreaks(findings.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
+      : { kept: findings, collapsed: [], days: new Map<string, number>() };
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? ruleFocus(findings, next, snaps, now.toJSDate(), config) : [];
-    const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now, previousFocus }, rulesFocus);
+    const rulesFocus = features.focusButtons ? ruleFocus(kept, next, snaps, now.toJSDate(), config) : [];
+    const options = { userName: config.userName, now, previousFocus, collapsed, days };
+    const renderRules = (footer?: string) => render(kept, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;
     let focus: ValidFocus[] = rulesFocus;
     const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");
-    if (useModel && findings.length) {
+    if (useModel && kept.length) {
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...findings, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus }, provider, now);
+        const result = await generateModelBrief([...kept, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus, collapsed, days }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;
