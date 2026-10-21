@@ -9,7 +9,7 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeFindings, storeBrief } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, storeFindings, storeBrief } from "./store.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -27,6 +27,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   try {
     const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
+    await storeNextItems(runId, snaps);
     const { window: w, snapshots } = selectRecap(snaps, now);
     const findings = runRules(snapshots, now.toJSDate(), config, w);
     // Stored only: intent findings join the brief and model input in a later milestone.

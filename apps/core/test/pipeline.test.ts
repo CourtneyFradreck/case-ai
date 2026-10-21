@@ -3,14 +3,14 @@ import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
-  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(),
+  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(),
   env: { briefMode: "rules", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";

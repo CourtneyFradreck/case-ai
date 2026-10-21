@@ -5,7 +5,7 @@ import { snap } from "./fixtures.js";
 const mocks = vi.hoisted(() => ({ generate: vi.fn(), collectAll: vi.fn(), storeBrief: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: vi.fn() }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
-vi.mock("../src/store.js", () => ({ startRun: async () => 7, finishRun: vi.fn(), storeSnapshots: vi.fn(), storeFindings: vi.fn(), storeBrief: mocks.storeBrief }));
+vi.mock("../src/store.js", () => ({ startRun: async () => 7, finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), storeFindings: vi.fn(), storeBrief: mocks.storeBrief }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 
 describe("shared brief structure through the pipeline", () => {

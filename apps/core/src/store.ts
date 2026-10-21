@@ -49,6 +49,25 @@ export async function storeSnapshots(runId: number, snaps: RepoSnapshot[]) {
   }
 }
 
+// Upserts the items of every readable NEXT.md. Missing or errored files leave existing rows alone.
+export async function storeNextItems(runId: number, snaps: RepoSnapshot[]) {
+  for (const s of snaps) {
+    if (s.error || s.next.status !== "ok") continue;
+    for (const i of s.next.items) {
+      await pool.query(
+        `INSERT INTO next_items(repo, item_id, text, section, state, first_seen, last_seen, section_changed_at, last_run_id)
+         VALUES ($1,$2,$3,$4,$5,now(),now(),now(),$6)
+         ON CONFLICT (repo, item_id) DO UPDATE
+           SET text=EXCLUDED.text, state=EXCLUDED.state, last_seen=now(), last_run_id=EXCLUDED.last_run_id,
+               section_changed_at=CASE WHEN next_items.section IS DISTINCT FROM EXCLUDED.section
+                                       THEN now() ELSE next_items.section_changed_at END,
+               section=EXCLUDED.section`,
+        [s.repo, i.id, i.text, i.section, i.state, runId],
+      );
+    }
+  }
+}
+
 export async function storeFindings(runId: number, findings: Finding[]) {
   for (const f of findings) {
     await pool.query(
