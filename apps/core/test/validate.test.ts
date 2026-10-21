@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validate } from "../src/llm/validate.js";
 import { briefJsonSchema } from "../src/llm/schema.js";
 import { shorten } from "../src/llm/validate.js";
+import { renderModelBrief } from "../src/render.js";
 import { finding } from "./fixtures.js";
 
 describe("brief validation", () => {
@@ -37,8 +38,8 @@ describe("brief validation", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.brief.yesterday).toEqual([]);
-      expect(result.brief.attention[0].text).toBe("Review  now");
-      expect(result.brief.attention[1].text).toBe("Fix  CI (Because  it failed)");
+      expect(result.brief.attention[1].text).toBe("Review  now");
+      expect(result.brief.attention[0].text).toBe("Fix  CI (Because  it failed)");
       expect(result.brief.note).toBe("CI needs attention");
       expect(result.brief.noteSources).toEqual([high]);
     }
@@ -165,5 +166,30 @@ describe("overlong model text", () => {
     expect(shorten("short", 10)).toBe("short");
     expect(shorten("one two, three four", 12)).toBe("one two…");
     expect(shorten("x".repeat(30), 10)).toBe(`${"x".repeat(9)}…`);
+  });
+});
+
+describe("attention order", () => {
+  const low = finding({ id: "low", rule: "open_issues", severity: "low", summary: "3 open issues", sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] });
+  const medium = finding({ id: "med", rule: "idle_pr", severity: "medium", summary: "PR #4 idle", sources: [{ label: "PR", url: "https://github.com/me/demo/pull/4" }] });
+  const medium2 = finding({ id: "med2", rule: "stale_branch", severity: "medium", summary: "Branch x stale", sources: [{ label: "branch", url: "https://github.com/me/demo/tree/x" }] });
+  const high = finding({ id: "high", rule: "failing_ci", severity: "high", summary: "CI failing", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
+  const aliases = new Map([["F1", low], ["F2", medium], ["F3", medium2], ["F4", high]]);
+  const all = [low, medium, medium2, high];
+  it("sorts attention by the most severe cited finding, keeping the model's order within a severity", () => {
+    const result = validate(JSON.stringify({ yesterday: [], attention: [
+      { text: "Open issues", sources: ["F1"] }, { text: "Stale branch", sources: ["F3"] },
+      { text: "Idle PR", sources: ["F2"] }, { text: "CI and issues", sources: ["F1", "F4"] },
+    ], focus: [] }), aliases, all);
+    expect(result.ok && result.brief.attention.map((i) => i.text)).toEqual(["CI failing", "Stale branch", "Idle PR", "Open issues"]);
+  });
+  it("renders a low item listed before a medium one after it", () => {
+    const result = validate(JSON.stringify({ yesterday: [], attention: [{ text: "Open issues", sources: ["F1"] }, { text: "Idle PR", sources: ["F2"] }], focus: [] }), aliases, [low, medium]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.brief.attention.map((i) => i.text)).toEqual(["Idle PR", "Open issues"]);
+    const w = { start: new Date(), end: new Date(), label: "" };
+    const text = renderModelBrief({ yesterday: [], attention: [{ text: "Open issues", sources: [low] }, { text: "Idle PR", sources: [medium] }], focus: [] }, [], w);
+    expect(text.indexOf("🟡 Idle PR")).toBeLessThan(text.indexOf("⚪ Open issues"));
   });
 });
