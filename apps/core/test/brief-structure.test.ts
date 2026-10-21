@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({ generate: vi.fn(), collectAll: vi.fn(), storeB
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: vi.fn() }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/store.js", () => ({ startRun: async () => 7, finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: async () => ({ history: new Map(), missingReported: new Set() }), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: mocks.storeBrief }));
+// This test covers the brief with every flag off, whatever config.json ships with.
+vi.mock("../src/features.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/features.js")>()),
+  features: { focusButtons: false, snooze: false, streaks: false, quietMornings: false },
+}));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 
 describe("shared brief structure through the pipeline", () => {

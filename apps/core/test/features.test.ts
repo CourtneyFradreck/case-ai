@@ -14,7 +14,8 @@ describe("feature flags", () => {
   it("ignores unknown keys", () => {
     expect(Object.keys(readFeatures({ features: { unknown: true } }))).toEqual([...FEATURES]);
   });
-  it("ships with every feature off", () => {
-    expect(features).toEqual(off);
+  it("reads every flag from the shipped config as a boolean", () => {
+    expect(Object.keys(features)).toEqual([...FEATURES]);
+    for (const value of Object.values(features)) expect(typeof value).toBe("boolean");
   });
 });
