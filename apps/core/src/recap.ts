@@ -2,16 +2,22 @@ import { DateTime } from "luxon";
 import { inWindow, pastWeekWindow, ZONE, type Window } from "./time.js";
 import type { RepoSnapshot } from "./types.js";
 
-export function selectRecap(snaps: RepoSnapshot[], now: DateTime = DateTime.now()) {
-  const today = now.setZone(ZONE).startOf("day").setLocale("en");
+// Timestamps of the activity a recap can show, within the collected past week.
+export function activityTimes(snaps: RepoSnapshot[], now: DateTime = DateTime.now()): string[] {
   const history = pastWeekWindow(now);
-  const activity = snaps.filter((s) => !s.error).flatMap((s) => [
+  return snaps.filter((s) => !s.error).flatMap((s) => [
     ...s.commits.map((c) => c.date),
     ...s.openedPrs.map((p) => p.createdAt),
     ...s.mergedPrs.map((p) => p.mergedAt),
     ...s.newIssues.map((i) => i.createdAt),
     ...s.closedIssues.map((i) => i.closedAt),
   ]).filter((at): at is string => inWindow(at, history));
+}
+
+export function selectRecap(snaps: RepoSnapshot[], now: DateTime = DateTime.now()) {
+  const today = now.setZone(ZONE).startOf("day").setLocale("en");
+  const history = pastWeekWindow(now);
+  const activity = activityTimes(snaps, now);
   const day = (daysAgo: number, label: string, length = 1): Window => ({
     start: today.minus({ days: daysAgo }).toJSDate(),
     end: today.minus({ days: daysAgo - length }).toJSDate(), label,
