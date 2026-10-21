@@ -20,13 +20,18 @@ describe.each(renderers)("%s greeting", (_, renderBrief) => {
     expect(renderBrief({ userName, now: morning }).split("\n")[0]).toBe("<b>Good morning. Here's your morning brief.</b>");
   });
   it.each([
-    ["2026-10-14T09:59:59Z", "morning"],
-    ["2026-10-14T10:00:00Z", "afternoon"],
-    ["2026-10-14T15:59:59Z", "afternoon"],
-    ["2026-10-14T16:00:00Z", "evening"],
-    ["2026-10-14T22:00:00Z", "morning"],
-  ])("uses Harare time at %s", (iso, greeting) => {
-    expect(renderBrief({ userName: "Courtney", now: DateTime.fromISO(iso, { setZone: true }) }).split("\n")[0]).toBe(`<b>Good ${greeting}, Courtney. Here's your morning brief.</b>`);
+    ["2026-10-14T09:59:59Z", "Good morning", "Here's your morning brief."],
+    ["2026-10-14T10:00:00Z", "Good afternoon", "Here's your brief."],
+    ["2026-10-14T15:59:59Z", "Good afternoon", "Here's your brief."],
+    ["2026-10-14T16:00:00Z", "Good evening", "Here's your brief."],
+    ["2026-10-14T21:59:59Z", "Good evening", "Here's your brief."],
+    ["2026-10-14T22:00:00Z", "Good morning", "Here's your morning brief."],
+  ])("uses Harare time at %s", (iso, greeting, brief) => {
+    expect(renderBrief({ userName: "Courtney", now: DateTime.fromISO(iso, { setZone: true }) }).split("\n")[0]).toBe(`<b>${greeting}, Courtney. ${brief}</b>`);
+  });
+  it("drops \"morning\" from noon local time, with or without a name", () => {
+    expect(renderBrief({ now: DateTime.fromISO("2026-10-14T09:59:59Z") }).split("\n")[0]).toBe("<b>Good morning. Here's your morning brief.</b>");
+    expect(renderBrief({ now: DateTime.fromISO("2026-10-14T10:00:00Z") }).split("\n")[0]).toBe("<b>Good afternoon. Here's your brief.</b>");
   });
   it.each([
     ["2026-10-15T21:59:59Z", "Thursday, 15 Oct 2026"],

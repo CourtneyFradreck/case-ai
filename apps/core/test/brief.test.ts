@@ -43,7 +43,7 @@ describe("model brief generation", () => {
     const generate = vi.fn().mockResolvedValue({ raw, model: "test" });
     const result = await generateModelBrief([finding()], [snap()], w, { ...cfg, userName: "Alex" }, { name: "test", generate }, DateTime.fromISO("2026-10-14T16:00:00Z"));
     expect(generate.mock.calls[0][0]).toContain('Address Alex as "you".');
-    expect("text" in result && result.text).toContain("<b>Good evening, Alex. Here's your morning brief.</b>\nWednesday, 14 Oct 2026");
+    expect("text" in result && result.text).toContain("<b>Good evening, Alex. Here's your brief.</b>\nWednesday, 14 Oct 2026");
   });
 });
 
