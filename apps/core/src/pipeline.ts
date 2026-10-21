@@ -5,15 +5,16 @@ import { env } from "./env.js";
 import { features } from "./features.js";
 import { pool } from "./db.js";
 import { pastWeekWindow } from "./time.js";
-import { selectRecap } from "./recap.js";
+import { activityTimes, selectRecap } from "./recap.js";
+import { isQuietMorning, quietText } from "./quiet.js";
 import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable, storeBriefSentText } from "./store.js";
 import { snoozable, snoozeButtonRow, withoutSnoozed } from "./snooze.js";
 import type { InlineKeyboardButton } from "./telegram.js";
-import { collapseRepeats, countStreaks } from "./streaks.js";
+import { collapseRepeats, countStreaks, lastScheduledRun } from "./streaks.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
@@ -34,6 +35,9 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   let meta: BriefMeta | undefined;
   let delivered = false;
   let deliveryError: string | undefined;
+  let quiet = false;
+  // Quiet mornings compare with the previous scheduled brief, so only scheduled briefs can be quiet.
+  const quietCheck = features.quietMornings && source === "schedule";
   try {
     const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
@@ -43,15 +47,15 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported);
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
     const next = features.focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
-    const previousFocus = features.focusButtons
-      ? yesterdayFocus(await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!), snaps) : [];
+    const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
+    const previousFocus = features.focusButtons ? yesterdayFocus(focusRow, snaps) : [];
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
     // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.
     const visible = features.snooze ? withoutSnoozed(findings, await activeSnoozes(now.toJSDate())) : findings;
     // Streaks count previous scheduled runs, so only scheduled briefs collapse repeats.
     const collapsing = features.streaks && source === "schedule";
-    const past = collapsing ? await previousRuns(runId) : [];
+    const past = collapsing || quietCheck ? await previousRuns(runId) : [];
     const { kept, collapsed, days } = collapsing
       ? collapseRepeats(visible, countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible, collapsed: [], days: new Map<string, number>() };
@@ -77,7 +81,14 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
         text = renderRules("Rule-only brief: model unavailable");
       }
     }
+    // Compared as stored, so today's IDs match what the previous run stored.
+    const attentionIds = [...findings, ...intent, ...previousFocus].filter((f) => f.severity !== "info").map((f) => f.id);
+    const activity = activityTimes(snaps, now);
+    quiet = quietCheck && isQuietMorning(attentionIds, lastScheduledRun(past), activity, now.setZone(ZONE).startOf("day").toJSDate());
+    // The full brief is stored either way; a quiet morning only changes what is sent.
+    const sent = quiet ? quietText(activity, now, focusRow?.item_text ?? kept.find((f) => f.severity !== "info")?.summary) : text;
     const briefId = await storeBrief(runId, text, meta, ruleText);
+    if (quiet) await storeBriefSentText(briefId, sent);
     if (focus.length) await storeBriefFocus(briefId, storedFocus(focus));
     if (snoozeItems.length) await storeBriefSnoozable(briefId, snoozeItems);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
@@ -89,7 +100,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
           ...(focus.length ? focusKeyboard(briefId, focus.length).inline_keyboard : []),
           ...(snoozeItems.length ? [snoozeButtonRow(briefId)] : []),
         ];
-        messageId = (await (buttons.length ? sendMessage(text, { inline_keyboard: buttons }) : sendMessage(text))).message_id;
+        messageId = (await (buttons.length ? sendMessage(sent, { inline_keyboard: buttons }) : sendMessage(sent))).message_id;
         delivered = true;
       } catch (e) {
         deliveryError = (e instanceof Error ? e.message : String(e)).slice(0, 200);
@@ -99,7 +110,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
         try { await storeBriefMessageId(briefId, messageId); } catch (e) { console.error("storing telegram_message_id failed", e); }
       }
     }
-    return { runId, text, delivered, ...(deliveryError ? { deliveryError } : {}) };
+    return { runId, text: sent, delivered, ...(deliveryError ? { deliveryError } : {}) };
   } catch (e) {
     await finishRun(runId, "failed", String(e));
     throw e;
@@ -108,7 +119,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       attempts: meta?.json.attempts ?? 0, inputTokens: meta?.inputTokens ?? null, outputTokens: meta?.outputTokens ?? null,
       dropped: meta?.json.dropped.length ?? 0, fallbackReason: meta?.json.fallbackReason ?? null,
       fallbackDetail: meta?.json.fallbackReason ? (meta.json.fallbackDetail ?? meta.json.fallbackReason).slice(0, 200) : null,
-      delivery: env.delivery, delivered, deliveryError: deliveryError ?? null }));
+      delivery: env.delivery, delivered, deliveryError: deliveryError ?? null, ...(quietCheck ? { quiet } : {}) }));
     await lock.query("SELECT pg_advisory_unlock(777)");
     lock.release();
   }

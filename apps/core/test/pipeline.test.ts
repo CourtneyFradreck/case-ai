@@ -5,15 +5,15 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
   startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), getFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
-  features: { focusButtons: false, streaks: false, snooze: false },
-  previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(),
+  features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false },
+  previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(), storeBriefSentText: vi.fn(),
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable, storeBriefSentText: mocks.storeBriefSentText }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
@@ -405,5 +405,96 @@ describe("snoozes in the pipeline", () => {
     expect(mocks.activeSnoozes).not.toHaveBeenCalled();
     expect(mocks.storeBriefSnoozable).not.toHaveBeenCalled();
     expect(result.text).toContain("PR #14");
+  });
+});
+
+describe("quiet mornings in the pipeline", () => {
+  const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", summary: 'PR #14 "Retry" in me/demo: no activity for 5 days', sources: [{ label: "PR", url: "https://github.com/me/demo/pull/14" }] });
+  const ci = finding({ id: "ci", rule: "failing_ci", severity: "high", summary: "CI failing on me/demo main (build), 2 days ago", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
+  const commit = (date: string) => ({ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date });
+  const ran = (windowEnd: string, attentionIds = ["ci", "pr"]) => [
+    { id: 6, source: "command", status: "ok", windowEnd: new Date(), findingIds: [], attentionIds: [] },
+    { id: 5, source: "schedule", status: "ok", windowEnd: new Date(windowEnd), findingIds: attentionIds, attentionIds },
+  ];
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.features.quietMornings = true;
+    mocks.env.briefMode = "rules";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    // Wednesday: the last activity was Monday, and Tuesday's brief already had both findings.
+    mocks.collectAll.mockResolvedValue([snap({ commits: [commit("2026-10-12T10:00:00Z")] })]);
+    mocks.runRules.mockReturnValue([ci, pr, finding()]);
+    mocks.previousRuns.mockResolvedValue(ran("2026-10-12T22:00:00Z"));
+  });
+  afterEach(() => { mocks.features.quietMornings = false; mocks.env.delivery = "n8n"; vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("sends a short message when nothing changed, and still stores the full brief", async () => {
+    const result = await runBrief("schedule");
+    expect(result.text).toBe("Nothing has moved since Monday. Still on CI failing on me/demo main (build), 2 days ago?");
+    const [, full, , ruleText] = mocks.storeBrief.mock.calls[0];
+    expect(full).toContain("Here's what needs your attention");
+    expect(ruleText).toBe(full);
+    expect(mocks.storeBriefSentText).toHaveBeenCalledWith(70, result.text);
+    expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ quiet: true });
+  });
+  it("asks about yesterday's focus when there is one", async () => {
+    mocks.getFocus.mockResolvedValue({ item_text: "Ship the parser", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });
+    expect((await runBrief("schedule")).text).toBe("Nothing has moved since Monday. Still on Ship the parser?");
+    expect(mocks.getFocus).toHaveBeenCalledWith("2026-10-13");
+  });
+  it("still stores the model brief on a quiet morning", async () => {
+    mocks.env.briefMode = "all";
+    mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F3"] }], attention: [{ text: "CI is failing", sources: ["F1"] }], focus: [] }), model: "test-model" });
+    const result = await runBrief("schedule");
+    expect(result.text).toMatch(/^Nothing has moved since Monday/);
+    expect(mocks.storeBrief.mock.calls[0][1]).toContain("CI is failing");
+    expect(mocks.storeBrief.mock.calls[0][2]).toMatchObject({ model: "test-model" });
+  });
+  it("sends the full brief when an attention finding changed", async () => {
+    mocks.previousRuns.mockResolvedValue(ran("2026-10-12T22:00:00Z", ["ci"]));
+    const result = await runBrief("schedule");
+    expect(result.text).toContain("Here's what needs your attention");
+    expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
+  });
+  it("sends the full brief when there was activity since the previous brief", async () => {
+    mocks.collectAll.mockResolvedValue([snap({ commits: [commit("2026-10-13T10:00:00Z")] })]);
+    expect((await runBrief("schedule")).text).toContain("Here's what you worked on yesterday");
+  });
+  it("sends a short message on Monday after an empty weekend", async () => {
+    vi.setSystemTime(new Date("2026-10-19T05:00:00Z"));
+    mocks.collectAll.mockResolvedValue([snap({ commits: [commit("2026-10-16T10:00:00Z")] })]);
+    // Sunday's brief, whose day began Sat 17 Oct 22:00 UTC, had the same findings.
+    mocks.previousRuns.mockResolvedValue(ran("2026-10-17T22:00:00Z"));
+    expect((await runBrief("schedule")).text).toBe("Nothing has moved since Friday. Still on CI failing on me/demo main (build), 2 days ago?");
+  });
+  it("sends the full brief on Monday when the last brief came before Friday's work", async () => {
+    vi.setSystemTime(new Date("2026-10-19T05:00:00Z"));
+    mocks.collectAll.mockResolvedValue([snap({ commits: [commit("2026-10-16T10:00:00Z")] })]);
+    mocks.previousRuns.mockResolvedValue(ran("2026-10-15T22:00:00Z"));
+    expect((await runBrief("schedule")).text).toContain("Here's what you worked on Friday");
+  });
+  it("attaches the brief's buttons to the short message", async () => {
+    mocks.features.focusButtons = true;
+    mocks.env.delivery = "core";
+    mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });
+    const result = await runBrief("schedule");
+    mocks.features.focusButtons = false;
+    expect(result.text).toMatch(/^Nothing has moved/);
+    expect(mocks.sendMessage).toHaveBeenCalledWith(result.text, { inline_keyboard: [
+      [{ text: "1", callback_data: "f:70:1" }, { text: "2", callback_data: "f:70:2" }], [{ text: "Something else", callback_data: "f:70:x" }],
+    ] });
+  });
+  it("never quiets a command brief, or any brief with the flag off", async () => {
+    expect((await runBrief("command")).text).toContain("Here's what needs your attention");
+    mocks.features.quietMornings = false;
+    expect((await runBrief("schedule")).text).toContain("Here's what needs your attention");
+    expect(mocks.previousRuns).not.toHaveBeenCalled();
+    expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
   });
 });

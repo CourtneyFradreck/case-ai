@@ -276,3 +276,7 @@ export async function listSnoozes(now: Date = new Date()) {
 export async function deleteSnooze(findingId: string) {
   await pool.query("DELETE FROM snoozes WHERE finding_id=$1", [findingId]);
 }
+
+export async function storeBriefSentText(briefId: number, text: string) {
+  await pool.query("UPDATE briefs SET sent_text=$2 WHERE id=$1", [briefId, text]);
+}
