@@ -5,6 +5,7 @@ import type { BriefMeta } from "./llm/brief.js";
 import { followRelinks, relink } from "./intent/relink.js";
 import type { IntentHistory } from "./intent/rules.js";
 import type { StoredFocus } from "./focus.js";
+import type { PastRun } from "./streaks.js";
 
 export async function startRun(source: string, w: Window) {
   const { rows } = await pool.query(
@@ -219,4 +220,19 @@ export async function openNextItems() {
      ORDER BY i.repo, i.first_seen, i.item_id`,
   );
   return rows;
+}
+
+// The runs before runId, newest first, with their finding IDs: one query per brief.
+export async function previousRuns(runId: number, limit = 100): Promise<PastRun[]> {
+  const { rows } = await pool.query<{ id: string; source: string; status: string; window_end: Date; finding_ids: string[]; attention_ids: string[] }>(
+    `SELECT r.id, r.source, r.status, r.window_end,
+            COALESCE(array_agg(f.id) FILTER (WHERE f.id IS NOT NULL), '{}') AS finding_ids,
+            COALESCE(array_agg(f.id) FILTER (WHERE f.id IS NOT NULL AND f.severity <> 'info'), '{}') AS attention_ids
+     FROM (SELECT id, source, status, window_end FROM runs WHERE id < $1 ORDER BY id DESC LIMIT $2) r
+     LEFT JOIN findings f ON f.run_id = r.id
+     GROUP BY r.id, r.source, r.status, r.window_end
+     ORDER BY r.id DESC`,
+    [runId, limit],
+  );
+  return rows.map((r) => ({ id: Number(r.id), source: r.source, status: r.status, windowEnd: r.window_end, findingIds: r.finding_ids, attentionIds: r.attention_ids }));
 }
