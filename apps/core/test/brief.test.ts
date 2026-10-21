@@ -46,3 +46,14 @@ describe("model brief generation", () => {
     expect("text" in result && result.text).toContain("<b>Good evening, Alex. Here's your morning brief.</b>\nWednesday, 14 Oct 2026");
   });
 });
+
+describe("shortened model text in the audit", () => {
+  it("records shortened items next to dropped and renders the shortened text", async () => {
+    const f = finding({ activity: { kind: "commits", count: 10, branch: "main", messages: ["Add retries"] } });
+    const text = `10 commits on main, including ${"adding delivery retries with backoff, ".repeat(7)}`.slice(0, 260);
+    const generate = vi.fn().mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text, sources: ["F1"] }], attention: [], focus: [] }), model: "test" });
+    const result = await generateModelBrief([f], [snap()], w, cfg, { name: "test", generate });
+    expect(result).toMatchObject({ json: { fallbackReason: null, dropped: [], shortened: [{ section: "yesterday", index: 0, field: "text", length: 260 }] } });
+    expect("text" in result && result.text).toMatch(/• 10 commits on main, including adding delivery retries with backoff, [^\n]*… \[/);
+  });
+});

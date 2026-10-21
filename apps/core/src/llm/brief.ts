@@ -5,7 +5,7 @@ import { renderModelBrief } from "../render.js";
 import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
-import { validate, type DropReason } from "./validate.js";
+import { validate, type DropReason, type Shortened } from "./validate.js";
 
 // previousFocus is rendered at the top of the recap and never sent to the model.
 // collapsed and days (features.streaks) are rendered in code; collapsed findings are never sent.
@@ -19,6 +19,7 @@ export interface BriefAudit {
   raw: string | null;
   responses?: string[];
   dropped: DropReason[];
+  shortened?: Shortened[];   // overlong text and reasons cut to the schema limits
   addedBack: string[];
   attempts: number;
   fallbackReason: string | null;
@@ -59,6 +60,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
   const meta: BriefMeta = { model: provider.name, json: { brief: null, aliases: Object.fromEntries([...input.aliasToFinding].map(([alias, f]) => [alias, f.id])), raw: null, responses: [], dropped: [], addedBack: [], attempts: 0, fallbackReason: null, fallbackDetail: null } };
   const complete = (result: Extract<ReturnType<typeof validate>, { ok: true }>) => {
     meta.json.dropped = result.dropped;
+    meta.json.shortened = result.shortened;
     meta.json.addedBack = result.addedBack;
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
     return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days }), focus: result.brief.focus };

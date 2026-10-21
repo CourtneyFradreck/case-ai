@@ -2,7 +2,8 @@ import type { Activity, Finding } from "./types.js";
 
 export const stripCommitPrefix = (text: string) => text.trim().replace(
   /^(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\([^\r\n)]*\))?!?:\s*/i, "");
-const sentence = (text: string) => `${text.trim().replace(/[.!?]+$/, "")}.`;
+// Text the validator shortened already ends in "…".
+const sentence = (text: string) => text.trim().endsWith("…") ? text.trim() : `${text.trim().replace(/[.!?]+$/, "")}.`;
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function bulletText(text: string): string {
