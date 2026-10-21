@@ -47,8 +47,9 @@ export function nextDone(s: RepoSnapshot, next: OkNext, history: IntentHistory):
   });
 }
 
-export function nextMissing(s: RepoSnapshot, now: Date, cfg: IntentConfig): Finding[] {
-  if (s.next.status !== "missing" || !(daysSince(s.createdAt, now) <= cfg.newRepoDays)) return [];
+// Fires once per repo: missingReported holds the repos it already fired for.
+export function nextMissing(s: RepoSnapshot, now: Date, cfg: IntentConfig, missingReported: Set<string> = new Set()): Finding[] {
+  if (s.next.status !== "missing" || missingReported.has(s.repo) || !(daysSince(s.createdAt, now) <= cfg.newRepoDays)) return [];
   return [{
     id: fid("next_missing", s.repo),
     rule: "next_missing",
@@ -79,9 +80,9 @@ export function nextStale(s: RepoSnapshot, next: OkNext, now: Date, cfg: IntentC
 }
 
 export function runIntentRules(snaps: RepoSnapshot[], now: Date, cfg: IntentConfig,
-                               history: IntentHistory = new Map()): Finding[] {
+                               history: IntentHistory = new Map(), missingReported: Set<string> = new Set()): Finding[] {
   return snaps.filter((s) => !s.error).flatMap((s) => s.next.status === "ok"
     ? [...nextItems(s, s.next), ...nextDone(s, s.next, history), ...nextStale(s, s.next, now, cfg)]
-    : nextMissing(s, now, cfg))
+    : nextMissing(s, now, cfg, missingReported))
     .sort(byPriority);
 }

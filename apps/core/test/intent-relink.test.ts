@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { levenshtein, relink, similarity } from "../src/intent/relink.js";
+import { followRelinks, levenshtein, relink, similarity } from "../src/intent/relink.js";
 
 const item = (id: string, text: string) => ({ id, text });
 
@@ -43,5 +43,15 @@ describe("relink", () => {
   it("does nothing with an empty side", () => {
     expect(relink([], [item("a", "New")])).toEqual([]);
     expect(relink([item("a", "Old")], [])).toEqual([]);
+  });
+});
+
+describe("followRelinks", () => {
+  it("maps an ID to the current item that lists it in previousIds", () => {
+    expect(followRelinks(["a", "b", "x"], [{ id: "c", previousIds: ["z", "a"] }, { id: "b", previousIds: [] }]))
+      .toEqual(new Set(["c", "b", "x"]));
+  });
+  it("keeps an ID that is still present even if another item once replaced it", () => {
+    expect(followRelinks(["a"], [{ id: "a", previousIds: [] }, { id: "c", previousIds: ["a"] }])).toEqual(new Set(["a"]));
   });
 });

@@ -9,7 +9,8 @@ const url = "https://github.com/me/demo/blob/main/NEXT.md";
 const okNext = (md: string, over: Partial<Extract<NextFile, { status: "ok" }>> = {}): NextFile =>
   ({ status: "ok", sha: "sha2", url, lastChangedAt: daysAgo(1), items: parseNext("me/demo", md), ...over });
 const recent = [{ name: "main", sha: "a", lastCommitAt: daysAgo(1), aheadBy: 0, url: "https://github.com/me/demo/tree/main" }];
-const run = (s: Partial<RepoSnapshot>, history?: IntentHistory) => runIntentRules([snap(s)], NOW, cfg, history);
+const run = (s: Partial<RepoSnapshot>, history?: IntentHistory, missingReported?: Set<string>) =>
+  runIntentRules([snap(s)], NOW, cfg, history, missingReported);
 const rules = (s: Partial<RepoSnapshot>, rule: string, history?: IntentHistory) => run(s, history).filter((f) => f.rule === rule);
 const idFor = (text: string) => parseNext("me/demo", `- [ ] ${text}`)[0].id;
 
@@ -62,19 +63,28 @@ describe("next_done", () => {
     expect(run({ next: { status: "missing" } }, history()).filter((f) => f.rule === "next_done")).toEqual([]);
     expect(run({ next: { status: "error", error: "GitHub 500" } }, history())).toEqual([]);
   });
+  it("does not fire for an item still open under a new ID once history follows the edit", () => {
+    const after = ["# Now", "- [ ] Ship the parser today", "- [ ] Write docs"].join("\n");
+    const followed: IntentHistory = new Map([["me/demo", { sha: "sha1", openIds: new Set([idFor("Ship the parser today"), idFor("Write docs")]) }]]);
+    expect(rules({ next: okNext(after) }, "next_done", followed)).toEqual([]);
+  });
   it("does not fire without history", () => {
     expect(rules({ next: okNext("- [ ] Write docs") }, "next_done")).toEqual([]);
   });
 });
 
 describe("next_missing", () => {
-  it("fires once for a 2-day-old repo with no NEXT.md, with a stable ID", () => {
+  it("fires for a 2-day-old repo with no NEXT.md, with a stable ID", () => {
     const found = run({ createdAt: daysAgo(2), next: { status: "missing" } });
     expect(found).toMatchObject([{
       rule: "next_missing", severity: "low", summary: "me/demo is new and has no NEXT.md yet",
       sources: [{ label: "repo", url: "https://github.com/me/demo" }],
     }]);
     expect(run({ createdAt: daysAgo(3), next: { status: "missing" } })[0].id).toBe(found[0].id);
+  });
+  it("does not fire again once reported for the repo", () => {
+    expect(run({ createdAt: daysAgo(2), next: { status: "missing" } }, undefined, new Set(["me/demo"]))).toEqual([]);
+    expect(run({ createdAt: daysAgo(2), next: { status: "missing" } }, undefined, new Set(["me/other"]))).toHaveLength(1);
   });
   it("does not fire for a 30-day-old repo", () => {
     expect(run({ createdAt: daysAgo(30), next: { status: "missing" } })).toEqual([]);

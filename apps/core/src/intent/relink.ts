@@ -35,6 +35,13 @@ function best(from: Text, candidates: Text[], score: (a: Text, b: Text) => numbe
   return top && !tied && topScore >= min ? top : undefined;
 }
 
+// Maps item IDs to the current item that took them over through an edit. IDs still present, or never re-linked, stay as they are.
+export function followRelinks(ids: Iterable<string>, current: { id: string; previousIds: string[] }[]): Set<string> {
+  const present = new Set(current.map((i) => i.id));
+  const heir = new Map(current.flatMap((i) => i.previousIds.map((p) => [p, i.id] as const)));
+  return new Set([...ids].map((id) => present.has(id) ? id : heir.get(id) ?? id));
+}
+
 // Pairs items that left NEXT.md with items that appeared, when an edit is the likely story:
 // similar normalised text, and each is the other's only best match.
 export function relink(gone: Text[], added: Text[], min = RELINK_MIN): { from: string; to: string }[] {
