@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { focusCallbackData, focusKeyboard, parseFocusCallback, ruleFocus, storedFocus } from "../src/focus.js";
+import { chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, nextItemsText, parseCommand, parseFocusCallback, ruleFocus, storedFocus } from "../src/focus.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
 
 const cfg = { activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/"] };
@@ -89,5 +89,53 @@ describe("focus buttons", () => {
       { text: "Fix CI", reason: "CI is failing", findingId: "ci", repo: "me/demo" },
       { text: "Prune branches", reason: "Old branches", findingId: "old", repo: null },
     ]);
+  });
+});
+
+describe("focus commands", () => {
+  it.each([
+    ["/focus Ship it", { name: "focus", arg: "Ship it" }],
+    ["/focus@case_bot  Ship\nit ", { name: "focus", arg: "Ship\nit" }],
+    ["/NEXT case-ai", { name: "next", arg: "case-ai" }],
+    ["/next", { name: "next", arg: "" }],
+    ["focus Ship it", undefined],
+    ["/123", undefined],
+  ])("parses %j", (text, expected) => expect(parseCommand(text)).toEqual(expected));
+  it("bounds typed focus text to one line", () => {
+    expect(cleanFocusText(" Ship\n\tthe   parser ")).toBe("Ship the parser");
+    expect(cleanFocusText("x".repeat(300))).toHaveLength(200);
+  });
+  it("names the choice on the remaining button and keeps it short", () => {
+    expect(chosenKeyboard(70, "Fix CI")).toEqual({ inline_keyboard: [[{ text: "Focus: Fix CI", callback_data: "f:70:ok" }]] });
+    expect(chosenKeyboard(70, "x".repeat(100)).inline_keyboard[0][0].text).toHaveLength(60);
+  });
+});
+
+describe("/next replies", () => {
+  const rows = [
+    { repo: "me/demo", text: "Ship <the> parser", section: "M3" },
+    { repo: "me/demo", text: "Write docs", section: null },
+    { repo: "me/other", text: "Plan", section: null },
+    { repo: "me/untracked", text: "Hidden", section: null },
+  ];
+  const tracked = ["me/other", "me/demo", "me/empty"];
+  it("groups open items by tracked repo, escaped", () => {
+    expect(nextItemsText(rows, tracked)).toBe([
+      "<b>Open NEXT.md items</b>", "", "<b>other</b>", "• Plan", "", "<b>demo</b>", "• Ship &lt;the&gt; parser <i>(M3)</i>", "• Write docs",
+    ].join("\n"));
+  });
+  it.each(["me/demo", "demo", "DEMO"])("filters to one repo named %s", (repo) => {
+    expect(nextItemsText(rows, tracked, repo)).toBe("<b>Open NEXT.md items</b>\n\n<b>demo</b>\n• Ship &lt;the&gt; parser <i>(M3)</i>\n• Write docs");
+  });
+  it("says when a repo has no items or isn't tracked", () => {
+    expect(nextItemsText(rows, tracked, "empty")).toBe("No open NEXT.md items in me/empty.");
+    expect(nextItemsText(rows, tracked, "<untracked>")).toBe("&lt;untracked&gt; isn't a tracked repo.");
+    expect(nextItemsText([], tracked)).toBe("No open NEXT.md items.");
+  });
+  it("stays within the message limit", () => {
+    const many = Array.from({ length: 300 }, (_, i) => ({ repo: "me/demo", text: `Item ${i} ${"x".repeat(20)}`, section: null }));
+    const text = nextItemsText(many, tracked);
+    expect(text.length).toBeLessThanOrEqual(3800);
+    expect(text).toMatch(/\+\d+ more line\(s\) not shown<\/i>$/);
   });
 });
