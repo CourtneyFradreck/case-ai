@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ruleFocus } from "../src/focus.js";
+import { focusCallbackData, focusKeyboard, parseFocusCallback, ruleFocus, storedFocus } from "../src/focus.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
 
 const cfg = { activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/"] };
@@ -57,6 +57,37 @@ describe("rule-only focus", () => {
     const other = finding({ id: "o", rule: "something_new", severity: "medium" });
     expect(ruleFocus([comment, branchFinding, other], [], [], NOW, cfg).map((f) => f.reason)).toEqual([
       "Unmerged and untouched for 12 days", "New comments are waiting for a reply", "Needs attention",
+    ]);
+  });
+});
+
+describe("focus buttons", () => {
+  it("numbers one button per suggestion and adds Something else", () => {
+    expect(focusKeyboard(70, 3)).toEqual({ inline_keyboard: [
+      [{ text: "1", callback_data: "f:70:1" }, { text: "2", callback_data: "f:70:2" }, { text: "3", callback_data: "f:70:3" }],
+      [{ text: "Something else", callback_data: "f:70:x" }],
+    ] });
+    expect(focusKeyboard(70, 1).inline_keyboard[0]).toEqual([{ text: "1", callback_data: "f:70:1" }]);
+  });
+  it("keeps callback data inside Telegram's 64-byte limit for any brief ID", () => {
+    const id = 999_999_999_999_999;
+    for (const choice of [3, "other", "chosen"] as const) {
+      const data = focusCallbackData(id, choice);
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseFocusCallback(data)).toEqual({ briefId: id, choice });
+    }
+  });
+  it.each([undefined, "", "focus:1", "f:70", "f:70:0", "f:70:12", "f:abc:1", "f:70:1:extra", "f:-1:1", "f:1234567890123456:1"])("rejects callback data %s", (data) => {
+    expect(parseFocusCallback(data)).toBeUndefined();
+  });
+  it("stores each suggestion's text, reason, first finding and single repo", () => {
+    const branches = finding({ id: "old", rule: "old_branches", repo: "me/demo, me/other" });
+    expect(storedFocus([
+      { text: "you should fix CI", reason: "CI is failing", sources: [ci, pr] },
+      { text: "Prune branches", reason: "Old branches", sources: [branches] },
+    ])).toEqual([
+      { text: "Fix CI", reason: "CI is failing", findingId: "ci", repo: "me/demo" },
+      { text: "Prune branches", reason: "Old branches", findingId: "old", repo: null },
     ]);
   });
 });

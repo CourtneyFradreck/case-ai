@@ -10,9 +10,11 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus } from "./store.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
+import { focusKeyboard, ruleFocus, storedFocus } from "./focus.js";
+import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
 
@@ -39,9 +41,12 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const next = features.focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
     await storeFindings(runId, [...findings, ...intent]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
-    const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now });
+    // The rule-only brief, and the model's fallback, pick focus suggestions in code.
+    const rulesFocus = features.focusButtons ? ruleFocus(findings, next, snaps, now.toJSDate(), config) : [];
+    const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now }, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;
+    let focus: ValidFocus[] = rulesFocus;
     const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");
     if (useModel && findings.length) {
       try {
@@ -50,18 +55,20 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
         const result = await generateModelBrief([...findings, ...next], snaps, w, { ...config, focus: features.focusButtons }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
+        if ("text" in result) focus = result.focus;
       } catch (error) {
         meta = fallbackMeta(env.geminiModel, "model_error", error instanceof Error ? error.message : String(error));
         text = renderRules("Rule-only brief: model unavailable");
       }
     }
     const briefId = await storeBrief(runId, text, meta, ruleText);
+    if (focus.length) await storeBriefFocus(briefId, storedFocus(focus));
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     if (env.delivery === "core") {
       // A failed send returns delivered: false, so n8n sends the text instead and the brief still arrives.
       let messageId: number | undefined;
       try {
-        messageId = (await sendMessage(text)).message_id;
+        messageId = (await (focus.length ? sendMessage(text, focusKeyboard(briefId, focus.length)) : sendMessage(text))).message_id;
         delivered = true;
       } catch (e) {
         deliveryError = (e instanceof Error ? e.message : String(e)).slice(0, 200);

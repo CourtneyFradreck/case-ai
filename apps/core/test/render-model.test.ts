@@ -47,4 +47,33 @@ describe("model rendering", () => {
     expect(text).toMatch(/<i>Rule-only brief: model unavailable<\/i>$/);
     expect(render([], [], w, 3800, "<footer>")).toContain("<i>&lt;footer&gt;</i>");
   });
+  describe("focus suggestions", () => {
+    const ci = finding({ id: "ci", severity: "high", summary: "CI failing", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
+    const next = finding({ id: "next_a", rule: "next_item", summary: "Next in me/demo: Ship <it>", sources: [{ label: "NEXT.md", url: "https://github.com/me/demo/blob/main/NEXT.md#L3" }] });
+    const focus = [
+      { text: "Fix CI", reason: "CI is failing", sources: [ci] },
+      { text: "Ship <it>", reason: "Open in NEXT.md & active", sources: [next] },
+    ];
+    it("renders numbered, escaped suggestions between attention and the recap in the rule-only brief", () => {
+      const text = render([ci, finding()], [], w, 3800, undefined, {}, focus);
+      expect(text).toContain([
+        "<b>Today, I'd suggest</b>",
+        '1. Fix CI (CI is failing) [<a href="https://github.com/me/demo/actions/runs/1">run</a>]',
+        '2. Ship &lt;it&gt; (Open in NEXT.md &amp; active) [<a href="https://github.com/me/demo/blob/main/NEXT.md#L3">NEXT.md</a>]',
+      ].join("\n"));
+      expect(text.indexOf("Here's what needs your attention")).toBeLessThan(text.indexOf("Today, I'd suggest"));
+      expect(text.indexOf("Today, I'd suggest")).toBeLessThan(text.indexOf("Here's what you worked on"));
+      expect(render([ci, finding()], [], w, 3800, undefined, {}, [])).toBe(render([ci, finding()], [], w, 3800));
+    });
+    it("renders the model's suggestions only with the focus option on", () => {
+      const brief = { ...empty(), attention: [{ text: "CI failing", sources: [ci] }], focus };
+      const on = renderModelBrief(brief, [], w, 3800, { focus: true });
+      expect(on).toContain("<b>Today, I'd suggest</b>\n1. Fix CI (CI is failing)");
+      expect(on).toContain("2. Ship &lt;it&gt;");
+      expect(on.match(/CI failing/g)).toHaveLength(1);
+      const off = renderModelBrief(brief, [], w, 3800);
+      expect(off).not.toContain("Today, I'd suggest");
+      expect(off).not.toContain("Ship");
+    });
+  });
 });

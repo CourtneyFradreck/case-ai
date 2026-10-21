@@ -6,6 +6,7 @@ import { render } from "../render.js";
 import { runRules } from "../rules/index.js";
 import { runIntentRules } from "../intent/rules.js";
 import { readFeatures } from "../features.js";
+import { ruleFocus } from "../focus.js";
 import { selectRecap } from "../recap.js";
 import { DateTime } from "luxon";
 import type { RepoSnapshot } from "../types.js";
@@ -34,7 +35,12 @@ async function main() {
   const findings = runRules(snapshots, NOW, config, w);
   const provider = new GeminiBriefModel(apiKey, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite", config.modelTimeoutMs);
   const now = oct15 ? DateTime.fromJSDate(NOW) : DateTime.now();
-  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now });
+  const intent = runIntentRules(snapshots, NOW, config);
+  const { focusButtons } = readFeatures(config);
+  // As in the pipeline: open NEXT.md items and focus suggestions appear only with focusButtons on.
+  const next = focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
+  const focus = focusButtons ? ruleFocus(findings, next, previewSnapshots, NOW, config) : [];
+  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now }, focus);
   const save = (path: string, text: string) => {
     if (!oct15) return;
     const out = new URL("../../../../out/", import.meta.url);
@@ -49,10 +55,6 @@ async function main() {
     console.log(template);
     save("oct15-fallback", renderRules("Rule-only brief: model unavailable"));
   }
-  const intent = runIntentRules(snapshots, NOW, config);
-  const { focusButtons } = readFeatures(config);
-  // As in the pipeline: open NEXT.md items are sent only with focusButtons on.
-  const next = focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
   const result = await generateModelBrief([...findings, ...next], previewSnapshots, w, { ...config, focus: focusButtons }, provider, now);
   console.log("Raw JSON:");
   for (const raw of result.json.responses ?? []) console.log(raw);

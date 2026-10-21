@@ -4,6 +4,7 @@ import type { RepoSnapshot, Finding } from "./types.js";
 import type { BriefMeta } from "./llm/brief.js";
 import { followRelinks, relink } from "./intent/relink.js";
 import type { IntentHistory } from "./intent/rules.js";
+import type { StoredFocus } from "./focus.js";
 
 export async function startRun(source: string, w: Window) {
   const { rows } = await pool.query(
@@ -152,4 +153,8 @@ export async function storeBrief(runId: number, text: string, meta: BriefMeta | 
 
 export async function storeBriefMessageId(briefId: number, messageId: number) {
   await pool.query("UPDATE briefs SET telegram_message_id=$2 WHERE id=$1", [briefId, messageId]);
+}
+
+export async function storeBriefFocus(briefId: number, focus: StoredFocus[]) {
+  await pool.query("UPDATE briefs SET focus=$2 WHERE id=$1", [briefId, JSON.stringify(focus)]);
 }

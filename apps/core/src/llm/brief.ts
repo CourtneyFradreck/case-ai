@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
 import { renderModelBrief } from "../render.js";
 import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
-import { briefJsonSchema, type AliasBrief, type ValidBrief } from "./schema.js";
+import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
 import { validate, type DropReason } from "./validate.js";
 
 export interface ModelBriefConfig extends InputConfig { modelTimeoutMs: number; maxBriefChars: number }
@@ -20,7 +20,8 @@ export interface BriefAudit {
   fallbackDetail?: string | null;
 }
 export interface BriefMeta { model: string | null; inputTokens?: number; outputTokens?: number; json: BriefAudit }
-export type ModelBriefResult = BriefMeta & ({ text: string } | { fallbackReason: string });
+// focus is empty unless features.focusButtons (cfg.focus) is on.
+export type ModelBriefResult = BriefMeta & ({ text: string; focus: ValidFocus[] } | { fallbackReason: string });
 
 export function fallbackMeta(model: string | null, reason: string, detail = reason): BriefMeta & { fallbackReason: string } {
   return { model, fallbackReason: reason, json: { brief: null, aliases: {}, raw: null, dropped: [], addedBack: [], attempts: 0, fallbackReason: reason, fallbackDetail: detail.slice(0, 200) } };
@@ -55,7 +56,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.dropped = result.dropped;
     meta.json.addedBack = result.addedBack;
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus }) };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus);
