@@ -158,3 +158,65 @@ export async function storeBriefMessageId(briefId: number, messageId: number) {
 export async function storeBriefFocus(briefId: number, focus: StoredFocus[]) {
   await pool.query("UPDATE briefs SET focus=$2 WHERE id=$1", [briefId, JSON.stringify(focus)]);
 }
+
+export interface BriefFocusRow { focus: StoredFocus[] | null; created_at: Date; telegram_message_id: string | null }
+
+export async function getBriefFocus(briefId: number) {
+  const { rows } = await pool.query<BriefFocusRow>(
+    "SELECT focus, created_at, telegram_message_id FROM briefs WHERE id=$1", [briefId],
+  );
+  return rows[0];
+}
+
+export interface FocusChoice {
+  date: string; text: string; findingId: string | null; repo: string | null;
+  via: "button" | "text" | "command"; briefId: number | null;
+}
+
+// A later choice on the same date replaces the earlier one; rows are kept as history.
+export async function insertFocus(c: FocusChoice) {
+  await pool.query(
+    "INSERT INTO core.focus(date, item_text, finding_id, repo, chosen_via, brief_id) VALUES ($1,$2,$3,$4,$5,$6)",
+    [c.date, c.text, c.findingId, c.repo, c.via, c.briefId],
+  );
+}
+
+export interface FocusRow { item_text: string; repo: string | null; finding_id: string | null; created_at: Date }
+
+export async function getFocus(date: string) {
+  const { rows } = await pool.query<FocusRow>(
+    "SELECT item_text, repo, finding_id, created_at FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    [date],
+  );
+  return rows[0];
+}
+
+export async function setPendingFocus(chatId: string, briefId: number, expiresAt: Date) {
+  await pool.query(
+    `INSERT INTO focus_pending(chat_id, brief_id, expires_at) VALUES ($1,$2,$3)
+     ON CONFLICT (chat_id) DO UPDATE SET brief_id=EXCLUDED.brief_id, expires_at=EXCLUDED.expires_at, created_at=now()`,
+    [chatId, briefId, expiresAt],
+  );
+}
+
+// Removes the pending state either way, and returns it only while it hasn't expired.
+export async function takePendingFocus(chatId: string, now: Date = new Date()) {
+  const { rows } = await pool.query<{ brief_id: string | null; expires_at: Date }>(
+    "DELETE FROM focus_pending WHERE chat_id=$1 RETURNING brief_id, expires_at", [chatId],
+  );
+  const row = rows[0];
+  return row && row.expires_at > now ? { briefId: row.brief_id === null ? null : Number(row.brief_id) } : undefined;
+}
+
+export interface OpenNextRow { repo: string; text: string; section: string | null }
+
+// Items in each repo's NEXT.md as of the last run that read it; items that left the file are skipped.
+export async function openNextItems() {
+  const { rows } = await pool.query<OpenNextRow>(
+    `SELECT i.repo, i.text, i.section FROM next_items i
+     JOIN next_files f ON f.repo = i.repo AND f.run_id = i.last_run_id
+     WHERE i.state = 'open' AND f.sha IS NOT NULL
+     ORDER BY i.repo, i.first_seen, i.item_id`,
+  );
+  return rows;
+}
