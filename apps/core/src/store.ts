@@ -139,13 +139,14 @@ export async function storeFindings(runId: number, findings: Finding[]) {
   }
 }
 
-export async function storeBrief(runId: number, text: string, meta?: BriefMeta) {
+// ruleText is the rule-only render, stored as a baseline whichever brief was sent.
+export async function storeBrief(runId: number, text: string, meta: BriefMeta | undefined, ruleText: string) {
   if (meta) {
     await pool.query(
-      "INSERT INTO briefs(run_id, text, model, input_tokens, output_tokens, json) VALUES ($1,$2,$3,$4,$5,$6)",
-      [runId, text, meta.model, meta.inputTokens ?? null, meta.outputTokens ?? null, JSON.stringify(meta.json)],
+      "INSERT INTO briefs(run_id, text, model, input_tokens, output_tokens, json, rule_text) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [runId, text, meta.model, meta.inputTokens ?? null, meta.outputTokens ?? null, JSON.stringify(meta.json), ruleText],
     );
     return;
   }
-  await pool.query("INSERT INTO briefs(run_id, text) VALUES ($1,$2)", [runId, text]);
+  await pool.query("INSERT INTO briefs(run_id, text, rule_text) VALUES ($1,$2,$3)", [runId, text, ruleText]);
 }

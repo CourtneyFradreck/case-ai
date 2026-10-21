@@ -43,10 +43,18 @@ describe("model pipeline", () => {
     if (usesModel) expect(result.text).toContain("Model progress");
     else {
       expect(result).toEqual({ runId: 7, text: render([finding()], [snap()], yesterdayWindow(), 3800, undefined, { userName: "Courtney" }) });
-      expect(mocks.storeBrief).toHaveBeenCalledWith(7, result.text, undefined);
+      expect(mocks.storeBrief).toHaveBeenCalledWith(7, result.text, undefined, result.text);
     }
     expect(console.info).toHaveBeenCalledTimes(1);
     expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ source, fallbackReason: null, fallbackDetail: null });
+  });
+  it("stores the rule-only render alongside a successful model brief", async () => {
+    mocks.env.briefMode = "all";
+    const result = await runBrief("command");
+    const ruleText = render([finding()], [snap()], yesterdayWindow(), 3800, undefined, { userName: "Courtney" });
+    expect(result.text).toContain("Model progress");
+    expect(mocks.storeBrief).toHaveBeenCalledWith(7, result.text, expect.objectContaining({ model: "test-model" }), ruleText);
+    expect(ruleText).not.toBe(result.text);
   });
   it("returns a model brief after a failed first attempt", async () => {
     mocks.env.briefMode = "all";
@@ -63,6 +71,7 @@ describe("model pipeline", () => {
     else mocks.generate.mockResolvedValue({ raw: "invalid", model: "test-model" });
     const result = await runBrief("command");
     expect(result.text).toBe(render([finding()], [snap()], yesterdayWindow(), 3800, "Rule-only brief: model unavailable", { userName: "Courtney" }));
+    expect(mocks.storeBrief.mock.calls[0][3]).toBe(render([finding()], [snap()], yesterdayWindow(), 3800, undefined, { userName: "Courtney" }));
     expect(mocks.generate).toHaveBeenCalledTimes(2);
     expect(mocks.storeBrief.mock.calls[0][2]).toMatchObject({ json: { attempts: 2, fallbackReason: failure === "exception" ? "provider_error" : "invalid_json" } });
     expect(mocks.finishRun).toHaveBeenCalledWith(7, "ok");
