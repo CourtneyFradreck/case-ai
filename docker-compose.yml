@@ -55,6 +55,22 @@ services:
       postgres:
         condition: service_healthy
 
+  backup:
+    build: ./infra/backup
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: case
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: case
+      BACKUP_REMOTE: ${BACKUP_REMOTE:-}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      TZ: Africa/Harare
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
   n8ndata:
