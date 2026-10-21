@@ -55,5 +55,10 @@ export function organizeBrief(brief: ValidBrief, findings: Finding[], keepFocus 
     brief.focus.forEach((i) => add({ text: `${i.text} (${i.reason})`, sources: i.sources }, "attention"));
   }
   brief.yesterday.forEach((i) => add(i, "yesterday"));
+  // Most severe cited finding first, as in the rule-only brief; the sort is stable, so the model's order holds within a severity.
+  result.attention.sort((a, b) => topRank(a) - topRank(b));
   return result;
 }
+
+const rank: Record<string, number> = { high: 0, medium: 1, low: 2, info: 3 };
+const topRank = (item: ValidItem) => Math.min(...item.sources.map((f) => rank[f.severity] ?? 3));
