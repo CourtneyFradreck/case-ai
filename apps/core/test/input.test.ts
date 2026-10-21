@@ -92,4 +92,16 @@ describe("model input", () => {
     expect(buildInput([publicFinding], snaps, "day", { modelIncludePrivate: false }).system).toBe(SYSTEM_PROMPT);
     expect(SYSTEM_PROMPT).not.toContain("next_item");
   });
+  it("asks for 2-3 sourced focus suggestions only when focusButtons is on", () => {
+    expect(SYSTEM_PROMPT).toContain('"focus": return an empty list.');
+    expect(SYSTEM_PROMPT).toContain("Never repeat it as a suggestion.");
+    expect(FOCUS_PROMPT).not.toContain("return an empty list");
+    expect(FOCUS_PROMPT).not.toContain("Never repeat it as a suggestion.");
+    expect(FOCUS_PROMPT).toContain('"focus": 2 or 3 suggestions');
+    expect(FOCUS_PROMPT).toContain('Each cites at least one alias in "sources"');
+    expect(FOCUS_PROMPT).toContain("states only a fact from a cited finding");
+    expect(FOCUS_PROMPT).toContain("Prefer high, then medium findings; then open next_item findings in repos that have commit findings");
+    expect(FOCUS_PROMPT.split("\n").length).toBe(SYSTEM_PROMPT.split("\n").length + 1);
+  });
 });
+

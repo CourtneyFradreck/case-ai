@@ -105,4 +105,32 @@ describe("NEXT.md items in validation (focusButtons)", () => {
     const result = validate(output({ focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }] }), new Map([...aliases, ["F3", high]]), [commits, high, next], true);
     expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: "CI failing", sources: [high] }], focus: [{ text: "Fix CI", sources: [high] }] }, addedBack: ["ci"] });
   });
+  it("drops focus suggestions with no valid source, no reason left, or only already-suggested findings", () => {
+    const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
+    const all = new Map([...aliases, ["F3", high]]);
+    const fix = { text: "Fix CI", reason: "CI is failing", sources: ["F3"] };
+    const first = validate(output({ focus: [fix,
+      { text: "Invented work", reason: "Seems important", sources: ["F9"] },
+      { text: "Read this", reason: "https://evil.test", sources: ["F2"] },
+    ] }), all, [commits, high, next], true);
+    expect(first).toMatchObject({ ok: true, brief: { focus: [{ text: "Fix CI", sources: [high] }] } });
+    if (first.ok) expect(first.dropped).toEqual([
+      { section: "focus", index: 1, reason: "no_sources", aliases: ["F9"] },
+      { section: "focus", index: 2, reason: "empty_reason" },
+    ]);
+    const second = validate(output({ focus: [fix,
+      { text: "Fix CI again", reason: "Still failing", sources: ["F3"] },
+      { text: "Ship the parser", reason: "Open in NEXT.md", sources: ["F2", "F9"] },
+    ] }), all, [commits, high, next], true);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(second.brief.focus.map((i) => i.text)).toEqual(["Fix CI", "Ship the parser"]);
+      expect(second.brief.focus[1].sources).toEqual([next]);
+      expect(second.dropped).toEqual([
+        { section: "focus", index: 1, reason: "duplicate_focus" },
+        { section: "focus", index: 2, reason: "unknown_aliases", aliases: ["F9"] },
+      ]);
+    }
+  });
 });
+

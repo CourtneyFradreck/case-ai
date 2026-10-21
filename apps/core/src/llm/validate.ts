@@ -18,6 +18,7 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
   const dropped: DropReason[] = [];
   const addedBack: string[] = [];
   const brief: ValidBrief = { yesterday: [], attention: [], focus: [] };
+  const focusCited = new Set<string>();
   const resolve = (items: AliasBrief["yesterday"], section: DropReason["section"]): ValidItem[] => items.flatMap((item, index) => {
     const unknown = item.sources.filter((alias) => !aliasToFinding.has(alias));
     const sources = [...new Set(item.sources)].flatMap((alias) => aliasToFinding.has(alias) ? [aliasToFinding.get(alias)!] : []);
@@ -30,6 +31,18 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
     if (!text) {
       dropped.push({ section, index, reason: "empty_text" });
       return [];
+    }
+    if (keepFocus && section === "focus") {
+      // A suggestion is shown with its reason, so it needs one; and each finding backs one suggestion at most.
+      if (!stripUrls(String((item as AliasBrief["focus"][number]).reason))) {
+        dropped.push({ section, index, reason: "empty_reason" });
+        return [];
+      }
+      if (sources.every((f) => focusCited.has(f.id))) {
+        dropped.push({ section, index, reason: "duplicate_focus" });
+        return [];
+      }
+      sources.forEach((f) => focusCited.add(f.id));
     }
     return [{ text, sources, ...("reason" in item ? { reason: stripUrls(String(item.reason)) } : {}) }];
   });
