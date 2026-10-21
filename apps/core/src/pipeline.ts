@@ -9,7 +9,8 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId } from "./store.js";
+import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -24,6 +25,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   const history = pastWeekWindow(now);
   const runId = await startRun(source, history);
   let meta: BriefMeta | undefined;
+  let delivered = false;
+  let deliveryError: string | undefined;
   try {
     const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
@@ -50,9 +53,23 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
         text = renderRules("Rule-only brief: model unavailable");
       }
     }
-    await storeBrief(runId, text, meta, ruleText);
+    const briefId = await storeBrief(runId, text, meta, ruleText);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
-    return { runId, text };
+    if (env.delivery === "core") {
+      // A failed send returns delivered: false, so n8n sends the text instead and the brief still arrives.
+      let messageId: number | undefined;
+      try {
+        messageId = (await sendMessage(text)).message_id;
+        delivered = true;
+      } catch (e) {
+        deliveryError = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+      }
+      // The brief is already in Telegram, so a storage failure must not turn into delivered: false.
+      if (messageId !== undefined) {
+        try { await storeBriefMessageId(briefId, messageId); } catch (e) { console.error("storing telegram_message_id failed", e); }
+      }
+    }
+    return { runId, text, delivered, ...(deliveryError ? { deliveryError } : {}) };
   } catch (e) {
     await finishRun(runId, "failed", String(e));
     throw e;
@@ -60,7 +77,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     console.info(JSON.stringify({ event: "brief", runId, source, mode: env.briefMode, model: meta?.model ?? null,
       attempts: meta?.json.attempts ?? 0, inputTokens: meta?.inputTokens ?? null, outputTokens: meta?.outputTokens ?? null,
       dropped: meta?.json.dropped.length ?? 0, fallbackReason: meta?.json.fallbackReason ?? null,
-      fallbackDetail: meta?.json.fallbackReason ? (meta.json.fallbackDetail ?? meta.json.fallbackReason).slice(0, 200) : null }));
+      fallbackDetail: meta?.json.fallbackReason ? (meta.json.fallbackDetail ?? meta.json.fallbackReason).slice(0, 200) : null,
+      delivery: env.delivery, delivered, deliveryError: deliveryError ?? null }));
     await lock.query("SELECT pg_advisory_unlock(777)");
     lock.release();
   }

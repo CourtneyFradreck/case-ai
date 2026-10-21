@@ -3,14 +3,15 @@ import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
-  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(),
-  env: { briefMode: "rules", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
+  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), sendMessage: vi.fn(),
+  env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId }));
+vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";
@@ -23,8 +24,10 @@ describe("model pipeline", () => {
     vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
     vi.spyOn(console, "info").mockImplementation(() => {});
     mocks.env.briefMode = "rules";
+    mocks.env.delivery = "n8n";
     mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
     mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
     mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
     mocks.collectAll.mockResolvedValue([snap({ commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] })]);
     mocks.runRules.mockReturnValue([finding()]);
@@ -38,11 +41,12 @@ describe("model pipeline", () => {
   ] as const)("selects mode %s for %s", async (mode, source, usesModel) => {
     mocks.env.briefMode = mode;
     const result = await runBrief(source);
-    expect(Object.keys(result).sort()).toEqual(["runId", "text"]);
+    expect(Object.keys(result).sort()).toEqual(["delivered", "runId", "text"]);
+    expect(result.delivered).toBe(false);
     expect(mocks.generate).toHaveBeenCalledTimes(usesModel ? 1 : 0);
     if (usesModel) expect(result.text).toContain("Model progress");
     else {
-      expect(result).toEqual({ runId: 7, text: render([finding()], [snap()], yesterdayWindow(), 3800, undefined, { userName: "Courtney" }) });
+      expect(result).toEqual({ runId: 7, text: render([finding()], [snap()], yesterdayWindow(), 3800, undefined, { userName: "Courtney" }), delivered: false });
       expect(mocks.storeBrief).toHaveBeenCalledWith(7, result.text, undefined, result.text);
     }
     expect(console.info).toHaveBeenCalledTimes(1);
@@ -107,6 +111,38 @@ describe("model pipeline", () => {
     mocks.storeFindings.mockRejectedValue(new Error("DB unavailable"));
     await expect(runBrief("command")).rejects.toThrow("DB unavailable");
     expect(mocks.finishRun).toHaveBeenCalledWith(7, "failed", "Error: DB unavailable");
+  });
+  it("leaves sending to n8n by default", async () => {
+    await runBrief("schedule");
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ delivery: "n8n", delivered: false, deliveryError: null });
+  });
+  it("sends the brief itself with CASE_DELIVERY=core and stores the message id", async () => {
+    mocks.env.delivery = "core";
+    mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });
+    const result = await runBrief("schedule");
+    expect(result).toEqual({ runId: 7, text: result.text, delivered: true });
+    expect(mocks.sendMessage).toHaveBeenCalledWith(result.text);
+    expect(mocks.storeBriefMessageId).toHaveBeenCalledWith(70, 555);
+    expect(mocks.finishRun).toHaveBeenCalledWith(7, "ok");
+    expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ delivery: "core", delivered: true, deliveryError: null });
+  });
+  it("hands the brief back to n8n when the Telegram send fails", async () => {
+    mocks.env.delivery = "core";
+    mocks.sendMessage.mockRejectedValue(new Error("Telegram sendMessage failed (502): Bad Gateway"));
+    const result = await runBrief("schedule");
+    expect(result).toMatchObject({ runId: 7, delivered: false, deliveryError: "Telegram sendMessage failed (502): Bad Gateway" });
+    expect(mocks.storeBriefMessageId).not.toHaveBeenCalled();
+    expect(mocks.finishRun).toHaveBeenCalledWith(7, "ok");
+    expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ delivered: false, deliveryError: "Telegram sendMessage failed (502): Bad Gateway" });
+  });
+  it("still reports delivered when only storing the message id fails", async () => {
+    mocks.env.delivery = "core";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });
+    mocks.storeBriefMessageId.mockRejectedValue(new Error("DB unavailable"));
+    expect((await runBrief("schedule")).delivered).toBe(true);
+    expect(console.error).toHaveBeenCalledTimes(1);
   });
 });
 

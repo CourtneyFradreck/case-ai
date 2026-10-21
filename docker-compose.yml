@@ -28,6 +28,7 @@ services:
       CASE_BRIEF_MODE: ${CASE_BRIEF_MODE:-rules}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      CASE_DELIVERY: ${CASE_DELIVERY:-n8n}
       TZ: Africa/Harare
     depends_on:
       postgres:
