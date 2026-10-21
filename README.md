@@ -37,10 +37,14 @@ GitHub API ─┐
 NEXT.md ────┼─> case-core: collect -> rule checks -> write brief -> validate -> Telegram
 Telegram ───┘                              │
                                      Gemini API
+
+n8n: 7am schedule ──> POST /brief
+     Telegram webhook ──> POST /telegram/update (every update) ──> POST /brief (owner's /brief only)
 ```
 
-- **n8n** handles schedules and the Telegram webhook.
-- **case-core** holds all the logic, so it can be tested.
+- **n8n** only triggers runs and forwards Telegram updates. Its 7am schedule calls `POST /brief`. Every Telegram message and button tap is forwarded to `POST /telegram/update`, and core answers with `owner: true` only for the chat in `TELEGRAM_CHAT_ID`. n8n runs `/brief` only for those.
+- **Delivery:** with `CASE_DELIVERY=core`, case-core sends the brief itself through the Telegram Bot API, so it can attach buttons and later edit them; the message ID is stored on the brief. `/brief` then returns `delivered: true` and n8n sends nothing. With `CASE_DELIVERY=n8n` (the default), or if core's send fails, `/brief` returns `delivered: false` and n8n's Telegram node sends the text.
+- **case-core** holds all the logic, so it can be tested. It ignores and logs updates from any other chat, and always answers button taps so they stop spinning.
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
@@ -79,7 +83,7 @@ cp .env.example .env    # fill in the values
 docker compose up --build
 ```
 
-Then open n8n at your domain, add your Telegram credential, import the workflow from `n8n/workflows/` and activate it.
+Then open n8n at your domain and add two credentials: a Telegram credential with your bot token, and a Header Auth credential named `x-case-key` whose value is `CASE_API_KEY`. Import the workflows from `n8n/workflows/`: `errors.json` first, then `morning-brief.json` and `brief-command.json`. In `errors.json` and `morning-brief.json`, set the Telegram node's chat ID to your own. Link the credentials and activate all three.
 
 ### Environment variables
 
@@ -92,6 +96,9 @@ Then open n8n at your domain, add your Telegram credential, import the workflow 
 | `GITHUB_TOKEN`       | Read-only GitHub token for the tracked repos |
 | `CASE_REPOS`         | Comma-separated `owner/repo` names |
 | `CASE_BRIEF_MODE`    | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`. |
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather, used when case-core sends messages itself |
+| `TELEGRAM_CHAT_ID`   | Your Telegram chat ID. The only chat case-core accepts updates from; the `/brief` command does nothing until it is set. |
+| `CASE_DELIVERY`      | `n8n` (default): n8n sends the brief; `core`: case-core sends it and `/brief` returns `delivered: true`. `core` without both Telegram values, or any invalid value, uses `n8n`. |
 | `GEMINI_API_KEY`     | Required for model briefs. A missing key uses `rules`; an invalid key or failed model request sends a rule-only fallback. |
 | `GEMINI_MODEL`       | Model ID; defaults to `gemini-3.5-flash-lite`. An invalid model setting sends a rule-only fallback. |
 | `BACKUP_REMOTE`      | rclone destination for nightly backups, e.g. `r2:case-backups`. Empty disables backups. |
