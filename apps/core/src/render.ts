@@ -71,7 +71,8 @@ function header(options: GreetingOptions): string[] {
   const hour = today.hour;
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const name = options.userName?.trim();
-  return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}. Here's your morning brief.</b>`, today.toFormat("cccc, d LLL yyyy")];
+  // "morning brief" only before noon, local time.
+  return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}. Here's your ${hour < 12 ? "morning " : ""}brief.</b>`, today.toFormat("cccc, d LLL yyyy")];
 }
 
 // Suggestions sit before the recap, so truncation cuts the recap first.
