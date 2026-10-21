@@ -133,13 +133,22 @@ describe("focus text and commands", () => {
       ["No open NEXT.md items in me/other."],
     ]);
   });
-  it("does nothing with focusButtons off", async () => {
+  it("answers /focus and /next once each with focusButtons off, and ignores plain text", async () => {
     mocks.features.focusButtons = false;
     mocks.takePendingFocus.mockResolvedValue({ briefId: 70 });
-    for (const text of ["/focus Ship it", "/next", "Ship it"]) await onTextMessage(message(text), NOW);
+    for (const text of ["/focus Ship it", "/next@case_bot demo", "Ship it"]) await onTextMessage(message(text), NOW);
+    expect(mocks.sendMessage.mock.calls).toEqual([
+      ["/focus isn't switched on yet. Turn on features.focusButtons in config.json."],
+      ["/next isn't switched on yet. Turn on features.focusButtons in config.json."],
+    ]);
     expect(mocks.insertFocus).not.toHaveBeenCalled();
-    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.openNextItems).not.toHaveBeenCalled();
     expect(mocks.takePendingFocus).not.toHaveBeenCalled();
+  });
+  it("still ignores other commands with every flag off", async () => {
+    mocks.features.focusButtons = false;
+    for (const text of ["/brief", "/constructor", "/start"]) await onTextMessage(message(text), NOW);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -188,13 +197,18 @@ describe("snooze taps and commands", () => {
       "No snooze with that number. Send /snoozed to see them.",
     ]);
   });
-  it("does nothing with snooze off, and focus handling stays separate", async () => {
+  it("ignores snooze taps and answers /snoozed and /unsnooze with snooze off, whatever focusButtons is", async () => {
     mocks.features.snooze = false;
     mocks.features.focusButtons = true;
     expect(await onCallbackQuery(tap("s:70:1:3"), WED)).toBeUndefined();
     await onTextMessage(message("/snoozed"), WED);
+    await onTextMessage(message("/unsnooze 1"), WED);
     expect(mocks.getBriefSnoozable).not.toHaveBeenCalled();
     expect(mocks.listSnoozes).not.toHaveBeenCalled();
-    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.deleteSnooze).not.toHaveBeenCalled();
+    expect(mocks.sendMessage.mock.calls).toEqual([
+      ["/snoozed isn't switched on yet. Turn on features.snooze in config.json."],
+      ["/unsnooze isn't switched on yet. Turn on features.snooze in config.json."],
+    ]);
   });
 });

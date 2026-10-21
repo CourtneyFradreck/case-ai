@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import { env } from "./env.js";
-import { features } from "./features.js";
+import { features, type Feature } from "./features.js";
 import { ZONE } from "./time.js";
 import { esc } from "./render.js";
 import { editMessageReplyMarkup, editMessageText, sendMessage } from "./telegram.js";
@@ -13,7 +13,9 @@ import {
 import type { TelegramCallbackQuery, TelegramMessage } from "./telegram-update.js";
 
 // Focus taps and commands are behind features.focusButtons, snooze taps and commands behind features.snooze.
-// With both off, updates are routed and ignored as before.
+// With a flag off, its taps and plain text are ignored, and its commands reply that they're off.
+
+const COMMAND_FLAGS = { focus: "focusButtons", next: "focusButtons", snoozed: "snooze", unsnooze: "snooze" } as const satisfies Record<string, Feature>;
 
 const today = (now: DateTime) => now.setZone(ZONE).toISODate()!;
 const midnight = (now: DateTime) => now.setZone(ZONE).startOf("day").plus({ days: 1 }).toJSDate();
@@ -92,8 +94,13 @@ async function onSnoozeCommand(command: { name: string; arg: string }, now: Date
 export async function onTextMessage(message: TelegramMessage, now: DateTime = DateTime.now()): Promise<void> {
   if (typeof message.text !== "string") return;
   const command = parseCommand(message.text);
+  const flag = command && Object.hasOwn(COMMAND_FLAGS, command.name) ? COMMAND_FLAGS[command.name as keyof typeof COMMAND_FLAGS] : undefined;
+  if (flag && !features[flag]) {
+    await sendMessage(`/${command!.name} isn't switched on yet. Turn on features.${flag} in config.json.`);
+    return;
+  }
   if (command?.name === "snoozed" || command?.name === "unsnooze") {
-    if (features.snooze) await onSnoozeCommand(command, now);
+    await onSnoozeCommand(command, now);
     return;
   }
   if (!features.focusButtons) return;
