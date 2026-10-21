@@ -4,7 +4,7 @@ describe("model environment", () => {
   beforeEach(() => {
     vi.resetModules();
     for (const key of ["DATABASE_URL", "CASE_API_KEY", "GITHUB_TOKEN", "CASE_REPOS"]) vi.stubEnv(key, "test");
-    for (const key of ["CASE_BRIEF_MODE", "GEMINI_API_KEY", "GEMINI_MODEL"]) vi.stubEnv(key, undefined);
+    for (const key of ["CASE_BRIEF_MODE", "GEMINI_API_KEY", "GEMINI_MODEL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]) vi.stubEnv(key, undefined);
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
@@ -34,6 +34,15 @@ describe("model environment", () => {
   it.each(["DATABASE_URL", "CASE_API_KEY", "GITHUB_TOKEN", "CASE_REPOS"])("still requires %s", async (key) => {
     vi.stubEnv(key, undefined);
     await expect(import("../src/env.js")).rejects.toThrow(`Missing env var ${key}`);
+  });
+  it("starts without Telegram settings", async () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", " ");
+    expect((await import("../src/env.js")).env).toMatchObject({ telegramBotToken: undefined, telegramChatId: undefined });
+  });
+  it("reads trimmed Telegram settings", async () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", " 123:abc ");
+    vi.stubEnv("TELEGRAM_CHAT_ID", "42");
+    expect((await import("../src/env.js")).env).toMatchObject({ telegramBotToken: "123:abc", telegramChatId: "42" });
   });
   it("accepts a key and custom model", async () => {
     vi.stubEnv("CASE_BRIEF_MODE", "command");
