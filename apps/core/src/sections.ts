@@ -6,6 +6,9 @@ const sourceKeys = (f: Finding) => f.sources.map((s) =>
   s.url.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+)(?:[?#/]|$)/)?.[1] ?? s.url);
 const generic = (f: Finding) => ["open_issues", "open_pr"].includes(f.rule);
 
+// Open NEXT.md items are plans, not activity or problems: they may back a focus suggestion only.
+export const focusOnly = (f: Finding) => f.rule === "next_item";
+
 export function deduplicateFindings(findings: Finding[]): Finding[] {
   const concrete = new Set(findings.filter((f) => f.severity !== "info" && !generic(f)).flatMap(sourceKeys));
   const recap = findings.filter((f) => f.severity === "info" && !sourceKeys(f).some((key) => concrete.has(key)));
@@ -17,8 +20,9 @@ export function deduplicateFindings(findings: Finding[]): Finding[] {
 
 // Enforce section ownership in code as well as in the prompt. If a model mixes
 // sections in one sentence, use sourced template lines for its surviving facts.
-export function organizeBrief(brief: ValidBrief, findings: Finding[]): ValidBrief {
-  const allowed = new Map(deduplicateFindings(findings).map((f) => [f.id, f]));
+// keepFocus (features.focusButtons) keeps focus suggestions as their own section.
+export function organizeBrief(brief: ValidBrief, findings: Finding[], keepFocus = false): ValidBrief {
+  const allowed = new Map(deduplicateFindings(findings).filter((f) => !focusOnly(f)).map((f) => [f.id, f]));
   const seen = new Set<string>();
   const result: ValidBrief = { yesterday: [], attention: [], focus: [], ...(brief.note ? { note: brief.note, noteSources: brief.noteSources } : {}) };
   const add = (item: ValidItem, section: "attention" | "yesterday") => {
@@ -38,9 +42,18 @@ export function organizeBrief(brief: ValidBrief, findings: Finding[]): ValidBrie
     }
   };
   brief.attention.forEach((i) => add(i, "attention"));
-  // Older model responses may still contain focus suggestions. Fold them into
-  // attention so a finding never appears in a third section as well.
-  brief.focus.forEach((i) => add({ text: `${i.text} (${i.reason})`, sources: i.sources }, "attention"));
+  if (keepFocus) {
+    // A suggestion points at work listed elsewhere, so it may cite attention findings too.
+    const known = new Set(findings.map((f) => f.id));
+    result.focus = brief.focus.flatMap((i) => {
+      const sources = i.sources.filter((f) => known.has(f.id));
+      return sources.length ? [{ ...i, sources }] : [];
+    });
+  } else {
+    // Older model responses may still contain focus suggestions. Fold them into
+    // attention so a finding never appears in a third section as well.
+    brief.focus.forEach((i) => add({ text: `${i.text} (${i.reason})`, sources: i.sources }, "attention"));
+  }
   brief.yesterday.forEach((i) => add(i, "yesterday"));
   return result;
 }

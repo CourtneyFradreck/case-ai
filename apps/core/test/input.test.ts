@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildInput, SYSTEM_PROMPT } from "../src/llm/input.js";
+import { buildInput, FOCUS_PROMPT, SYSTEM_PROMPT } from "../src/llm/input.js";
 import { finding, snap } from "./fixtures.js";
 
 describe("model input", () => {
@@ -82,5 +82,14 @@ describe("model input", () => {
     const input = buildInput([publicFinding], snaps, "day", { modelIncludePrivate: false, userName });
     expect(input.system).toContain("You are CASE, the user's morning brief assistant.");
     expect(input.system).toContain('Address the user as "you".');
+  });
+  it("tells the model NEXT.md items belong only in focus when focusButtons is on", () => {
+    const next = finding({ id: "next_abc", rule: "next_item", summary: "Next in me/demo: Ship the parser", details: ["M3 Intent"] });
+    const input = buildInput([publicFinding, next], snaps, "day", { modelIncludePrivate: false, focus: true });
+    expect(input.system).toBe(FOCUS_PROMPT);
+    expect(input.system).toContain(`"next_item" findings are open items from the user's NEXT.md plans`);
+    expect(input.user).toContain("F2 | info | next_item | me/demo | Next in me/demo: Ship the parser\n    - M3 Intent");
+    expect(buildInput([publicFinding], snaps, "day", { modelIncludePrivate: false }).system).toBe(SYSTEM_PROMPT);
+    expect(SYSTEM_PROMPT).not.toContain("next_item");
   });
 });

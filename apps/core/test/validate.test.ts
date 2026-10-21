@@ -74,3 +74,35 @@ describe("brief validation", () => {
     expect(validate(output({ yesterday: [], note: "Hello" }), aliases, [f])).toEqual({ ok: false, reason: "empty_brief" });
   });
 });
+
+describe("NEXT.md items in validation (focusButtons)", () => {
+  const commits = finding();
+  const next = finding({ id: "next_abc", rule: "next_item", summary: "Next in me/demo: Ship the parser", sources: [{ label: "NEXT.md", url: "https://github.com/me/demo/blob/main/NEXT.md#L3" }] });
+  const aliases = new Map([["F1", commits], ["F2", next]]);
+  const output = (over = {}) => JSON.stringify({ yesterday: [{ text: "Made progress.", sources: ["F1"] }], attention: [], focus: [], ...over });
+  it("keeps a focus suggestion that cites a next_item finding", () => {
+    const result = validate(output({ focus: [{ text: "Ship the parser", reason: "It's next in NEXT.md", sources: ["F2"] }] }), aliases, [commits, next], true);
+    expect(result).toMatchObject({ ok: true, brief: { focus: [{ text: "Ship the parser", reason: "It's next in NEXT.md", sources: [next] }] } });
+  });
+  it("never lets a next_item finding into the recap or attention", () => {
+    const result = validate(output({ yesterday: [{ text: "Made progress.", sources: ["F1"] }, { text: "Ship the parser", sources: ["F2"] }], attention: [{ text: "Ship it", sources: ["F2"] }] }), aliases, [commits, next], true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.brief.yesterday).toEqual([{ text: "Made progress.", sources: [commits] }]);
+      expect(result.brief.attention).toEqual([]);
+    }
+  });
+  it("doesn't add an uncited or private next_item finding back as a recap line", () => {
+    const privateNext = { ...next, id: "next_private", repo: "me/secret" };
+    const result = validate(output(), aliases, [commits, next, privateNext], true);
+    expect(result).toMatchObject({ ok: true, brief: { yesterday: [{ sources: [commits] }], attention: [], focus: [] }, addedBack: [] });
+  });
+  it("treats a brief citing only next_item findings outside focus as empty", () => {
+    expect(validate(output({ yesterday: [{ text: "Ship the parser", sources: ["F2"] }] }), aliases, [commits, next], true)).toMatchObject({ ok: false, reason: "empty_brief" });
+  });
+  it("still lists a high finding in attention when it is cited only in focus", () => {
+    const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
+    const result = validate(output({ focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }] }), new Map([...aliases, ["F3", high]]), [commits, high, next], true);
+    expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: "CI failing", sources: [high] }], focus: [{ text: "Fix CI", sources: [high] }] }, addedBack: ["ci"] });
+  });
+});

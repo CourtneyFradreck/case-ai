@@ -5,6 +5,7 @@ import { generateModelBrief } from "../llm/brief.js";
 import { render } from "../render.js";
 import { runRules } from "../rules/index.js";
 import { runIntentRules } from "../intent/rules.js";
+import { readFeatures } from "../features.js";
 import { selectRecap } from "../recap.js";
 import { DateTime } from "luxon";
 import type { RepoSnapshot } from "../types.js";
@@ -48,7 +49,11 @@ async function main() {
     console.log(template);
     save("oct15-fallback", renderRules("Rule-only brief: model unavailable"));
   }
-  const result = await generateModelBrief(findings, previewSnapshots, w, config, provider, now);
+  const intent = runIntentRules(snapshots, NOW, config);
+  const { focusButtons } = readFeatures(config);
+  // As in the pipeline: open NEXT.md items are sent only with focusButtons on.
+  const next = focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
+  const result = await generateModelBrief([...findings, ...next], previewSnapshots, w, { ...config, focus: focusButtons }, provider, now);
   console.log("Raw JSON:");
   for (const raw of result.json.responses ?? []) console.log(raw);
   console.log("Validation report:");
@@ -57,9 +62,7 @@ async function main() {
   const text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
   console.log(text);
   save("oct15-model", text);
-  // Collected and stored, but not part of the brief yet.
-  console.log("Intent findings (not in the brief):");
-  const intent = runIntentRules(snapshots, NOW, config);
+  console.log(focusButtons ? "Intent findings (open items can back focus suggestions):" : "Intent findings (not in the brief):");
   if (!intent.length) console.log("(none)");
   for (const f of intent) console.log(`[${f.severity}] ${f.rule}: ${f.summary}${f.details ? ` (${f.details.join("; ")})` : ""} <${f.sources[0]?.url}>`);
   if ("fallbackReason" in result) process.exitCode = 1;

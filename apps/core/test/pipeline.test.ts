@@ -5,8 +5,10 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
   startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
+  features: { focusButtons: false },
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
+vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
@@ -196,7 +198,7 @@ describe("intent findings in the pipeline", () => {
     expect(mocks.storeFindings.mock.calls[1][1].map((f: { rule: string }) => f.rule)).not.toContain("next_missing");
     expect(mocks.markMissingReported).toHaveBeenLastCalledWith([]);
   });
-  it("keeps intent findings out of the model input", async () => {
+  it("keeps intent findings out of the model input with focusButtons off", async () => {
     mocks.env.briefMode = "all";
     const withNext = await runBrief("command");
     mocks.collectAll.mockResolvedValue([snap()]);
@@ -205,5 +207,31 @@ describe("intent findings in the pipeline", () => {
     expect(mocks.generate.mock.calls[0]).toEqual(mocks.generate.mock.calls[1]);
     expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("Ship the parser");
     expect(withNext.text).toBe(without.text);
+  });
+  describe("with focusButtons on", () => {
+    beforeEach(() => { mocks.features.focusButtons = true; });
+    afterEach(() => { mocks.features.focusButtons = false; });
+    it("sends open NEXT.md items to the model after the rule findings", async () => {
+      mocks.env.briefMode = "all";
+      await runBrief("command");
+      const [system, user] = mocks.generate.mock.calls[0];
+      expect(system).toContain('"next_item" findings are open items');
+      expect(user).toContain("F2 | info | next_item | me/demo | Next in me/demo: Ship the parser");
+      expect(user).toContain("F1 | info | commits");
+    });
+    it("keeps NEXT.md items out of the recap even when the model cites them there", async () => {
+      mocks.env.briefMode = "all";
+      mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }, { text: "Ship the parser", sources: ["F2"] }], attention: [], focus: [] }), model: "test-model" });
+      const result = await runBrief("command");
+      expect(result.text).toContain("Model progress");
+      expect(result.text).not.toContain("parser");
+      expect(result.text).not.toContain("NEXT.md");
+    });
+    it("leaves the rule-only brief unchanged", async () => {
+      const on = await runBrief("command");
+      mocks.features.focusButtons = false;
+      expect((await runBrief("command")).text).toBe(on.text);
+      expect(on.text).not.toContain("Ship the parser");
+    });
   });
 });
