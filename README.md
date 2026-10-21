@@ -48,7 +48,7 @@ n8n: 7am schedule ──> POST /brief
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
-- **Feature flags** live under `features` in `apps/core/config.json`. Each defaults to `false`; only an explicit `true` turns one on. With every flag off, the brief is the same as before the flag existed.
+- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. Each defaults to `false`; only an explicit `true` turns one on. To turn one on, set it to `true`, commit and redeploy (config is read at startup). With every flag off, the brief is the same as before the flags existed. See [Focus](#focus) and [Less repetition](#less-repetition).
 
 ## Stack
 
@@ -196,9 +196,38 @@ Suggestions are stored on the brief (`briefs.focus`) in button order.
 | `/focus` | Shows today's focus |
 | `/next [repo]` | Lists open `NEXT.md` items, grouped by repo, for all tracked repos or one (`owner/repo` or just `repo`) |
 
+`/snoozed` and `/unsnooze` are under [Less repetition](#less-repetition).
+
 Every choice is kept in `core.focus`; the latest one for a date is that day's focus.
 
 **Yesterday's focus.** The next brief opens its recap with yesterday's focus and whether its repo had commits since you picked it, linking the newest commit. A focus you typed has no repo, so the line only says what it was. This line is written by code and never sent to the model.
+
+## Less repetition
+
+Three flags stop the brief repeating itself. Each works on its own; turn one on by setting it to `true` under `features` in `apps/core/config.json` and redeploying.
+
+**Streaks (`"streaks": true`).** For each finding in a scheduled brief, case-core counts how many consecutive previous scheduled briefs (status `ok` or `partial`) contained the same finding ID, with one query per brief. Command briefs, failed runs and unfinished runs are skipped: they neither count nor break a streak. Medium and low findings with a streak of at least `streakCollapseAfter` (in `config.json`, default `3`) move out of the attention list into one linked line at the end of it:
+
+```
+⚪ Still open, unchanged: 3 items (idle PR #14 in attachcv, stale branch feat/x in demo, open issues in demo)
+```
+
+High findings are never collapsed; their line gains `(day N)` instead, where N counts today. Collapsed findings are not sent to the model or used for focus suggestions; code renders the line on both paths. `/brief` (a command brief) always shows everything.
+
+**Snooze (`"snooze": true`).** With `CASE_DELIVERY=core`, the brief gets a `Snooze…` button when it has medium or low attention items. Tapping it sends a list of those items, each with `3 days` and `7 days` buttons; a choice is confirmed by editing that list. Snoozing for 3 days skips the next three briefs: the item is back on the brief from midnight Africa/Harare after them. Snoozed findings are left out of the brief, the model input and the focus suggestions, but are still stored, so their streak keeps counting. High findings can't be snoozed, and a snooze on a finding that has become high is ignored.
+
+| Command | What it does |
+| ------- | ------------ |
+| `/snoozed` | Lists active snoozes, numbered, with the day each comes back |
+| `/unsnooze <n>` | Brings item `n` from `/snoozed` back on the brief |
+
+**Quiet mornings (`"quietMornings": true`).** Scheduled briefs only. If the brief's attention finding IDs are exactly those of the previous scheduled brief, and nothing has happened since that brief's day began (no commits, PRs or issues opened, merged or closed), case-core sends a short message instead:
+
+```
+Nothing has moved since Friday. Still on <yesterday's focus, or the top attention item>?
+```
+
+It carries the brief's buttons. The full rule and model briefs are still stored in `briefs` (`text`, `rule_text`), and the short message in `briefs.sent_text`. On a Monday after an empty weekend, Sunday's brief is the one compared with. `/brief` always sends the full brief.
 
 ## Roadmap
 

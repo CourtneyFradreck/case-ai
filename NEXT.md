@@ -19,3 +19,13 @@
 - [ ] Set CASE_DELIVERY=core with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, so briefs carry buttons
 - [ ] Turn on features.focusButtons and redeploy; check the first brief's suggestions, buttons and /next
 - [ ] Compare model suggestions with the rule-picked ones in rule_text for a week
+
+## Less repetition
+
+- [x] Streak counting per finding across scheduled runs (one query per run)
+- [x] streaks: collapse medium/low repeats into one "Still open, unchanged" line; "day N" on high findings
+- [x] snooze: snoozes table, Snooze… button with 3/7-day choices, /snoozed and /unsnooze
+- [x] quietMornings: short "Nothing has moved" message when attention and activity are unchanged
+- [ ] Turn on streaks (set "streaks": true in apps/core/config.json, redeploy) and watch a week of briefs
+- [ ] Turn on snooze (needs CASE_DELIVERY=core for the buttons; /snoozed works either way)
+- [ ] Turn on quietMornings once streaks look right; check briefs.sent_text against text on quiet days
