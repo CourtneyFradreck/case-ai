@@ -69,8 +69,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        416,
-        0
+        624,
+        64
       ],
       "id": "90638c69-1c21-442b-85ba-ea068e195d07",
       "name": "Send a text message",
@@ -81,6 +81,41 @@
           "name": "Telegram account"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "272197c3-5e08-4927-9917-1c35470f5f4a",
+              "leftValue": "={{ $json.delivered === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "5db82a27-44a1-4a90-b08e-507c8d0c915a",
+      "name": "Already delivered?"
     }
   ],
   "pinData": {},
@@ -98,6 +133,18 @@
     },
     "HTTP Request": {
       "main": [
+        [
+          {
+            "node": "Already delivered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already delivered?": {
+      "main": [
+        [],
         [
           {
             "node": "Send a text message",
