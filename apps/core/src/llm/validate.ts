@@ -1,11 +1,21 @@
 import type { Finding } from "../types.js";
-import { BriefJson, type ValidBrief, type ValidItem, type AliasBrief, type ValidFocus } from "./schema.js";
+import { BriefJson, REASON_MAX, TEXT_MAX, type ValidBrief, type ValidItem, type AliasBrief, type ValidFocus } from "./schema.js";
 import { focusOnly, organizeBrief } from "../sections.js";
 import { closingLine } from "./closing.js";
 
 export interface DropReason { section: "yesterday" | "attention" | "focus"; index: number; reason: string; aliases?: string[] }
-export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[] } | { ok: false; reason: string; detail?: string };
+// An overlong text or reason the validator cut to its limit; length is before shortening.
+export interface Shortened { section: DropReason["section"]; index: number; field: "text" | "reason"; length: number }
+export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[]; shortened: Shortened[] } | { ok: false; reason: string; detail?: string };
 const stripUrls = (text: string) => text.replace(/https?:\/\/\S+|www\.\S+/gi, "").trim();
+
+// Cuts at the last word boundary that leaves room for "…", so the result is at most max characters.
+export function shorten(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  const space = cut.search(/\s\S*$/);
+  return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-–—]+$/, "")}…`;
+}
 
 // With keepFocus, focus is its own section: citing a finding there doesn't stand in for listing it.
 export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[], keepFocus = false): ValidationResult {
@@ -17,6 +27,11 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
   if (!result.success) return { ok: false, reason: "invalid_schema", detail: result.error.message };
   const dropped: DropReason[] = [];
   const addedBack: string[] = [];
+  const shortened: Shortened[] = [];
+  const fit = (value: string, max: number, section: DropReason["section"], index: number, field: Shortened["field"]) => {
+    if (value.length > max) shortened.push({ section, index, field, length: value.length });
+    return shorten(value, max);
+  };
   const brief: ValidBrief = { yesterday: [], attention: [], focus: [] };
   const focusCited = new Set<string>();
   const resolve = (items: AliasBrief["yesterday"], section: DropReason["section"]): ValidItem[] => items.flatMap((item, index) => {
@@ -44,7 +59,8 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
       }
       sources.forEach((f) => focusCited.add(f.id));
     }
-    return [{ text, sources, ...("reason" in item ? { reason: stripUrls(String(item.reason)) } : {}) }];
+    return [{ text: fit(text, TEXT_MAX, section, index, "text"), sources,
+      ...("reason" in item ? { reason: fit(stripUrls(String(item.reason)), REASON_MAX, section, index, "reason") } : {}) }];
   });
   brief.yesterday = resolve(result.data.yesterday, "yesterday");
   brief.attention = resolve(result.data.attention, "attention");
@@ -69,5 +85,5 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
   // Items citing only NEXT.md items are dropped from attention and recap later, so they don't count here.
   const kept = (i: ValidItem) => i.sources.some((f) => !focusOnly(f));
   if (!brief.yesterday.some(kept) && !brief.attention.some(kept) && !brief.focus.length && allFindings.some((f) => !focusOnly(f))) return { ok: false, reason: "empty_brief" };
-  return { ok: true, brief: organizeBrief(brief, allFindings, keepFocus), dropped, addedBack };
+  return { ok: true, brief: organizeBrief(brief, allFindings, keepFocus), dropped, addedBack, shortened };
 }

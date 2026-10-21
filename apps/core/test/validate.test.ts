@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validate } from "../src/llm/validate.js";
 import { briefJsonSchema } from "../src/llm/schema.js";
+import { shorten } from "../src/llm/validate.js";
 import { finding } from "./fixtures.js";
 
 describe("brief validation", () => {
@@ -9,7 +10,7 @@ describe("brief validation", () => {
   const item = { text: "You made progress.", sources: ["F1"] };
   const output = (over = {}) => JSON.stringify({ yesterday: [item], attention: [], focus: [], ...over });
   it("resolves valid aliases to stored findings", () => {
-    expect(validate(output(), aliases, [f])).toEqual({ ok: true, brief: { yesterday: [{ ...item, sources: [f] }], attention: [], focus: [] }, dropped: [], addedBack: [] });
+    expect(validate(output(), aliases, [f])).toEqual({ ok: true, brief: { yesterday: [{ ...item, sources: [f] }], attention: [], focus: [] }, dropped: [], addedBack: [], shortened: [] });
     expect(briefJsonSchema).not.toHaveProperty("$schema");
   });
   it("rejects invalid JSON", () => expect(validate("not json", aliases, [f]).ok).toBe(false));
@@ -55,7 +56,7 @@ describe("brief validation", () => {
   it("adds an uncited medium finding as a plain attention line and records its ID", () => {
     const medium = finding({ id: "medium", severity: "medium", summary: "New comment from tendai" });
     const result = validate(output({ yesterday: [] }), new Map([["F1", medium]]), [medium]);
-    expect(result).toEqual({ ok: true, brief: { yesterday: [], attention: [{ text: medium.summary, sources: [medium] }], focus: [] }, dropped: [], addedBack: [medium.id] });
+    expect(result).toEqual({ ok: true, brief: { yesterday: [], attention: [{ text: medium.summary, sources: [medium] }], focus: [] }, dropped: [], addedBack: [medium.id], shortened: [] });
   });
   it("keeps cited medium findings without adding them again", () => {
     const medium = finding({ severity: "medium" });
@@ -134,3 +135,35 @@ describe("NEXT.md items in validation (focusButtons)", () => {
   });
 });
 
+describe("overlong model text", () => {
+  const f = finding();
+  const long = `10 commits on main, including ${"adding delivery retries with backoff, ".repeat(6)}and documenting the brief endpoint`.slice(0, 260);
+  it("accepts a 260-character yesterday item, shortens it at a word boundary and records it", () => {
+    expect(long).toHaveLength(260);
+    const result = validate(JSON.stringify({ yesterday: [{ text: long, sources: ["F1"] }], attention: [], focus: [] }), new Map([["F1", f]]), [f]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const text = result.brief.yesterday[0].text;
+    expect(text.endsWith("…")).toBe(true);
+    expect(text.length).toBeLessThanOrEqual(200);
+    expect(long.startsWith(text.slice(0, -1))).toBe(true);
+    expect(long[text.length - 1]).toMatch(/[\s,]/);
+    expect(result.shortened).toEqual([{ section: "yesterday", index: 0, field: "text", length: 260 }]);
+    expect(result.dropped).toEqual([]);
+  });
+  it("shortens an overlong focus reason to its limit", () => {
+    const high = finding({ severity: "high" });
+    const result = validate(JSON.stringify({ yesterday: [], attention: [], focus: [{ text: "Fix CI", reason: "word ".repeat(40), sources: ["F1"] }] }), new Map([["F1", high]]), [high], true);
+    expect(result).toMatchObject({ ok: true, shortened: [{ section: "focus", index: 0, field: "reason", length: 199 }] });
+    if (result.ok) expect(result.brief.focus[0].reason.length).toBeLessThanOrEqual(160);
+  });
+  it("still asks the model for the limits", () => {
+    expect(JSON.stringify(briefJsonSchema)).toContain('"maxLength":200');
+    expect(JSON.stringify(briefJsonSchema)).toContain('"maxLength":160');
+  });
+  it("cuts at the last word boundary, trims trailing punctuation, and keeps short text", () => {
+    expect(shorten("short", 10)).toBe("short");
+    expect(shorten("one two, three four", 12)).toBe("one two…");
+    expect(shorten("x".repeat(30), 10)).toBe(`${"x".repeat(9)}…`);
+  });
+});

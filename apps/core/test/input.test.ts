@@ -3,6 +3,10 @@ import { buildInput, FOCUS_PROMPT, SYSTEM_PROMPT } from "../src/llm/input.js";
 import { finding, snap } from "./fixtures.js";
 
 describe("model input", () => {
+  it("asks for items under 180 characters", () => {
+    expect(SYSTEM_PROMPT).toContain(`- Keep every item's "text" and "reason" under 180 characters.`);
+    expect(FOCUS_PROMPT).toContain(`- Keep every item's "text" and "reason" under 180 characters.`);
+  });
   it("tells the model not to add claims a finding doesn't contain", () => {
     expect(SYSTEM_PROMPT).toContain("Describe each finding using only what its fields state. Do not add urgency, judgements or calls to action (e.g. 'needs your review', 'urgent', 'blocking') that the finding doesn't contain.");
   });
