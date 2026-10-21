@@ -3,16 +3,18 @@ import { DateTime } from "luxon";
 
 const mocks = vi.hoisted(() => ({
   env: { telegramChatId: "42", repos: ["me/demo", "me/other"] },
-  features: { focusButtons: true },
-  sendMessage: vi.fn(), editMessageReplyMarkup: vi.fn(),
+  features: { focusButtons: true, snooze: false },
+  sendMessage: vi.fn(), editMessageReplyMarkup: vi.fn(), editMessageText: vi.fn(),
   getBriefFocus: vi.fn(), getFocus: vi.fn(), insertFocus: vi.fn(), openNextItems: vi.fn(), setPendingFocus: vi.fn(), takePendingFocus: vi.fn(),
+  getBriefSnoozable: vi.fn(), upsertSnooze: vi.fn(), listSnoozes: vi.fn(), deleteSnooze: vi.fn(),
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
-vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage, editMessageReplyMarkup: mocks.editMessageReplyMarkup }));
+vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage, editMessageReplyMarkup: mocks.editMessageReplyMarkup, editMessageText: mocks.editMessageText }));
 vi.mock("../src/store.js", () => ({
   getBriefFocus: mocks.getBriefFocus, getFocus: mocks.getFocus, insertFocus: mocks.insertFocus, openNextItems: mocks.openNextItems,
   setPendingFocus: mocks.setPendingFocus, takePendingFocus: mocks.takePendingFocus,
+  getBriefSnoozable: mocks.getBriefSnoozable, upsertSnooze: mocks.upsertSnooze, listSnoozes: mocks.listSnoozes, deleteSnooze: mocks.deleteSnooze,
 }));
 import { onCallbackQuery, onTextMessage } from "../src/telegram-handlers.js";
 
@@ -138,5 +140,61 @@ describe("focus text and commands", () => {
     expect(mocks.insertFocus).not.toHaveBeenCalled();
     expect(mocks.sendMessage).not.toHaveBeenCalled();
     expect(mocks.takePendingFocus).not.toHaveBeenCalled();
+  });
+});
+
+describe("snooze taps and commands", () => {
+  const items = [{ findingId: "pr", repo: "me/demo", text: 'PR #4 "<Retry>" idle' }, { findingId: "oi", repo: "me/demo", text: "3 open issues" }];
+  const WED = DateTime.fromISO("2026-10-14T05:00:00Z");
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.features.focusButtons = false;
+    mocks.features.snooze = true;
+    mocks.getBriefSnoozable.mockResolvedValue(items);
+    mocks.editMessageText.mockResolvedValue(true);
+  });
+
+  it("sends the list of snoozable items from the stored brief", async () => {
+    expect(await onCallbackQuery(tap("s:70"), WED)).toBeUndefined();
+    expect(mocks.getBriefSnoozable).toHaveBeenCalledWith(70);
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.stringContaining("1. PR #4"), { inline_keyboard: expect.arrayContaining([[
+      { text: "1: 3 days", callback_data: "s:70:1:3" }, { text: "1: 7 days", callback_data: "s:70:1:7" },
+    ]]) });
+  });
+  it("stores a snooze and confirms by editing the list message", async () => {
+    expect(await onCallbackQuery(tap("s:70:2:7"), WED)).toEqual({ answerText: "Snoozed until Thu 22 Oct" });
+    expect(mocks.upsertSnooze).toHaveBeenCalledWith("oi", "me/demo", new Date("2026-10-21T22:00:00Z"));
+    expect(mocks.editMessageText).toHaveBeenCalledWith(555, "Snoozed until Thu 22 Oct: 3 open issues");
+  });
+  it("refuses unknown items and briefs with nothing to snooze", async () => {
+    expect(await onCallbackQuery(tap("s:70:3:3"), WED)).toEqual({ answerText: "That item isn't on this list." });
+    mocks.getBriefSnoozable.mockResolvedValue(undefined);
+    expect(await onCallbackQuery(tap("s:71"), WED)).toEqual({ answerText: "That brief has nothing to snooze." });
+    expect(mocks.upsertSnooze).not.toHaveBeenCalled();
+  });
+  it("lists and removes snoozes by number", async () => {
+    const rows = [{ finding_id: "pr", repo: "me/demo", until: new Date("2026-10-17T22:00:00Z"), summary: "PR #4 idle" }];
+    mocks.listSnoozes.mockResolvedValue(rows);
+    await onTextMessage(message("/snoozed"), WED);
+    await onTextMessage(message("/unsnooze 1"), WED);
+    await onTextMessage(message("/unsnooze 2"), WED);
+    await onTextMessage(message("/unsnooze"), WED);
+    expect(mocks.listSnoozes).toHaveBeenCalledWith(WED.toJSDate());
+    expect(mocks.deleteSnooze.mock.calls).toEqual([["pr"]]);
+    expect(mocks.sendMessage.mock.calls.map(([t]) => t)).toEqual([
+      expect.stringContaining("1. PR #4 idle (back Sun 18 Oct)"),
+      "Back on the brief: PR #4 idle",
+      "No snooze with that number. Send /snoozed to see them.",
+      "No snooze with that number. Send /snoozed to see them.",
+    ]);
+  });
+  it("does nothing with snooze off, and focus handling stays separate", async () => {
+    mocks.features.snooze = false;
+    mocks.features.focusButtons = true;
+    expect(await onCallbackQuery(tap("s:70:1:3"), WED)).toBeUndefined();
+    await onTextMessage(message("/snoozed"), WED);
+    expect(mocks.getBriefSnoozable).not.toHaveBeenCalled();
+    expect(mocks.listSnoozes).not.toHaveBeenCalled();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
   });
 });

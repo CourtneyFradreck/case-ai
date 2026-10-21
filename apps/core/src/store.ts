@@ -6,6 +6,7 @@ import { followRelinks, relink } from "./intent/relink.js";
 import type { IntentHistory } from "./intent/rules.js";
 import type { StoredFocus } from "./focus.js";
 import type { PastRun } from "./streaks.js";
+import type { StoredSnoozable } from "./snooze.js";
 
 export async function startRun(source: string, w: Window) {
   const { rows } = await pool.query(
@@ -235,4 +236,43 @@ export async function previousRuns(runId: number, limit = 100): Promise<PastRun[
     [runId, limit],
   );
   return rows.map((r) => ({ id: Number(r.id), source: r.source, status: r.status, windowEnd: r.window_end, findingIds: r.finding_ids, attentionIds: r.attention_ids }));
+}
+
+export async function storeBriefSnoozable(briefId: number, items: StoredSnoozable[]) {
+  await pool.query("UPDATE briefs SET snoozable=$2 WHERE id=$1", [briefId, JSON.stringify(items)]);
+}
+
+export async function getBriefSnoozable(briefId: number) {
+  const { rows } = await pool.query<{ snoozable: StoredSnoozable[] | null }>("SELECT snoozable FROM briefs WHERE id=$1", [briefId]);
+  return rows[0]?.snoozable ?? undefined;
+}
+
+export async function activeSnoozes(now: Date = new Date()) {
+  const { rows } = await pool.query<{ finding_id: string }>("SELECT finding_id FROM snoozes WHERE until > $1", [now]);
+  return new Set(rows.map((r) => r.finding_id));
+}
+
+export async function upsertSnooze(findingId: string, repo: string, until: Date) {
+  await pool.query(
+    `INSERT INTO snoozes(finding_id, repo, until) VALUES ($1,$2,$3)
+     ON CONFLICT (finding_id) DO UPDATE SET repo=EXCLUDED.repo, until=EXCLUDED.until, created_at=now()`,
+    [findingId, repo, until],
+  );
+}
+
+export interface SnoozeRow { finding_id: string; repo: string | null; until: Date; summary: string | null }
+
+// Active snoozes in a stable order, with each finding's latest stored summary; /unsnooze numbers follow it.
+export async function listSnoozes(now: Date = new Date()) {
+  const { rows } = await pool.query<SnoozeRow>(
+    `SELECT s.finding_id, s.repo, s.until,
+            (SELECT f.summary FROM findings f WHERE f.id = s.finding_id ORDER BY f.run_id DESC LIMIT 1) AS summary
+     FROM snoozes s WHERE s.until > $1 ORDER BY s.until, s.created_at, s.finding_id`,
+    [now],
+  );
+  return rows;
+}
+
+export async function deleteSnooze(findingId: string) {
+  await pool.query("DELETE FROM snoozes WHERE finding_id=$1", [findingId]);
 }

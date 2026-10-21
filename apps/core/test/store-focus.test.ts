@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const pool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool }));
-import { getFocus, insertFocus, openNextItems, previousRuns, setPendingFocus, takePendingFocus } from "../src/store.js";
+import { activeSnoozes, deleteSnooze, getFocus, insertFocus, listSnoozes, openNextItems, previousRuns, setPendingFocus, takePendingFocus, upsertSnooze } from "../src/store.js";
 
 describe("focus storage", () => {
   beforeEach(() => {
@@ -53,5 +53,29 @@ describe("previous runs", () => {
     expect(sql).toContain("FROM runs WHERE id < $1 ORDER BY id DESC LIMIT $2");
     expect(sql).toContain("f.severity <> 'info'");
     expect(params).toEqual([7, 100]);
+  });
+});
+
+describe("snooze storage", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    pool.query.mockResolvedValue({ rows: [] });
+  });
+  it("reads active snoozes as a set of finding ids", async () => {
+    const now = new Date("2026-10-14T05:00:00Z");
+    pool.query.mockResolvedValue({ rows: [{ finding_id: "pr" }] });
+    expect(await activeSnoozes(now)).toEqual(new Set(["pr"]));
+    expect(pool.query).toHaveBeenCalledWith("SELECT finding_id FROM snoozes WHERE until > $1", [now]);
+  });
+  it("upserts, lists and deletes snoozes", async () => {
+    const until = new Date("2026-10-17T22:00:00Z");
+    await upsertSnooze("pr", "me/demo", until);
+    expect(pool.query.mock.calls[0][0]).toContain("ON CONFLICT (finding_id) DO UPDATE");
+    expect(pool.query.mock.calls[0][1]).toEqual(["pr", "me/demo", until]);
+    await listSnoozes(until);
+    expect(pool.query.mock.calls[1][0]).toContain("ORDER BY f.run_id DESC LIMIT 1");
+    expect(pool.query.mock.calls[1][0]).toContain("WHERE s.until > $1 ORDER BY s.until, s.created_at, s.finding_id");
+    await deleteSnooze("pr");
+    expect(pool.query).toHaveBeenLastCalledWith("DELETE FROM snoozes WHERE finding_id=$1", ["pr"]);
   });
 });

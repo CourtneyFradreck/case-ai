@@ -3,12 +3,17 @@ import { env } from "./env.js";
 import { features } from "./features.js";
 import { ZONE } from "./time.js";
 import { esc } from "./render.js";
-import { editMessageReplyMarkup, sendMessage } from "./telegram.js";
+import { editMessageReplyMarkup, editMessageText, sendMessage } from "./telegram.js";
 import { chosenKeyboard, cleanFocusText, nextItemsText, parseCommand, parseFocusCallback } from "./focus.js";
-import { getBriefFocus, getFocus, insertFocus, openNextItems, setPendingFocus, takePendingFocus } from "./store.js";
+import { parseSnoozeCallback, snoozedText, snoozeList, snoozeUntil, untilText } from "./snooze.js";
+import {
+  deleteSnooze, getBriefFocus, getBriefSnoozable, getFocus, insertFocus, listSnoozes, openNextItems, setPendingFocus,
+  takePendingFocus, upsertSnooze,
+} from "./store.js";
 import type { TelegramCallbackQuery, TelegramMessage } from "./telegram-update.js";
 
-// Everything here is behind features.focusButtons; with it off, updates are routed and ignored as before.
+// Focus taps and commands are behind features.focusButtons, snooze taps and commands behind features.snooze.
+// With both off, updates are routed and ignored as before.
 
 const today = (now: DateTime) => now.setZone(ZONE).toISODate()!;
 const midnight = (now: DateTime) => now.setZone(ZONE).startOf("day").plus({ days: 1 }).toJSDate();
@@ -17,6 +22,7 @@ const notice = (text: string) => text.length > 200 ? `${text.slice(0, 199)}…` 
 
 // Returning answerText shows it as a small notice on the tapped button.
 export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTime = DateTime.now()): Promise<{ answerText?: string } | void> {
+  if (query.data?.startsWith("s:")) return features.snooze ? onSnoozeCallback(query, now) : undefined;
   if (!features.focusButtons) return;
   const callback = parseFocusCallback(query.data);
   if (!callback) return;
@@ -46,10 +52,52 @@ export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTim
   return { answerText: notice(`Focus set: ${item.text}`) };
 }
 
+async function onSnoozeCallback(query: TelegramCallbackQuery, now: DateTime): Promise<{ answerText?: string } | void> {
+  const callback = parseSnoozeCallback(query.data);
+  if (!callback) return;
+  const items = await getBriefSnoozable(callback.briefId);
+  if (!items?.length) return { answerText: "That brief has nothing to snooze." };
+  if (!("item" in callback)) {
+    const { text, markup } = snoozeList(callback.briefId, items);
+    await sendMessage(text, markup);
+    return;
+  }
+  const item = items[callback.item - 1];
+  if (!item) return { answerText: "That item isn't on this list." };
+  const until = snoozeUntil(now, callback.days);
+  await upsertSnooze(item.findingId, item.repo, until);
+  if (query.message) {
+    // The snooze is stored; a failed edit only leaves the list in place.
+    await editMessageText(query.message.message_id, `Snoozed until ${untilText(until)}: ${esc(item.text)}`)
+      .catch((e) => console.error("editMessageText failed", e));
+  }
+  return { answerText: `Snoozed until ${untilText(until)}` };
+}
+
+async function onSnoozeCommand(command: { name: string; arg: string }, now: DateTime) {
+  const rows = await listSnoozes(now.toJSDate());
+  if (command.name === "snoozed") {
+    await sendMessage(snoozedText(rows));
+    return;
+  }
+  const row = /^\d+$/.test(command.arg) ? rows[Number(command.arg) - 1] : undefined;
+  if (!row) {
+    await sendMessage("No snooze with that number. Send /snoozed to see them.");
+    return;
+  }
+  await deleteSnooze(row.finding_id);
+  await sendMessage(`Back on the brief: ${esc(row.summary ?? row.finding_id)}`);
+}
+
 export async function onTextMessage(message: TelegramMessage, now: DateTime = DateTime.now()): Promise<void> {
-  if (!features.focusButtons || typeof message.text !== "string") return;
-  const chatId = String(message.chat.id);
+  if (typeof message.text !== "string") return;
   const command = parseCommand(message.text);
+  if (command?.name === "snoozed" || command?.name === "unsnooze") {
+    if (features.snooze) await onSnoozeCommand(command, now);
+    return;
+  }
+  if (!features.focusButtons) return;
+  const chatId = String(message.chat.id);
   if (command?.name === "focus") {
     const text = cleanFocusText(command.arg);
     if (!text) {
