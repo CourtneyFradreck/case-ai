@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, renderModelBrief } from "../src/render.js";
+import { codeFilenames, render, renderModelBrief } from "../src/render.js";
 import type { ValidBrief } from "../src/llm/schema.js";
 import { finding, snap } from "./fixtures.js";
 import { DateTime } from "luxon";
@@ -59,7 +59,7 @@ describe("model rendering", () => {
       expect(text).toContain([
         "<b>Today, I'd suggest</b>",
         '1. Fix CI (CI is failing) [<a href="https://github.com/me/demo/actions/runs/1">run</a>]',
-        '2. Ship &lt;it&gt; (Open in NEXT.md &amp; active) [<a href="https://github.com/me/demo/blob/main/NEXT.md#L3">NEXT.md</a>]',
+        '2. Ship &lt;it&gt; (Open in <code>NEXT.md</code> &amp; active) [<a href="https://github.com/me/demo/blob/main/NEXT.md#L3">NEXT.md</a>]',
       ].join("\n"));
       expect(text.indexOf("Here's what needs your attention")).toBeLessThan(text.indexOf("Today, I'd suggest"));
       expect(text.indexOf("Today, I'd suggest")).toBeLessThan(text.indexOf("Here's what you worked on"));
@@ -77,3 +77,25 @@ describe("model rendering", () => {
     });
   });
 });
+
+describe(".md filenames", () => {
+  const stale = finding({ id: "stale", rule: "next_stale", severity: "low", summary: "NEXT.md in me/demo hasn't changed in 20 days; see README.md & docs/setup.md", sources: [{ label: "NEXT.md", url: "https://github.com/me/demo/blob/main/NEXT.md" }] });
+  it("wraps them in code in the rule-only brief, but not inside links", () => {
+    const text = render([stale], [], w, 3800);
+    expect(text).toContain('⚪ <code>NEXT.md</code> in me/demo hasn\'t changed in 20 days; see <code>README.md</code> &amp; <code>docs/setup.md</code> [<a href="https://github.com/me/demo/blob/main/NEXT.md">NEXT.md</a>]');
+  });
+  it("wraps them in model text, focus suggestions and the footer", () => {
+    const text = renderModelBrief({ ...empty(), attention: [{ text: "Update NEXT.md, it's stale", sources: [stale] }], focus: [{ text: "Rewrite readme.MD", reason: "Open in NEXT.md", sources: [stale] }] }, [], w, 3800, { focus: true });
+    expect(text).toContain("⚪ Update <code>NEXT.md</code>, it's stale [");
+    expect(text).toContain("1. Rewrite <code>readme.MD</code> (Open in <code>NEXT.md</code>) [");
+    expect(text).toContain('<a href="https://github.com/me/demo/blob/main/NEXT.md">NEXT.md</a>');
+    expect(render([], [], w, 3800, "See NEXT.md")).toContain("<i>See <code>NEXT.md</code></i>");
+  });
+  it("leaves other words, links, existing code and longer extensions alone", () => {
+    expect(codeFilenames('a.mdx, NEXT.md.bak, x.mdown, .md, <a href="https://x/NEXT.md">NEXT.md</a> <code>README.md</code> <b>x</b>'))
+      .toBe('a.mdx, NEXT.md.bak, x.mdown, .md, <a href="https://x/NEXT.md">NEXT.md</a> <code>README.md</code> <b>x</b>');
+    expect(codeFilenames("me/case-ai/docs/NEXT.md")).toBe("<code>me/case-ai/docs/NEXT.md</code>");
+    expect(codeFilenames("Done: NEXT.md.")).toBe("Done: <code>NEXT.md</code>.");
+  });
+});
+

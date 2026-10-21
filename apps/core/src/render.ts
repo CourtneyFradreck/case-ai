@@ -97,8 +97,16 @@ function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer
     parts.push("", `<i>Couldn't read: ${failed.map((s) => `${esc(s.repo)} (${esc(s.error!)})`).join(", ")}</i>`);
   }
   if (footer) parts.push("", `<i>${esc(footer)}</i>`);
-  return truncate(parts, maxChars);
+  return truncate(parts.map(codeFilenames), maxChars);
 }
+
+// Telegram auto-links "NEXT.md" because .md is a domain. Wrap .md filenames in <code> in escaped
+// text, leaving links (whose labels may be "NEXT.md") and existing code untouched.
+const MD_FILE = /(?<![\w./-])[\w-]+(?:[./][\w-]+)*\.md(?![\w-]|\.[\w-])/gi;
+export const codeFilenames = (html: string) =>
+  html.split(/(<a\b[^>]*>[\s\S]*?<\/a>|<code>[\s\S]*?<\/code>|<[^>]+>)/)
+    .map((part, i) => i % 2 ? part : part.replace(MD_FILE, (name) => `<code>${name}</code>`))
+    .join("");
 
 // Numbered to match the focus buttons.
 const focusLines = (items: ValidFocus[]) =>
