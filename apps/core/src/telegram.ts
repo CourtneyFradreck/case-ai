@@ -60,3 +60,11 @@ export async function editMessageReplyMarkup(messageId: number, replyMarkup?: In
 export async function answerCallbackQuery(callbackQueryId: string, text?: string) {
   return call<true>("answerCallbackQuery", { callback_query_id: callbackQueryId, ...(text ? { text } : {}) });
 }
+
+// Without replyMarkup the message's buttons are removed.
+export async function editMessageText(messageId: number, text: string, replyMarkup?: InlineKeyboardMarkup) {
+  return call<SentMessage | true>("editMessageText", {
+    chat_id: chatId("editMessageText"), message_id: messageId, text, parse_mode: "HTML", link_preview_options: { is_disabled: true },
+    reply_markup: replyMarkup ?? { inline_keyboard: [] },
+  });
+}

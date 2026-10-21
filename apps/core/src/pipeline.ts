@@ -10,7 +10,9 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable } from "./store.js";
+import { snoozable, snoozeButtonRow, withoutSnoozed } from "./snooze.js";
+import type { InlineKeyboardButton } from "./telegram.js";
 import { collapseRepeats, countStreaks } from "./streaks.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
@@ -45,12 +47,15 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       ? yesterdayFocus(await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!), snaps) : [];
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
+    // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.
+    const visible = features.snooze ? withoutSnoozed(findings, await activeSnoozes(now.toJSDate())) : findings;
     // Streaks count previous scheduled runs, so only scheduled briefs collapse repeats.
     const collapsing = features.streaks && source === "schedule";
     const past = collapsing ? await previousRuns(runId) : [];
     const { kept, collapsed, days } = collapsing
-      ? collapseRepeats(findings, countStreaks(findings.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
-      : { kept: findings, collapsed: [], days: new Map<string, number>() };
+      ? collapseRepeats(visible, countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
+      : { kept: visible, collapsed: [], days: new Map<string, number>() };
+    const snoozeItems = features.snooze ? snoozable(visible) : [];
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
     const rulesFocus = features.focusButtons ? ruleFocus(kept, next, snaps, now.toJSDate(), config) : [];
     const options = { userName: config.userName, now, previousFocus, collapsed, days };
@@ -74,12 +79,17 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     }
     const briefId = await storeBrief(runId, text, meta, ruleText);
     if (focus.length) await storeBriefFocus(briefId, storedFocus(focus));
+    if (snoozeItems.length) await storeBriefSnoozable(briefId, snoozeItems);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     if (env.delivery === "core") {
       // A failed send returns delivered: false, so n8n sends the text instead and the brief still arrives.
       let messageId: number | undefined;
       try {
-        messageId = (await (focus.length ? sendMessage(text, focusKeyboard(briefId, focus.length)) : sendMessage(text))).message_id;
+        const buttons: InlineKeyboardButton[][] = [
+          ...(focus.length ? focusKeyboard(briefId, focus.length).inline_keyboard : []),
+          ...(snoozeItems.length ? [snoozeButtonRow(briefId)] : []),
+        ];
+        messageId = (await (buttons.length ? sendMessage(text, { inline_keyboard: buttons }) : sendMessage(text))).message_id;
         delivered = true;
       } catch (e) {
         deliveryError = (e instanceof Error ? e.message : String(e)).slice(0, 200);

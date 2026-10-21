@@ -5,15 +5,15 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
   startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), getFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
-  features: { focusButtons: false, streaks: false },
-  previousRuns: vi.fn(),
+  features: { focusButtons: false, streaks: false, snooze: false },
+  previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(),
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
@@ -350,5 +350,60 @@ describe("collapsing repeats in the pipeline (streaks)", () => {
     const off = await runBrief("schedule");
     expect(command.text).toBe(off.text);
     expect(off.text).toContain("no activity for 5 days");
+  });
+});
+
+describe("snoozes in the pipeline", () => {
+  const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", summary: 'PR #14 "Retry" in me/demo: no activity for 5 days', sources: [{ label: "PR", url: "https://github.com/me/demo/pull/14" }] });
+  const oi = finding({ id: "oi", rule: "open_issues", severity: "low", summary: "3 open issues in me/demo", sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] });
+  const ci = finding({ id: "ci", rule: "failing_ci", severity: "high", summary: "CI failing on me/demo main (build), today", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.features.snooze = true;
+    mocks.env.briefMode = "rules";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.collectAll.mockResolvedValue([snap()]);
+    mocks.runRules.mockReturnValue([ci, pr, oi, finding()]);
+    mocks.activeSnoozes.mockResolvedValue(new Set(["pr", "ci"]));
+    mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F3"] }], attention: [{ text: "CI is failing", sources: ["F1"] }], focus: [] }), model: "test-model" });
+  });
+  afterEach(() => { mocks.features.snooze = false; mocks.env.delivery = "n8n"; vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("leaves snoozed findings out of the brief, but never a high one, and still stores them", async () => {
+    const result = await runBrief("schedule");
+    expect(result.text).not.toContain("PR #14");
+    expect(result.text).toContain("CI failing");
+    expect(result.text).toContain("3 open issues");
+    expect(mocks.storeFindings.mock.calls[0][1].map((f: { id: string }) => f.id)).toContain("pr");
+    expect(mocks.storeBriefSnoozable).toHaveBeenCalledWith(70, [{ findingId: "oi", repo: "me/demo", text: "3 open issues in me/demo" }]);
+  });
+  it("keeps snoozed findings out of the model input", async () => {
+    mocks.env.briefMode = "all";
+    await runBrief("schedule");
+    expect(mocks.generate.mock.calls[0][1]).not.toContain("PR #14");
+    expect(mocks.generate.mock.calls[0][1]).toContain("CI failing");
+  });
+  it("adds a Snooze… button when case-core delivers and there is something to snooze", async () => {
+    mocks.env.delivery = "core";
+    mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });
+    const result = await runBrief("schedule");
+    expect(mocks.sendMessage).toHaveBeenCalledWith(result.text, { inline_keyboard: [[{ text: "Snooze…", callback_data: "s:70" }]] });
+    mocks.activeSnoozes.mockResolvedValue(new Set(["oi", "pr"]));
+    mocks.sendMessage.mockClear();
+    const quiet = await runBrief("schedule");
+    expect(mocks.sendMessage).toHaveBeenCalledWith(quiet.text);
+  });
+  it("doesn't read snoozes with the flag off", async () => {
+    mocks.features.snooze = false;
+    const result = await runBrief("schedule");
+    expect(mocks.activeSnoozes).not.toHaveBeenCalled();
+    expect(mocks.storeBriefSnoozable).not.toHaveBeenCalled();
+    expect(result.text).toContain("PR #14");
   });
 });
