@@ -27,7 +27,8 @@ function line(f: Finding): string[] {
 }
 
 // focus: features.focusButtons, which keeps focus suggestions apart from attention.
-export interface GreetingOptions { userName?: string; now?: DateTime; focus?: boolean }
+// previousFocus: the yesterday_focus finding, shown at the top of the recap in code on both paths.
+export interface GreetingOptions { userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[] }
 
 function recapLines(items: ValidItem[], model = false): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
@@ -53,14 +54,21 @@ function header(options: GreetingOptions): string[] {
 }
 
 // Suggestions sit before the recap, so truncation cuts the recap first.
-function sections(attention: string[], recap: string[], w: Window, focus: string[] = []): string[] {
+// lead lines open the recap; with no recap they stand alone.
+function sections(attention: string[], recap: string[], w: Window, focus: string[] = [], lead: string[] = []): string[] {
   const parts: string[] = [];
   if (attention.length) parts.push("", "<b>Here's what needs your attention</b>", ...attention);
   if (focus.length) parts.push("", "<b>Today, I'd suggest</b>", ...focus);
-  if (recap.length) parts.push("", `<b>Here's what you worked on ${esc(w.label.replace(/^on /, ""))}</b>`, ...recap);
-  else if (!w.label || !attention.length) parts.push("", "Nothing new in the past week.");
+  if (recap.length) parts.push("", `<b>Here's what you worked on ${esc(w.label.replace(/^on /, ""))}</b>`, ...lead, ...recap);
+  else {
+    if (lead.length) parts.push("", ...lead);
+    if (!w.label || !attention.length) parts.push("", "Nothing new in the past week.");
+  }
   return parts;
 }
+
+const leadLines = (findings: Finding[] = []) =>
+  findings.map((f) => `• ${esc(f.summary)}.${f.sources.length ? ` [${f.sources.map(link).join(", ")}]` : ""}`);
 
 function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer?: string): string {
   const failed = snaps.filter((s) => s.error);
@@ -82,7 +90,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info")
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus))];
+  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus), leadLines(greeting.previousFocus))];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -121,7 +129,7 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
     return `${icon[severity]} ${esc(bulletText(i.text))} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w, focusLines(brief.focus))];
+  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w, focusLines(brief.focus), leadLines(greeting.previousFocus))];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

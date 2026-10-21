@@ -3,7 +3,7 @@ import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
-  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), sendMessage: vi.fn(),
+  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), getFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
   features: { focusButtons: false },
 }));
@@ -12,7 +12,7 @@ vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
@@ -269,6 +269,26 @@ describe("intent findings in the pipeline", () => {
       const result = await runBrief("schedule");
       expect(mocks.sendMessage).toHaveBeenCalledWith(result.text, { inline_keyboard: [[{ text: "1", callback_data: "f:70:1" }], [{ text: "Something else", callback_data: "f:70:x" }]] });
       mocks.env.delivery = "n8n";
+    });
+    it("reads yesterday's focus in Harare time and leads the recap with it", async () => {
+      mocks.getFocus.mockResolvedValue({ item_text: "Ship the parser", repo: "me/demo", finding_id: "next_abcdef0123", created_at: new Date("2026-10-13T06:00:00Z") });
+      mocks.collectAll.mockResolvedValue([snap({ next, commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] })]);
+      const result = await runBrief("command");
+      expect(mocks.getFocus).toHaveBeenCalledWith("2026-10-13");
+      expect(result.text).toContain('<b>Here\'s what you worked on yesterday</b>\n• Yesterday\'s focus: Ship the parser. 1 commit in me/demo since. [<a href="https://github.com/me/demo/commit/abc">commit</a>]\n\n<b>demo</b>');
+      expect(mocks.storeFindings.mock.calls[0][1].map((f: { rule: string }) => f.rule)).toContain("yesterday_focus");
+    });
+    it("never sends yesterday's focus to the model", async () => {
+      mocks.env.briefMode = "all";
+      mocks.getFocus.mockResolvedValue({ item_text: "Secret plan", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });
+      const result = await runBrief("command");
+      expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("Secret plan");
+      expect(result.text).toContain("• Yesterday's focus: Secret plan.");
+    });
+    it("doesn't read the focus table with focusButtons off", async () => {
+      mocks.features.focusButtons = false;
+      await runBrief("command");
+      expect(mocks.getFocus).not.toHaveBeenCalled();
     });
     it("sends no buttons when there are no suggestions", async () => {
       mocks.env.delivery = "core";
