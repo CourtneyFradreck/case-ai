@@ -61,7 +61,7 @@ Telegram ───┘                              │
 ```
 case-ai/
 ├── apps/core/          # case-core service
-├── infra/              # database init scripts
+├── infra/              # database init scripts, backup container
 ├── n8n/workflows/      # exported n8n workflows (no secrets)
 ├── docker-compose.yml
 ├── .env.example
@@ -94,6 +94,10 @@ Then open n8n at your domain, add your Telegram credential, import the workflow 
 | `CASE_BRIEF_MODE`    | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`. |
 | `GEMINI_API_KEY`     | Required for model briefs. A missing key uses `rules`; an invalid key or failed model request sends a rule-only fallback. |
 | `GEMINI_MODEL`       | Model ID; defaults to `gemini-3.5-flash-lite`. An invalid model setting sends a rule-only fallback. |
+| `BACKUP_REMOTE`      | rclone destination for nightly backups, e.g. `r2:case-backups`. Empty disables backups. |
+| `BACKUP_AGE_RECIPIENT` | age public key the backups are encrypted to |
+| `BACKUP_KEEP_DAYS`   | Days of backups to keep; defaults to `30` |
+| `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 endpoint and API token for the `r2` remote |
 
 Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
@@ -104,6 +108,34 @@ Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 From `apps/core`, run `npm install` and `npm run preview`. This calls the live model with synthetic fixtures and needs only `GEMINI_API_KEY` in your environment or `.env`; `GEMINI_MODEL` is optional. It prints raw JSON, the validation report, the rendered Telegram text and, separately, the NEXT.md intent findings (stored each run but not yet part of the brief) without reading GitHub, accessing the database, or sending Telegram messages.
 
 Use `npm run preview:oct15` to render the 15 Oct attribution regression fixture through both template and model paths. It also saves template, model, and rule-only fallback previews under `out/`.
+
+## Backups
+
+The `backup` container dumps the whole `case` database (core and n8n schemas) every night at 02:30 Africa/Harare. The dump is streamed through [age](https://age-encryption.org) and uploaded with [rclone](https://rclone.org) as `case-YYYY-MM-DD.dump.age`, so nothing unencrypted is written to disk. After each upload, backups dated more than `BACKUP_KEEP_DAYS` ago are deleted; other files on the remote are never touched. Each run logs one line such as `{"event":"backup","status":"ok","file":"case-2026-10-22.dump.age","bytes":81234,...}`.
+
+Setup:
+
+1. On your laptop, run `age-keygen -o case-backup.key`. Keep that file safe and off the server (a password manager works). The `Public key: age1...` it prints goes in `BACKUP_AGE_RECIPIENT`.
+2. In Cloudflare, create an R2 bucket (e.g. `case-backups`) and an R2 API token with **Object Read & Write** on that bucket only. Set `R2_ENDPOINT` to `https://<account_id>.r2.cloudflarestorage.com`, plus `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
+3. Set `BACKUP_REMOTE=r2:case-backups` and redeploy.
+
+To take a backup straight away: `docker compose exec backup backup.sh once`.
+
+rclone has no config file here. The `r2` remote is defined by `RCLONE_CONFIG_R2_*` variables in `docker-compose.yml`, and any remote can be added the same way (`RCLONE_CONFIG_<NAME>_<OPTION>`).
+
+**Google Drive instead of R2** (not set up by default):
+
+1. On your laptop, run `rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlLmZpbGUifQ"` (that argument is base64 for `{"scope":"drive.file"}`, which limits rclone to files it creates). Sign in and copy the JSON token it prints.
+2. Add these to the `backup` service environment in `docker-compose.yml`, with the token passed in from `.env`:
+   ```yaml
+   RCLONE_CONFIG_GDRIVE_TYPE: drive
+   RCLONE_CONFIG_GDRIVE_SCOPE: drive.file
+   RCLONE_CONFIG_GDRIVE_TOKEN: ${GDRIVE_TOKEN}
+   RCLONE_CONFIG_GDRIVE_USE_TRASH: "false"   # pruned backups free space right away
+   ```
+3. Set `BACKUP_REMOTE=gdrive:case-backups` (a folder in My Drive).
+
+rclone refreshes the access token in memory but can't save it back without a config file. That's fine while the refresh token stays valid. If Drive uploads start failing with auth errors, run step 1 again and update `GDRIVE_TOKEN`.
 
 ## NEXT.md
 
