@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const pool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool }));
-import { storeBrief, storeBriefMessageId } from "../src/store.js";
+import { storeBrief, storeBriefFocus, storeBriefMessageId } from "../src/store.js";
 
 describe("brief metadata storage", () => {
   beforeEach(() => {
@@ -21,5 +21,10 @@ describe("brief metadata storage", () => {
   it("records the Telegram message id on the brief", async () => {
     await storeBriefMessageId(70, 555);
     expect(pool.query).toHaveBeenCalledWith("UPDATE briefs SET telegram_message_id=$2 WHERE id=$1", [70, 555]);
+  });
+  it("stores the focus suggestions as JSON on the brief", async () => {
+    const focus = [{ text: "Fix CI", reason: "CI is failing", findingId: "ci", repo: "me/demo" }];
+    await storeBriefFocus(70, focus);
+    expect(pool.query).toHaveBeenCalledWith("UPDATE briefs SET focus=$2 WHERE id=$1", [70, JSON.stringify(focus)]);
   });
 });

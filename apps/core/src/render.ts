@@ -1,7 +1,7 @@
 import type { Finding, RepoSnapshot, Source } from "./types.js";
 import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
-import type { ValidBrief, ValidItem } from "./llm/schema.js";
+import type { ValidBrief, ValidFocus, ValidItem } from "./llm/schema.js";
 import { deduplicateFindings, focusOnly, organizeBrief } from "./sections.js";
 import { activityAmount, bulletText, recapKind, recapText } from "./recap-text.js";
 import { closingLine } from "./llm/closing.js";
@@ -52,9 +52,11 @@ function header(options: GreetingOptions): string[] {
   return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}. Here's your morning brief.</b>`, today.toFormat("cccc, d LLL yyyy")];
 }
 
-function sections(attention: string[], recap: string[], w: Window): string[] {
+// Suggestions sit before the recap, so truncation cuts the recap first.
+function sections(attention: string[], recap: string[], w: Window, focus: string[] = []): string[] {
   const parts: string[] = [];
   if (attention.length) parts.push("", "<b>Here's what needs your attention</b>", ...attention);
+  if (focus.length) parts.push("", "<b>Today, I'd suggest</b>", ...focus);
   if (recap.length) parts.push("", `<b>Here's what you worked on ${esc(w.label.replace(/^on /, ""))}</b>`, ...recap);
   else if (!w.label || !attention.length) parts.push("", "Nothing new in the past week.");
   return parts;
@@ -69,14 +71,18 @@ function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer
   return truncate(parts, maxChars);
 }
 
-export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}): string {
+// Numbered to match the focus buttons.
+const focusLines = (items: ValidFocus[]) =>
+  items.map((i, n) => `${n + 1}. ${esc(bulletText(i.text))} (${esc(i.reason)}) ${modelLinks(i)}`);
+
+export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}, focus: ValidFocus[] = []): string {
   findings = deduplicateFindings(findings.filter((f) => !focusOnly(f)));
   // Stable sort: keeps the caller's order within a severity (e.g. oldest first from rules)
   const attention = findings
     .filter((f) => f.severity !== "info")
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w)];
+  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus))];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -115,7 +121,7 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
     return `${icon[severity]} ${esc(bulletText(i.text))} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w)];
+  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w, focusLines(brief.focus))];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

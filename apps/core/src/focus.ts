@@ -3,6 +3,8 @@ import type { ValidFocus } from "./llm/schema.js";
 import { byPriority } from "./rules/order.js";
 import { plural } from "./plural.js";
 import { lastCommitDays, type IntentConfig } from "./intent/rules.js";
+import { bulletText } from "./recap-text.js";
+import type { InlineKeyboardMarkup } from "./telegram.js";
 
 export const MAX_FOCUS = 3;
 
@@ -32,4 +34,37 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
     // Stable sort keeps NEXT.md order within a repo.
     .sort((a, b) => active.get(a.repo)! - active.get(b.repo)!);
   return [...attention, ...planned].slice(0, MAX_FOCUS).map((f) => ({ text: text(f), reason: reason(f), sources: [f] }));
+}
+
+// What briefs.focus stores per suggestion, in button order.
+export interface StoredFocus { text: string; reason: string; findingId: string | null; repo: string | null }
+
+export function storedFocus(items: ValidFocus[]): StoredFocus[] {
+  return items.map((i) => {
+    const f = i.sources[0];
+    // old_branches can name several repos; a focus row holds one.
+    return { text: bulletText(i.text), reason: i.reason, findingId: f?.id ?? null, repo: f && !f.repo.includes(", ") ? f.repo : null };
+  });
+}
+
+// Callback data stays far below Telegram's 64-byte limit: "f:<briefId>:<n>", never the suggestion text.
+// "x" is "Something else"; "ok" is the button left after a choice, which does nothing.
+export type FocusCallback = { briefId: number; choice: number | "other" | "chosen" };
+const CALLBACK = /^f:(\d{1,15}):([1-9]|x|ok)$/;
+
+export const focusCallbackData = (briefId: number, choice: FocusCallback["choice"]) =>
+  `f:${briefId}:${choice === "other" ? "x" : choice === "chosen" ? "ok" : choice}`;
+
+export function parseFocusCallback(data: string | undefined): FocusCallback | undefined {
+  const m = CALLBACK.exec(data ?? "");
+  if (!m) return;
+  const choice = m[2] === "x" ? "other" : m[2] === "ok" ? "chosen" : Number(m[2]);
+  return { briefId: Number(m[1]), choice };
+}
+
+export function focusKeyboard(briefId: number, count: number): InlineKeyboardMarkup {
+  return { inline_keyboard: [
+    Array.from({ length: count }, (_, n) => ({ text: String(n + 1), callback_data: focusCallbackData(briefId, n + 1) })),
+    [{ text: "Something else", callback_data: focusCallbackData(briefId, "other") }],
+  ] };
 }

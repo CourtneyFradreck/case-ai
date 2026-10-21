@@ -3,7 +3,7 @@ import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
-  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), sendMessage: vi.fn(),
+  startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
   features: { focusButtons: false },
 }));
@@ -12,7 +12,7 @@ vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
@@ -209,7 +209,7 @@ describe("intent findings in the pipeline", () => {
     expect(withNext.text).toBe(without.text);
   });
   describe("with focusButtons on", () => {
-    beforeEach(() => { mocks.features.focusButtons = true; });
+    beforeEach(() => { mocks.features.focusButtons = true; mocks.env.briefMode = "rules"; });
     afterEach(() => { mocks.features.focusButtons = false; });
     it("sends open NEXT.md items to the model after the rule findings", async () => {
       mocks.env.briefMode = "all";
@@ -227,11 +227,55 @@ describe("intent findings in the pipeline", () => {
       expect(result.text).not.toContain("parser");
       expect(result.text).not.toContain("NEXT.md");
     });
-    it("leaves the rule-only brief unchanged", async () => {
-      const on = await runBrief("command");
+    const active = () => mocks.collectAll.mockResolvedValue([snap({ next, branches: [{ name: "main", sha: "abc", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: "https://github.com/me/demo/tree/main" }] })]);
+    it("adds rule-picked suggestions to the rule-only brief and stores them", async () => {
+      active();
+      mocks.storeBrief.mockResolvedValue(70);
+      const result = await runBrief("command");
+      expect(result.text).toContain("<b>Today, I'd suggest</b>\n1. Ship the parser (Open in NEXT.md, and demo has recent commits)");
+      expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Ship the parser", reason: "Open in NEXT.md, and demo has recent commits", findingId: "next_abcdef0123", repo: "me/demo" }]);
+      expect(mocks.storeBrief.mock.calls[0][3]).toBe(result.text);
+    });
+    it("leaves the brief unchanged and stores no focus when nothing qualifies", async () => {
+      const result = await runBrief("command");
+      expect(result.text).not.toContain("Today, I'd suggest");
+      expect(mocks.storeBriefFocus).not.toHaveBeenCalled();
       mocks.features.focusButtons = false;
-      expect((await runBrief("command")).text).toBe(on.text);
-      expect(on.text).not.toContain("Ship the parser");
+      expect((await runBrief("command")).text).toBe(result.text);
+    });
+    it("uses the model's suggestions when the model brief succeeds", async () => {
+      active();
+      mocks.env.briefMode = "all";
+      mocks.storeBrief.mockResolvedValue(70);
+      mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [{ text: "Finish the parser", reason: "It is next in NEXT.md", sources: ["F2"] }] }), model: "test-model" });
+      const result = await runBrief("command");
+      expect(result.text).toContain("1. Finish the parser (It is next in NEXT.md)");
+      expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Finish the parser", reason: "It is next in NEXT.md", findingId: "next_abcdef0123", repo: "me/demo" }]);
+      expect(mocks.storeBrief.mock.calls[0][3]).toContain("1. Ship the parser");
+    });
+    it("falls back to rule-picked suggestions when the model fails", async () => {
+      active();
+      mocks.env.briefMode = "all";
+      mocks.generate.mockResolvedValue({ raw: "invalid", model: "test-model" });
+      const result = await runBrief("command");
+      expect(result.text).toContain("1. Ship the parser (Open in NEXT.md");
+      expect(result.text).toContain("Rule-only brief: model unavailable");
+    });
+    it("attaches focus buttons when case-core delivers the brief", async () => {
+      active();
+      mocks.env.delivery = "core";
+      mocks.storeBrief.mockResolvedValue(70);
+      mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });
+      const result = await runBrief("schedule");
+      expect(mocks.sendMessage).toHaveBeenCalledWith(result.text, { inline_keyboard: [[{ text: "1", callback_data: "f:70:1" }], [{ text: "Something else", callback_data: "f:70:x" }]] });
+      mocks.env.delivery = "n8n";
+    });
+    it("sends no buttons when there are no suggestions", async () => {
+      mocks.env.delivery = "core";
+      mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });
+      const result = await runBrief("schedule");
+      expect(mocks.sendMessage).toHaveBeenCalledWith(result.text);
+      mocks.env.delivery = "n8n";
     });
   });
 });
