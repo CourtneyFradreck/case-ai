@@ -17,10 +17,15 @@ export function updateChatId(update: TelegramUpdate): number | undefined {
   return update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
 }
 
-export async function handleUpdate(update: TelegramUpdate): Promise<UpdateOutcome> {
+// n8n gates its own /brief path on this, so only TELEGRAM_CHAT_ID can trigger a brief.
+export function isOwnerUpdate(update: TelegramUpdate): boolean {
   const chatId = updateChatId(update);
-  if (chatId === undefined || !env.telegramChatId || String(chatId) !== env.telegramChatId) {
-    log(update, "ignored_chat", { chatId: chatId ?? null });
+  return chatId !== undefined && !!env.telegramChatId && String(chatId) === env.telegramChatId;
+}
+
+export async function handleUpdate(update: TelegramUpdate): Promise<UpdateOutcome> {
+  if (!isOwnerUpdate(update)) {
+    log(update, "ignored_chat", { chatId: updateChatId(update) ?? null });
     return "ignored_chat";
   }
 

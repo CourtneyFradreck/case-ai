@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ runBrief: vi.fn(), handleUpdate: vi.fn(), env: { apiKey: "k" } }));
+const mocks = vi.hoisted(() => ({ runBrief: vi.fn(), handleUpdate: vi.fn(), isOwnerUpdate: vi.fn(), env: { apiKey: "k" } }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/pipeline.js", () => ({ runBrief: mocks.runBrief, BusyError: class extends Error {} }));
-vi.mock("../src/telegram-update.js", () => ({ handleUpdate: mocks.handleUpdate }));
+vi.mock("../src/telegram-update.js", () => ({ handleUpdate: mocks.handleUpdate, isOwnerUpdate: mocks.isOwnerUpdate }));
 import { app } from "../src/app.js";
 
 const post = (path: string, body: string, key = "k") =>
@@ -29,11 +29,17 @@ describe("HTTP routes", () => {
   });
   it("replies 200 to an update without waiting for its handler", async () => {
     mocks.handleUpdate.mockReturnValue(new Promise(() => {}));
+    mocks.isOwnerUpdate.mockReturnValue(true);
     const update = { update_id: 1, message: { message_id: 5, chat: { id: 42 }, text: "hi" } };
     const res = await post("/telegram/update", JSON.stringify(update));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, owner: true });
     expect(mocks.handleUpdate).toHaveBeenCalledWith(update);
+  });
+  it("tells n8n when an update is not from the owner", async () => {
+    mocks.handleUpdate.mockResolvedValue("ignored_chat");
+    mocks.isOwnerUpdate.mockReturnValue(false);
+    expect(await (await post("/telegram/update", "{}")).json()).toEqual({ ok: true, owner: false });
   });
   it("logs a failed update handler instead of failing the request", async () => {
     mocks.handleUpdate.mockRejectedValue(new Error("boom"));

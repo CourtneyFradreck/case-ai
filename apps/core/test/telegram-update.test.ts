@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/telegram.js", () => ({ answerCallbackQuery: mocks.answerCallbackQuery }));
 vi.mock("../src/telegram-handlers.js", () => ({ onCallbackQuery: mocks.onCallbackQuery, onTextMessage: mocks.onTextMessage }));
-import { handleUpdate } from "../src/telegram-update.js";
+import { handleUpdate, isOwnerUpdate } from "../src/telegram-update.js";
 
 const message = (chatId: number, text?: string) => ({ message_id: 5, chat: { id: chatId }, date: 0, ...(text === undefined ? {} : { text }) });
 const callback = (chatId: number) => ({ update_id: 2, callback_query: { id: "cb1", from: { id: chatId }, message: message(chatId), data: "focus:1" } });
@@ -59,6 +59,14 @@ describe("Telegram update routing", () => {
     expect(mocks.onCallbackQuery).not.toHaveBeenCalled();
     expect(mocks.answerCallbackQuery).not.toHaveBeenCalled();
     expect(logged()[0]).toMatchObject({ event: "telegram_update", outcome: "ignored_chat", chatId: updateChatIdOf(update) });
+  });
+  it("identifies owner updates for n8n's /brief gate", () => {
+    expect(isOwnerUpdate({ message: message(42, "/brief") })).toBe(true);
+    expect(isOwnerUpdate(callback(42))).toBe(true);
+    expect(isOwnerUpdate({ message: message(99, "/brief") })).toBe(false);
+    expect(isOwnerUpdate({})).toBe(false);
+    mocks.env.telegramChatId = undefined;
+    expect(isOwnerUpdate({ message: message(42, "/brief") })).toBe(false);
   });
   it("ignores updates without a chat", async () => {
     expect(await handleUpdate({ update_id: 4 })).toBe("ignored_chat");
