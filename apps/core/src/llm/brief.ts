@@ -55,10 +55,10 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.dropped = result.dropped;
     meta.json.addedBack = result.addedBack;
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now }) };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus }) };
   };
   if (!input.aliasToFinding.size) {
-    const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings);
+    const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus);
     if (result.ok) { meta.model = null; return complete(result); }
     return fallbackMeta(null, result.reason, result.detail);
   }
@@ -73,7 +73,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
       if (response.outputTokens !== undefined) meta.outputTokens = (meta.outputTokens ?? 0) + response.outputTokens;
       meta.json.raw = response.raw;
       meta.json.responses!.push(response.raw);
-      const result = validate(response.raw, input.aliasToFinding, findings);
+      const result = validate(response.raw, input.aliasToFinding, findings, cfg.focus);
       if (result.ok) return complete(result);
       fallbackReason = result.reason;
       fallbackDetail = result.detail ?? result.reason;

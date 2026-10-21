@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { env } from "./env.js";
+import { features } from "./features.js";
 import { pool } from "./db.js";
 import { pastWeekWindow } from "./time.js";
 import { selectRecap } from "./recap.js";
@@ -33,8 +34,9 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const { history: intentHistory, missingReported } = await storeNextItems(runId, snaps);
     const { window: w, snapshots } = selectRecap(snaps, now);
     const findings = runRules(snapshots, now.toJSDate(), config, w);
-    // Stored only: intent findings join the brief and model input in a later milestone.
     const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported);
+    // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
+    const next = features.focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
     await storeFindings(runId, [...findings, ...intent]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
     const renderRules = (footer?: string) => render(findings, snaps, w, config.maxBriefChars, footer, { userName: config.userName, now });
@@ -45,7 +47,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief(findings, snaps, w, config, provider, now);
+        const result = await generateModelBrief([...findings, ...next], snaps, w, { ...config, focus: features.focusButtons }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
       } catch (error) {

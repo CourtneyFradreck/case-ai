@@ -21,7 +21,13 @@ Sections:
 
 Style: speak warmly and concisely, like a capable personal assistant talking to the user in second person. Each item is one sentence. Address the user as "you". No corporate filler or excessive exclamation marks. No emoji beyond the existing status dots, which code adds. Never invent activity; describe only findings passed in the input.`;
 
-export interface InputConfig { modelIncludePrivate: boolean; userName?: string }
+const EMPTY_FOCUS = `- "focus": return an empty list. The brief has two sections: attention first, then recap.`;
+const NEXT_ITEM_RULE = `- "next_item" findings are open items from the user's NEXT.md plans, not activity or problems. Never put them in "yesterday" or "attention"; cite them only in "focus".`;
+
+// The prompt when features.focusButtons is on, which also sends open NEXT.md items.
+export const FOCUS_PROMPT = SYSTEM_PROMPT.replace(EMPTY_FOCUS, () => `${EMPTY_FOCUS}\n${NEXT_ITEM_RULE}`);
+
+export interface InputConfig { modelIncludePrivate: boolean; userName?: string; focus?: boolean }
 
 // Keep hostile titles on one data line, unable to close the enclosing block.
 const dataText = (text: string) => text.replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
@@ -43,6 +49,6 @@ export function buildInput(findings: Finding[], snaps: RepoSnapshot[], windowLab
     for (const detail of f.details?.slice(0, 3) ?? []) lines.push(`    - ${dataText(detail)}`);
   }
   const name = cfg.userName?.trim() || "the user";
-  const system = SYSTEM_PROMPT.replaceAll("the user", () => name);
+  const system = (cfg.focus ? FOCUS_PROMPT : SYSTEM_PROMPT).replaceAll("the user", () => name);
   return { system, user: `Recap period: ${windowLabel || "no activity in the past week"}\n<untrusted_data>\n${lines.join("\n")}\n</untrusted_data>`, aliasToFinding, excluded };
 }

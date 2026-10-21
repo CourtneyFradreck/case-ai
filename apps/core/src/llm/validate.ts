@@ -1,13 +1,14 @@
 import type { Finding } from "../types.js";
 import { BriefJson, type ValidBrief, type ValidItem, type AliasBrief, type ValidFocus } from "./schema.js";
-import { organizeBrief } from "../sections.js";
+import { focusOnly, organizeBrief } from "../sections.js";
 import { closingLine } from "./closing.js";
 
 export interface DropReason { section: "yesterday" | "attention" | "focus"; index: number; reason: string; aliases?: string[] }
 export type ValidationResult = { ok: true; brief: ValidBrief; dropped: DropReason[]; addedBack: string[] } | { ok: false; reason: string; detail?: string };
 const stripUrls = (text: string) => text.replace(/https?:\/\/\S+|www\.\S+/gi, "").trim();
 
-export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[]): ValidationResult {
+// With keepFocus, focus is its own section: citing a finding there doesn't stand in for listing it.
+export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[], keepFocus = false): ValidationResult {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch (error) {
     return { ok: false, reason: "invalid_json", detail: error instanceof Error ? error.message : "Invalid JSON response" };
@@ -41,9 +42,10 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
     const note = sources.length === aliases.length ? closingLine(stripUrls(result.data.note), sources) : undefined;
     if (note) { brief.note = note; brief.noteSources = sources; }
   }
-  const cited = new Set([...brief.yesterday, ...brief.attention, ...brief.focus].flatMap((i) => i.sources.map((f) => f.id)));
+  const cited = new Set([...brief.yesterday, ...brief.attention, ...(keepFocus ? [] : brief.focus)].flatMap((i) => i.sources.map((f) => f.id)));
   const sent = new Set([...aliasToFinding.values()].map((f) => f.id));
   for (const f of allFindings) {
+    if (focusOnly(f)) continue;
     if (!sent.has(f.id)) {
       brief[f.severity === "info" ? "yesterday" : "attention"].push({ text: f.summary, sources: [f] });
     } else if ((f.severity === "high" || f.severity === "medium") && !cited.has(f.id)) {
@@ -51,6 +53,8 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
       addedBack.push(f.id);
     }
   }
-  if (!brief.yesterday.length && !brief.attention.length && !brief.focus.length && allFindings.length) return { ok: false, reason: "empty_brief" };
-  return { ok: true, brief: organizeBrief(brief, allFindings), dropped, addedBack };
+  // Items citing only NEXT.md items are dropped from attention and recap later, so they don't count here.
+  const kept = (i: ValidItem) => i.sources.some((f) => !focusOnly(f));
+  if (!brief.yesterday.some(kept) && !brief.attention.some(kept) && !brief.focus.length && allFindings.some((f) => !focusOnly(f))) return { ok: false, reason: "empty_brief" };
+  return { ok: true, brief: organizeBrief(brief, allFindings, keepFocus), dropped, addedBack };
 }

@@ -2,7 +2,7 @@ import type { Finding, RepoSnapshot, Source } from "./types.js";
 import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
 import type { ValidBrief, ValidItem } from "./llm/schema.js";
-import { deduplicateFindings, organizeBrief } from "./sections.js";
+import { deduplicateFindings, focusOnly, organizeBrief } from "./sections.js";
 import { activityAmount, bulletText, recapKind, recapText } from "./recap-text.js";
 import { closingLine } from "./llm/closing.js";
 
@@ -26,7 +26,8 @@ function line(f: Finding): string[] {
   return out;
 }
 
-export interface GreetingOptions { userName?: string; now?: DateTime }
+// focus: features.focusButtons, which keeps focus suggestions apart from attention.
+export interface GreetingOptions { userName?: string; now?: DateTime; focus?: boolean }
 
 function recapLines(items: ValidItem[], model = false): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
@@ -69,7 +70,7 @@ function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer
 }
 
 export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}): string {
-  findings = deduplicateFindings(findings);
+  findings = deduplicateFindings(findings.filter((f) => !focusOnly(f)));
   // Stable sort: keeps the caller's order within a severity (e.g. oldest first from rules)
   const attention = findings
     .filter((f) => f.severity !== "info")
@@ -108,7 +109,7 @@ function modelLinks(item: ValidItem): string {
 }
 
 export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Window, maxChars = 3800, greeting: GreetingOptions = {}): string {
-  brief = organizeBrief(brief, [...brief.attention, ...brief.yesterday, ...brief.focus].flatMap((i) => i.sources));
+  brief = organizeBrief(brief, [...brief.attention, ...brief.yesterday, ...brief.focus].flatMap((i) => i.sources), greeting.focus);
   const modelLine = (i: ValidItem) => {
     if (i.sources.length === 1 && i.sources[0].rule === "old_branches") return line(i.sources[0])[0];
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
