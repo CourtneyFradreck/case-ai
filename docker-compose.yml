@@ -66,6 +66,7 @@ services:
       BACKUP_REMOTE: ${BACKUP_REMOTE:-}
       BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      BACKUP_FAILURE_WEBHOOK: ${BACKUP_FAILURE_WEBHOOK:-}
       # rclone remote "r2" (Cloudflare R2), configured without a config file.
       RCLONE_CONFIG_R2_TYPE: s3
       RCLONE_CONFIG_R2_PROVIDER: Cloudflare
