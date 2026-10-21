@@ -5,6 +5,8 @@ import type { ValidBrief, ValidFocus, ValidItem } from "./llm/schema.js";
 import { deduplicateFindings, focusOnly, organizeBrief } from "./sections.js";
 import { activityAmount, bulletText, recapKind, recapText } from "./recap-text.js";
 import { closingLine } from "./llm/closing.js";
+import { shortLabel } from "./streaks.js";
+import { plural } from "./plural.js";
 
 export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -15,20 +17,39 @@ const link = (s: Source) =>
 const icon = { high: "🔴", medium: "🟡", low: "⚪", info: "•" } as const;
 const rank = { high: 0, medium: 1, low: 2, info: 3 } as const;
 
-function line(f: Finding): string[] {
+function line(f: Finding, days?: Map<string, number>): string[] {
   if (f.rule === "old_branches") {
     const names = f.sources.map((s) => s.label).join(", ");
     const summary = esc(f.summary).replace(esc(names), () => f.sources.map(link).join(", "));
     return [`${icon[f.severity]} ${summary}`];
   }
-  const out = [`${icon[f.severity]} ${esc(f.summary)} [${f.sources.map(link).join(", ")}]`];
+  const out = [`${icon[f.severity]} ${esc(f.summary)}${dayTag([f], days)} [${f.sources.map(link).join(", ")}]`];
   for (const d of f.details ?? []) out.push(`   – ${esc(d)}`);
   return out;
 }
 
 // focus: features.focusButtons, which keeps focus suggestions apart from attention.
 // previousFocus: the yesterday_focus finding, shown at the top of the recap in code on both paths.
-export interface GreetingOptions { userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[] }
+// collapsed and days (features.streaks): repeated findings for the "Still open, unchanged" line, and
+// how many scheduled runs in a row each repeated high finding has appeared.
+export interface GreetingOptions {
+  userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
+  collapsed?: Finding[]; days?: Map<string, number>;
+}
+
+const dayTag = (findings: Finding[], days?: Map<string, number>) => {
+  const n = Math.max(0, ...findings.map((f) => days?.get(f.id) ?? 0));
+  return n ? ` (day ${n})` : "";
+};
+
+const MAX_COLLAPSED_NAMES = 5;
+
+function collapsedLine(findings: Finding[] = []): string[] {
+  if (!findings.length) return [];
+  const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => f.sources[0] ? link({ label: shortLabel(f), url: f.sources[0].url }) : esc(shortLabel(f)));
+  const more = findings.length - names.length;
+  return [`⚪ Still open, unchanged: ${plural(findings.length, "item")} (${names.join(", ")}${more ? `, and ${more} more` : ""})`];
+}
 
 function recapLines(items: ValidItem[], model = false): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
@@ -90,7 +111,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info")
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus), leadLines(greeting.previousFocus))];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -127,9 +148,9 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
   const modelLine = (i: ValidItem) => {
     if (i.sources.length === 1 && i.sources[0].rule === "old_branches") return line(i.sources[0])[0];
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
-    return `${icon[severity]} ${esc(bulletText(i.text))} ${modelLinks(i)}`;
+    return `${icon[severity]} ${esc(bulletText(i.text))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w, focusLines(brief.focus), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed)], recapLines(brief.yesterday, true), w, focusLines(brief.focus), leadLines(greeting.previousFocus))];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

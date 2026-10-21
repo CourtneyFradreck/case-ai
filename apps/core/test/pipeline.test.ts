@@ -5,14 +5,15 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
   startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), getFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
-  features: { focusButtons: false },
+  features: { focusButtons: false, streaks: false },
+  previousRuns: vi.fn(),
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
@@ -297,5 +298,57 @@ describe("intent findings in the pipeline", () => {
       expect(mocks.sendMessage).toHaveBeenCalledWith(result.text);
       mocks.env.delivery = "n8n";
     });
+  });
+});
+
+describe("collapsing repeats in the pipeline (streaks)", () => {
+  const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", repo: "me/demo", summary: 'PR #14 "Retry" in me/demo: no activity for 5 days', sources: [{ label: "PR", url: "https://github.com/me/demo/pull/14" }] });
+  const ci = finding({ id: "ci", rule: "failing_ci", severity: "high", summary: "CI failing on me/demo main (build), today", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
+  const past = (n: number) => Array.from({ length: n }, (_, i) => ({ id: 6 - i, source: "schedule", status: "ok", windowEnd: new Date(), findingIds: ["pr", "ci"], attentionIds: ["pr", "ci"] }));
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.features.streaks = true;
+    mocks.env.briefMode = "rules";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.collectAll.mockResolvedValue([snap()]);
+    mocks.runRules.mockReturnValue([ci, pr, finding()]);
+    mocks.previousRuns.mockResolvedValue(past(3));
+    mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F2"] }], attention: [{ text: "CI is failing", sources: ["F1"] }], focus: [] }), model: "test-model" });
+  });
+  afterEach(() => { mocks.features.streaks = false; vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("collapses repeats in a scheduled rule-only brief", async () => {
+    const result = await runBrief("schedule");
+    expect(mocks.previousRuns).toHaveBeenCalledWith(7);
+    expect(result.text).toContain("CI failing on me/demo main (build), today (day 4)");
+    expect(result.text).toContain('⚪ Still open, unchanged: 1 item (<a href="https://github.com/me/demo/pull/14">idle PR #14 in demo</a>)');
+    expect(mocks.storeFindings.mock.calls[0][1].map((f: { id: string }) => f.id)).toContain("pr");
+  });
+  it("keeps collapsed findings out of the model input and renders their line in code", async () => {
+    mocks.env.briefMode = "all";
+    const result = await runBrief("schedule");
+    expect(mocks.generate.mock.calls[0][1]).not.toContain("PR #14");
+    expect(result.text).toContain("🔴 CI is failing (day 4)");
+    expect(result.text).toContain("Still open, unchanged: 1 item");
+    expect(result.text.match(/PR #14|idle PR #14/g)).toHaveLength(1);
+  });
+  it("shows everything below the threshold", async () => {
+    mocks.previousRuns.mockResolvedValue(past(2));
+    const result = await runBrief("schedule");
+    expect(result.text).not.toContain("Still open");
+    expect(result.text).not.toContain("(day");
+  });
+  it("leaves command briefs and the flag-off brief unchanged", async () => {
+    const command = await runBrief("command");
+    expect(mocks.previousRuns).not.toHaveBeenCalled();
+    mocks.features.streaks = false;
+    const off = await runBrief("schedule");
+    expect(command.text).toBe(off.text);
+    expect(off.text).toContain("no activity for 5 days");
   });
 });
