@@ -324,6 +324,43 @@ describe("intent findings in the pipeline", () => {
   });
 });
 
+describe("old unmerged branches in the pipeline", () => {
+  const old = finding({ id: "old-2", rule: "old_branches", severity: "low", repo: "me/attachcv, me/crc-app", summary: "2 old unmerged branches across attachcv, crc-app (oldest 120 days)", sources: [{ label: "attachcv", url: "https://github.com/me/attachcv/branches/stale" }, { label: "crc-app", url: "https://github.com/me/crc-app/branches/stale" }] });
+  const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", summary: "PR #4 waiting", sources: [{ label: "PR", url: "https://github.com/me/demo/pull/4" }] });
+  const ran = (findingIds: string[]) => [{ id: 6, source: "schedule", status: "ok", windowEnd: new Date(), findingIds, attentionIds: findingIds }];
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.env.briefMode = "rules";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.collectAll.mockResolvedValue([snap()]);
+    mocks.runRules.mockReturnValue([pr, old]);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  it("shows them on Mondays without reading previous runs", async () => {
+    vi.setSystemTime(new Date("2026-10-19T05:00:00Z"));
+    expect((await runBrief("schedule")).text).toContain("old unmerged branches");
+    expect(mocks.previousRuns).not.toHaveBeenCalled();
+  });
+  it("leaves them out on other days while they are unchanged, but still stores them", async () => {
+    vi.setSystemTime(new Date("2026-10-22T05:00:00Z"));
+    mocks.previousRuns.mockResolvedValue(ran(["pr", "old-2"]));
+    const result = await runBrief("schedule");
+    expect(result.text).not.toContain("old unmerged branches");
+    expect(result.text).toContain("PR #4 waiting");
+    expect(mocks.storeFindings.mock.calls[0][1].map((f: { id: string }) => f.id)).toContain("old-2");
+  });
+  it("shows them on other days when the branches changed", async () => {
+    vi.setSystemTime(new Date("2026-10-22T05:00:00Z"));
+    mocks.previousRuns.mockResolvedValue(ran(["pr", "old-1"]));
+    expect((await runBrief("schedule")).text).toContain("old unmerged branches");
+  });
+});
+
 describe("collapsing repeats in the pipeline (streaks)", () => {
   const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", repo: "me/demo", summary: 'PR #14 "Retry" in me/demo: no activity for 5 days', sources: [{ label: "PR", url: "https://github.com/me/demo/pull/14" }] });
   const ci = finding({ id: "ci", rule: "failing_ci", severity: "high", summary: "CI failing on me/demo main (build), today", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
