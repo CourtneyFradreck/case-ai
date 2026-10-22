@@ -153,6 +153,14 @@ export async function storeBrief(runId: number, text: string, meta: BriefMeta | 
   return Number(rows[0].id);
 }
 
+// When the brief before this run was stored, of any source; undefined before the first brief.
+export async function previousBriefAt(runId: number): Promise<Date | undefined> {
+  const { rows } = await pool.query<{ created_at: Date }>(
+    "SELECT created_at FROM briefs WHERE run_id < $1 ORDER BY id DESC LIMIT 1", [runId],
+  );
+  return rows[0]?.created_at;
+}
+
 export async function storeBriefMessageId(briefId: number, messageId: number) {
   await pool.query("UPDATE briefs SET telegram_message_id=$2 WHERE id=$1", [briefId, messageId]);
 }

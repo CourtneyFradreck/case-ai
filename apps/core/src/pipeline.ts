@@ -11,14 +11,14 @@ import { collectAll } from "./github/collect.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { render } from "./render.js";
-import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable, storeBriefSentText } from "./store.js";
+import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, previousBriefAt, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable, storeBriefSentText } from "./store.js";
 import { snoozable, snoozeButtonRow, withoutSnoozed } from "./snooze.js";
 import type { InlineKeyboardButton } from "./telegram.js";
 import { collapseRepeats, countStreaks, lastScheduledRun } from "./streaks.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
+import { focusKeyboard, focusPeriod, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -48,7 +48,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
     const next = features.focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
     const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
-    const previousFocus = features.focusButtons ? yesterdayFocus(focusRow, snaps) : [];
+    const period = features.focusButtons && focusRow ? focusPeriod(await previousBriefAt(runId), w, now.toJSDate()) : undefined;
+    const previousFocus = period ? yesterdayFocus(focusRow, snaps, period) : [];
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
     // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.

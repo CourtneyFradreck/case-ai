@@ -7,6 +7,7 @@ import { bulletText } from "./recap-text.js";
 import type { InlineKeyboardMarkup } from "./telegram.js";
 import { esc } from "./render.js";
 import { fid } from "./id.js";
+import type { Window } from "./time.js";
 
 export const MAX_FOCUS = 3;
 
@@ -110,21 +111,31 @@ export function nextItemsText(rows: { repo: string; text: string; section: strin
   return text;
 }
 
-// An info finding for yesterday's focus: what it was and whether its repo had commits since it was chosen.
-// It leads the recap and is never sent to the model.
-export function yesterdayFocus(focus: { item_text: string; repo: string | null; created_at: Date } | undefined, snaps: RepoSnapshot[]): Finding[] {
+// The period yesterday's focus line counts commits over: since the previous brief (or the last 24 hours
+// without one), widened to the recap's start so the line always counts every commit the recap shows.
+export interface FocusPeriod { since: Date; label: string }
+export function focusPeriod(previousBriefAt: Date | undefined, recap: Window, now: Date): FocusPeriod {
+  const since = previousBriefAt ?? new Date(now.getTime() - 86_400_000);
+  if (recap.label && recap.start < since) return { since: recap.start, label: recap.label };
+  return { since, label: previousBriefAt ? "since the last brief" : "in the last day" };
+}
+
+// An info finding for yesterday's focus: what it was and how many commits its repo had over the period,
+// on every branch. It leads the recap and is never sent to the model.
+export function yesterdayFocus(focus: { item_text: string; repo: string | null; created_at: Date } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
   if (!focus) return [];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
   // Without a readable repo there is nothing to check commits against.
   if (!snapshot) return [{ ...base, repo: focus.repo ?? "", summary: `Yesterday's focus: ${focus.item_text}`, sources: [] }];
-  const since = snapshot.commits.filter((c) => new Date(c.date) > focus.created_at).sort((a, b) => b.date.localeCompare(a.date));
+  const commits = snapshot.commits.filter((c) => new Date(c.date) >= period.since).sort((a, b) => b.date.localeCompare(a.date));
+  const name = snapshot.repo.split("/").pop()!;
   return [{
     ...base,
     repo: snapshot.repo,
-    summary: since.length
-      ? `Yesterday's focus: ${focus.item_text}. ${plural(since.length, "commit")} in ${snapshot.repo} since`
-      : `Yesterday's focus: ${focus.item_text}. No commits in ${snapshot.repo} since`,
-    sources: since.length ? [{ label: "commit", url: since[0].url }] : [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
+    summary: commits.length
+      ? `Yesterday's focus: ${focus.item_text}. ${plural(commits.length, "commit")} in ${name} ${period.label}`
+      : `Yesterday's focus: ${focus.item_text}. No commits in ${name} ${period.label}`,
+    sources: commits.length ? [{ label: "commit", url: commits[0].url }] : [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
   }];
 }
