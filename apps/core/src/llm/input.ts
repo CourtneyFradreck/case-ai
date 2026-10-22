@@ -25,7 +25,7 @@ Style: speak warmly and concisely, like a capable personal assistant talking to 
 const EMPTY_FOCUS = `- "focus": return an empty list. The brief has two sections: attention first, then recap.`;
 const NO_SUGGESTION = " Never repeat it as a suggestion.";
 const FOCUS_RULES = `- "focus": 2 or 3 suggestions for what to work on today, most useful first. Each cites at least one alias in "sources". "text" names the work in a few words. "reason" is one short clause that states only a fact from a cited finding, such as failing CI, a PR with no activity for the stated number of days, or an open NEXT.md item; never invent a reason. Prefer high, then medium findings; then open next_item findings in repos that have commit findings in this input. A suggestion may point at an attention item, but never cite the same finding in two suggestions. Return fewer than 2 only if fewer findings qualify.
-- "next_item" findings are open items from the user's NEXT.md plans, not activity or problems. Never put them in "yesterday" or "attention"; cite them only in "focus".`;
+- "next_item" findings are open items from the user's NEXT.md plans, not activity or problems. Never put them in "yesterday" or "attention"; cite them only in "focus". They are listed best first: prefer earlier ones.`;
 
 // The prompt when features.focusButtons is on, which also sends open NEXT.md items.
 export const FOCUS_PROMPT = SYSTEM_PROMPT.replace(NO_SUGGESTION, "").replace(EMPTY_FOCUS, () => FOCUS_RULES);

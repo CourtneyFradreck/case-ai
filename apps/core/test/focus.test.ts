@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, ruleFocus, storedFocus, yesterdayFocus } from "../src/focus.js";
+import { chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, rankNext, ruleFocus, storedFocus, yesterdayFocus } from "../src/focus.js";
 import { render, renderModelBrief } from "../src/render.js";
+import { datePassed, itemDate } from "../src/intent/dates.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
 
 const cfg = { activeRepoDays: 7, ignoreBranchPrefixes: ["dependabot/"] };
@@ -59,6 +60,34 @@ describe("rule-only focus", () => {
     expect(ruleFocus([comment, branchFinding, other], [], [], NOW, cfg).map((f) => f.reason)).toEqual([
       "Unmerged and untouched for 12 days", "New comments are waiting for a reply", "Needs attention",
     ]);
+  });
+});
+
+describe("NEXT.md items with a date that has passed", () => {
+  // NOW is Wed 14 Oct 2026.
+  const snaps = [snap({ branches: [branch("main", 1)] })];
+  const late = nextItem("me/demo", "Merge the parser after the trial ends (Mon 12 Oct)", "late");
+  const plain = nextItem("me/demo", "Write docs", "plain");
+  it("reads dates in items, choosing the nearest year", () => {
+    expect(itemDate("Merge M2 (Mon 19 Oct)", NOW)?.toISODate()).toBe("2026-10-19");
+    expect(itemDate("Ship by Oct 2", NOW)?.toISODate()).toBe("2026-10-02");
+    expect(itemDate("Plan for 2027-01-05", NOW)?.toISODate()).toBe("2027-01-05");
+    expect(itemDate("Wrap up 20 Dec", new Date("2027-01-03T05:00:00Z"))?.toISODate()).toBe("2026-12-20");
+    expect(itemDate("Write docs", NOW)).toBeUndefined();
+    expect(datePassed("Merge M2 (Mon 12 Oct)", NOW)).toBe(true);
+    expect(datePassed("Demo on 14 Oct", NOW)).toBe(false);
+  });
+  it("suggests overdue items after the others", () => {
+    expect(ruleFocus([], [late, plain], snaps, NOW, cfg).map((f) => f.sources[0].id)).toEqual(["next_plain", "next_late"]);
+    expect(rankNext([late, plain], snaps, NOW, cfg).map((f) => f.id)).toEqual(["next_plain", "next_late"]);
+  });
+  it("keeps an overdue item's place when there's recent activity on it", () => {
+    const work = snap({ branches: [branch("main", 1)], commits: [{ sha: "a", message: "fix: parser trial edge cases", url: "u", author: "me", branch: "main", date: daysAgo(1) }] });
+    expect(ruleFocus([], [late, plain], [work], NOW, cfg).map((f) => f.sources[0].id)).toEqual(["next_late", "next_plain"]);
+    const onBranch = snap({ branches: [branch("main", 1), branch("feat/parser-trial", 2)] });
+    expect(ruleFocus([], [late, plain], [onBranch], NOW, cfg).map((f) => f.sources[0].id)).toEqual(["next_late", "next_plain"]);
+    // Yesterday's focus counts as recent activity.
+    expect(ruleFocus([], [late, plain], snaps, NOW, cfg, "next_late").map((f) => f.sources[0].id)).toEqual(["next_late", "next_plain"]);
   });
 });
 

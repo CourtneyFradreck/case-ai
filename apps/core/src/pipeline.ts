@@ -18,7 +18,7 @@ import { collapseRepeats, countStreaks, lastScheduledRun } from "./streaks.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, focusPeriod, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
+import { focusKeyboard, focusPeriod, rankNext, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -45,11 +45,12 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const { window: w, snapshots } = selectRecap(snaps, now);
     const findings = runRules(snapshots, now.toJSDate(), config, w);
     const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported);
+    const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
-    const next = features.focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
+    // Overdue items go last, for the model as for the rule-picked suggestions.
+    const next = features.focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item"), snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
     // Items a merged PR likely finished get a tick-off line, written by code, instead of a suggestion.
     const done = features.focusButtons ? intent.filter((f) => f.rule === "next_likely_done") : [];
-    const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
     const period = features.focusButtons && focusRow ? focusPeriod(await previousBriefAt(runId), w, now.toJSDate()) : undefined;
     const previousFocus = period ? yesterdayFocus(focusRow, snaps, period) : [];
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
@@ -64,7 +65,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       : { kept: visible, collapsed: [], days: new Map<string, number>() };
     const snoozeItems = features.snooze ? snoozable(visible) : [];
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? ruleFocus(kept, next, snaps, now.toJSDate(), config) : [];
+    const rulesFocus = features.focusButtons ? ruleFocus(kept, next, snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
     const options = { userName: config.userName, now, previousFocus, collapsed, days, done };
     const renderRules = (footer?: string) => render(kept, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
