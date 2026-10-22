@@ -30,6 +30,7 @@ export function failingCi(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[
         summary: `CI failing on ${s.repo} ${s.defaultBranch} (${r.workflowName}), ${age}`,
         sources: [{ label: "run", url: r.url }],
         ageDays: days,
+        target: r.workflowName,
       };
     });
 }
@@ -46,6 +47,7 @@ export function idlePrs(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] 
       summary: `PR #${p.number} "${p.title}" in ${s.repo}: no activity for ${days} days`,
       sources: [{ label: "PR", url: p.url }],
       ageDays: days,
+      target: `PR #${p.number}`,
     }];
   });
 }
@@ -70,6 +72,7 @@ export function staleBranches(s: RepoSnapshot, now: Date, cfg: RuleConfig): Find
       summary: `Branch ${b.name} in ${s.repo}: ${plural(b.aheadBy, "unmerged commit")}, untouched for ${days} days`,
       sources: [{ label: "branch", url: b.url }],
       ageDays: days,
+      target: b.name,
     }];
   });
 }
@@ -191,6 +194,7 @@ export function issueComments(s: RepoSnapshot): Finding[] {
           ? `${authors.join(", ")} commented on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo}, you replied`
           : `${plural(others.length, "new comment")} on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo} (from ${authors.join(", ")})`,
         sources: [{ label: "comment", url: first.url }],
+        target: `${first.isPr ? "PR" : "issue"} #${n}`,
       });
     }
     if (mine.length && !replied && !reportedIssues.has(n)) {

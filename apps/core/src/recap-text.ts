@@ -11,6 +11,22 @@ export function bulletText(text: string): string {
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
+const words = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 || /^\d+$/.test(w));
+
+// Never the same fact twice in one line: drops a trailing bracketed aside that only repeats words
+// from earlier in the line, or that follows another aside.
+// "Merge feat/x: untouched for 8 days (Untouched for 8 days)" → "Merge feat/x: untouched for 8 days".
+export function withoutRepeatedAside(text: string): string {
+  let out = text.trim();
+  for (let m = /\s*\(([^()]*)\)[.]?$/.exec(out); m; m = /\s*\(([^()]*)\)[.]?$/.exec(out)) {
+    const before = out.slice(0, m.index);
+    const earlier = new Set(words(before));
+    if (!/\([^()]*\)/.test(before) && !words(m[1]).every((w) => earlier.has(w))) break;
+    out = before.trimEnd();
+  }
+  return out;
+}
+
 function withoutRepo(text: string, repo: string): string {
   const names = [repo, repo.split("/").pop()!].map(escaped).join("|");
   return text.replace(new RegExp(`^(?:${names}):\\s*`, "i"), "")

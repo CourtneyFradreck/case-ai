@@ -13,7 +13,8 @@ import type { Window } from "./time.js";
 
 export const MAX_FOCUS = 3;
 
-// One fixed reason per rule, built only from the finding's own fields.
+// One fixed reason per rule, built only from the finding's own fields. Reasons are stored with the
+// brief (briefs.focus) and logged, never shown.
 function reason(f: Finding): string {
   const days = f.ageDays === undefined ? "" : plural(f.ageDays, "day");
   switch (f.rule) {
@@ -27,6 +28,21 @@ function reason(f: Finding): string {
 }
 
 const text = (f: Finding) => f.rule === "next_item" ? f.summary.replace(`Next in ${f.repo}: `, "") : f.summary;
+
+// A suggestion is an action, starting with a verb, with at most one short fact in brackets.
+// It replaces the finding's attention line, so the fact appears once.
+export function action(f: Finding): string {
+  const repo = f.repo.split("/").pop()!;
+  const days = f.ageDays === undefined ? "" : plural(f.ageDays, "day");
+  if (f.target) switch (f.rule) {
+    case "failing_ci": return `Fix the failing ${f.target} CI in ${repo}`;
+    case "idle_pr": return `Review or merge ${f.target} in ${repo}${days ? ` (quiet ${days})` : ""}`;
+    case "stale_branch": return `Merge or close ${f.target} in ${repo}${days ? ` (idle ${days})` : ""}`;
+    case "issue_comments": return `Reply to the comments on ${f.target} in ${repo}`;
+  }
+  if (f.rule === "open_issues") return `Triage the open issues in ${repo}`;
+  return bulletText(text(f));
+}
 
 // A NEXT.md item whose date has passed, with nothing recent about it: no commit or recently touched
 // branch in its repo relates to it, and it wasn't yesterday's focus.
@@ -57,7 +73,7 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
   const planned = next.filter((f) => f.rule === "next_item" && active.has(f.repo))
     // Stable sort keeps NEXT.md order within a repo.
     .sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)) || active.get(a.repo)! - active.get(b.repo)!);
-  return [...attention, ...planned].slice(0, MAX_FOCUS).map((f) => ({ text: text(f), reason: reason(f), sources: [f] }));
+  return [...attention, ...planned].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
 }
 
 // What briefs.focus stores per suggestion, in button order.

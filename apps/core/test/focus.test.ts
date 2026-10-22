@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, rankNext, ruleFocus, storedFocus, yesterdayFocus } from "../src/focus.js";
+import { action, chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, rankNext, ruleFocus, storedFocus, yesterdayFocus } from "../src/focus.js";
 import { render, renderModelBrief } from "../src/render.js";
 import { datePassed, itemDate } from "../src/intent/dates.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
@@ -52,6 +52,21 @@ describe("rule-only focus", () => {
     const focus = ruleFocus([ci, pr], [], [snap()], NOW, cfg);
     expect(focus.every((f) => f.sources.length === 1)).toBe(true);
     expect(focus.map((f) => f.sources[0])).toEqual([ci, pr]);
+  });
+  it("writes each suggestion as an action starting with a verb, stating its fact once", () => {
+    const stale = finding({ id: "b", rule: "stale_branch", severity: "medium", repo: "me/taga-technologies", target: "feat/update-product-section", ageDays: 8, summary: "Branch feat/update-product-section in me/taga-technologies: 2 unmerged commits, untouched for 8 days" });
+    const idle = finding({ id: "p", rule: "idle_pr", severity: "medium", target: "PR #4", ageDays: 5 });
+    const failing = finding({ id: "f", rule: "failing_ci", severity: "high", target: "build" });
+    const comments = finding({ id: "c", rule: "issue_comments", severity: "medium", target: "issue #8" });
+    expect([stale, idle, failing, comments].map(action)).toEqual([
+      "Merge or close feat/update-product-section in taga-technologies (idle 8 days)",
+      "Review or merge PR #4 in demo (quiet 5 days)",
+      "Fix the failing build CI in demo",
+      "Reply to the comments on issue #8 in demo",
+    ]);
+    const [suggestion] = ruleFocus([stale], [], [], NOW, cfg);
+    expect(suggestion.text).not.toContain(stale.summary);
+    expect(suggestion.text).not.toContain(suggestion.reason);
   });
   it("uses a template reason for other rules", () => {
     const comment = finding({ id: "c", rule: "issue_comments", severity: "medium" });

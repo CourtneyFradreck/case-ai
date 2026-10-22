@@ -36,6 +36,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   let delivered = false;
   let deliveryError: string | undefined;
   let quiet = false;
+  // Why each suggestion was made: logged and stored with the brief, never shown.
+  let focusReasons: { findingId: string | null; reason: string }[] = [];
   // Quiet mornings compare with the previous scheduled brief, so only scheduled briefs can be quiet.
   const quietCheck = features.quietMornings && source === "schedule";
   try {
@@ -93,6 +95,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const sent = quiet ? quietText(activity, now, focusRow?.item_text ?? kept.find((f) => f.severity !== "info")?.summary) : text;
     const briefId = await storeBrief(runId, text, meta, ruleText);
     if (quiet) await storeBriefSentText(briefId, sent);
+    focusReasons = storedFocus(focus).map(({ findingId, reason }) => ({ findingId, reason }));
     if (focus.length) await storeBriefFocus(briefId, storedFocus(focus));
     if (snoozeItems.length) await storeBriefSnoozable(briefId, snoozeItems);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
@@ -123,7 +126,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       attempts: meta?.json.attempts ?? 0, inputTokens: meta?.inputTokens ?? null, outputTokens: meta?.outputTokens ?? null,
       dropped: meta?.json.dropped.length ?? 0, fallbackReason: meta?.json.fallbackReason ?? null,
       fallbackDetail: meta?.json.fallbackReason ? (meta.json.fallbackDetail ?? meta.json.fallbackReason).slice(0, 200) : null,
-      delivery: env.delivery, delivered, deliveryError: deliveryError ?? null, ...(quietCheck ? { quiet } : {}) }));
+      delivery: env.delivery, delivered, deliveryError: deliveryError ?? null, ...(quietCheck ? { quiet } : {}),
+      ...(focusReasons.length ? { focusReasons } : {}) }));
     await lock.query("SELECT pg_advisory_unlock(777)");
     lock.release();
   }

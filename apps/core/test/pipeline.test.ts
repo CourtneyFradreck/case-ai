@@ -233,7 +233,8 @@ describe("intent findings in the pipeline", () => {
       active();
       mocks.storeBrief.mockResolvedValue(70);
       const result = await runBrief("command");
-      expect(result.text).toContain("<b>Today, I'd suggest</b>\n1. Ship the parser (Open in <code>NEXT.md</code>, and demo has recent commits)");
+      expect(result.text).toContain("<b>Today, I'd suggest</b>\n1. Ship the parser [");
+      expect(result.text).not.toContain("recent commits");
       expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Ship the parser", reason: "Open in NEXT.md, and demo has recent commits", findingId: "next_abcdef0123", repo: "me/demo" }]);
       expect(mocks.storeBrief.mock.calls[0][3]).toBe(result.text);
     });
@@ -250,7 +251,8 @@ describe("intent findings in the pipeline", () => {
       mocks.storeBrief.mockResolvedValue(70);
       mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [{ text: "Finish the parser", reason: "It is next in NEXT.md", sources: ["F2"] }] }), model: "test-model" });
       const result = await runBrief("command");
-      expect(result.text).toContain("1. Finish the parser (It is next in <code>NEXT.md</code>)");
+      expect(result.text).toContain("1. Finish the parser [");
+      expect(result.text).not.toContain("It is next");
       expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Finish the parser", reason: "It is next in NEXT.md", findingId: "next_abcdef0123", repo: "me/demo" }]);
       expect(mocks.storeBrief.mock.calls[0][3]).toContain("1. Ship the parser");
     });
@@ -259,7 +261,7 @@ describe("intent findings in the pipeline", () => {
       mocks.env.briefMode = "all";
       mocks.generate.mockResolvedValue({ raw: "invalid", model: "test-model" });
       const result = await runBrief("command");
-      expect(result.text).toContain("1. Ship the parser (Open in <code>NEXT.md</code>");
+      expect(result.text).toContain("1. Ship the parser [");
       expect(result.text).toContain("Rule-only brief: model unavailable");
     });
     it("attaches focus buttons when case-core delivers the brief", async () => {

@@ -17,6 +17,7 @@ export interface Finding {
   ageDays?: number;       // for sorting within a severity
   activity?: Activity;   // structured recap facts, independent of model wording
   intent?: { itemId: string; section: string | null; state: "open" | "done" };
+  target?: string;        // what an attention finding is about, as the brief names it: a branch, "PR #4", "issue #8" or a workflow
 }
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }
