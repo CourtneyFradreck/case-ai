@@ -15,6 +15,7 @@ import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReporte
 import { snoozable, snoozeButtonRow, withoutSnoozed } from "./snooze.js";
 import type { InlineKeyboardButton } from "./telegram.js";
 import { collapseRepeats, countStreaks, lastScheduledRun } from "./streaks.js";
+import { gateOldBranches, oldBranchesDay } from "./old-branches.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
@@ -60,10 +61,14 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
     await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
     // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.
-    const visible = features.snooze ? withoutSnoozed(findings, await activeSnoozes(now.toJSDate())) : findings;
+    const unsnoozed = features.snooze ? withoutSnoozed(findings, await activeSnoozes(now.toJSDate())) : findings;
     // Streaks count previous scheduled runs, so only scheduled briefs collapse repeats.
     const collapsing = features.streaks && source === "schedule";
-    const past = collapsing || quietCheck ? await previousRuns(runId) : [];
+    // Off the weekly day, the old-branches line needs the last scheduled run to see whether its branches changed.
+    const oldDay = oldBranchesDay(now, config);
+    const gating = !oldDay && unsnoozed.some((f) => f.rule === "old_branches");
+    const past = collapsing || quietCheck || gating ? await previousRuns(runId) : [];
+    const visible = gateOldBranches(unsnoozed, oldDay, lastScheduledRun(past));
     const { kept, collapsed, days } = collapsing
       ? collapseRepeats(visible, countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible, collapsed: [], days: new Map<string, number>() };

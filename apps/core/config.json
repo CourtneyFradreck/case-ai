@@ -3,6 +3,8 @@
   "idlePrDays": 3,
   "staleBranchDays": 7,
   "oldBranchDays": 60,
+  "oldBranchesShow": "weekly",
+  "oldBranchesWeekday": 1,
   "ciMaxAgeDays": 30,
   "activeRepoDays": 7,
   "newRepoDays": 7,
