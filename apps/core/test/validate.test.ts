@@ -136,6 +136,12 @@ describe("NEXT.md items in validation (focusButtons)", () => {
       ]);
     }
   });
+  it("drops suggestions built only on a snoozed focus, and keeps that finding in attention", () => {
+    const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
+    const result = validate(output({ focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }, { text: "Ship the parser", reason: "Open", sources: ["F2"] }] }),
+      new Map([...aliases, ["F3", high]]), [commits, high, next], true, new Set(["ci"]));
+    expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: "CI failing", sources: [high] }], focus: [{ text: "Ship the parser" }] }, dropped: [{ section: "focus", index: 0, reason: "snoozed_focus" }] });
+  });
 });
 
 describe("overlong model text", () => {

@@ -18,7 +18,8 @@ export function shorten(text: string, max: number): string {
 }
 
 // With keepFocus, focus is its own section, and a finding a suggestion cites is shown there instead of in attention.
-export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[], keepFocus = false): ValidationResult {
+// parked: findings behind a snoozed focus, which no suggestion may be built on.
+export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[], keepFocus = false, parked: Set<string> = new Set()): ValidationResult {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch (error) {
     return { ok: false, reason: "invalid_json", detail: error instanceof Error ? error.message : "Invalid JSON response" };
@@ -51,6 +52,10 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
       // A suggestion is shown with its reason, so it needs one; and each finding backs one suggestion at most.
       if (!stripUrls(String((item as AliasBrief["focus"][number]).reason))) {
         dropped.push({ section, index, reason: "empty_reason" });
+        return [];
+      }
+      if (sources.every((f) => parked.has(f.id))) {
+        dropped.push({ section, index, reason: "snoozed_focus" });
         return [];
       }
       if (sources.every((f) => focusCited.has(f.id))) {

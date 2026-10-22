@@ -5,14 +5,14 @@ const mocks = vi.hoisted(() => ({
   env: { telegramChatId: "42", repos: ["me/demo", "me/other"] },
   features: { focusButtons: true, snooze: false },
   sendMessage: vi.fn(), editMessageReplyMarkup: vi.fn(), editMessageText: vi.fn(),
-  getBriefFocus: vi.fn(), getFocus: vi.fn(), insertFocus: vi.fn(), openNextItems: vi.fn(), setPendingFocus: vi.fn(), takePendingFocus: vi.fn(),
+  getBriefFocus: vi.fn(), getFocus: vi.fn(), insertFocus: vi.fn(), setFocusStatus: vi.fn(), openNextItems: vi.fn(), setPendingFocus: vi.fn(), takePendingFocus: vi.fn(),
   getBriefSnoozable: vi.fn(), upsertSnooze: vi.fn(), listSnoozes: vi.fn(), deleteSnooze: vi.fn(),
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage, editMessageReplyMarkup: mocks.editMessageReplyMarkup, editMessageText: mocks.editMessageText }));
 vi.mock("../src/store.js", () => ({
-  getBriefFocus: mocks.getBriefFocus, getFocus: mocks.getFocus, insertFocus: mocks.insertFocus, openNextItems: mocks.openNextItems,
+  getBriefFocus: mocks.getBriefFocus, getFocus: mocks.getFocus, insertFocus: mocks.insertFocus, setFocusStatus: mocks.setFocusStatus, openNextItems: mocks.openNextItems,
   setPendingFocus: mocks.setPendingFocus, takePendingFocus: mocks.takePendingFocus,
   getBriefSnoozable: mocks.getBriefSnoozable, upsertSnooze: mocks.upsertSnooze, listSnoozes: mocks.listSnoozes, deleteSnooze: mocks.deleteSnooze,
 }));
@@ -37,16 +37,17 @@ describe("focus button taps", () => {
   });
 
   it("stores the chosen suggestion from the stored brief and shows the choice", async () => {
-    expect(await onCallbackQuery(tap("f:70:2"), NOW)).toEqual({ answerText: "Focus set: Merge or close feat/update-product-section in taga-technologies (idle 8 days)" });
+    expect(await onCallbackQuery(tap("f:70:2"), NOW)).toEqual({ answerText: "Focus set for today" });
     expect(mocks.getBriefFocus).toHaveBeenCalledWith(70);
     expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: focus[1].text, label: "taga product section branch", findingId: "b", repo: "me/taga-technologies", via: "button", briefId: 70 });
     expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[{ text: "✅ Focus: taga product section branch", callback_data: "f:70:ok" }]] });
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42");
+    expect(mocks.sendMessage).toHaveBeenCalledWith("Got it, taga product section branch today. I'll check in tomorrow.");
   });
   it("keeps the stored focus when editing the keyboard fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.editMessageReplyMarkup.mockRejectedValue(new Error("Telegram editMessageReplyMarkup failed (400)"));
-    expect(await onCallbackQuery(tap("f:70:1"), NOW)).toEqual({ answerText: "Focus set: Fix CI" });
+    expect(await onCallbackQuery(tap("f:70:1"), NOW)).toEqual({ answerText: "Focus set for today" });
     expect(mocks.insertFocus).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledTimes(1);
   });
@@ -56,11 +57,36 @@ describe("focus button taps", () => {
     expect(mocks.sendMessage).toHaveBeenCalledWith("What's your focus today? Reply with a short message.");
     expect(mocks.insertFocus).not.toHaveBeenCalled();
   });
-  it("answers the chosen button with today's focus", async () => {
-    mocks.getFocus.mockResolvedValue({ item_text: "Fix CI", repo: "me/demo", finding_id: "ci", created_at: new Date() });
-    expect(await onCallbackQuery(tap("f:70:ok"), NOW)).toEqual({ answerText: "Focus: Fix CI" });
+  const current = { item_text: focus[1].text, short_label: "taga product section branch", repo: "me/taga-technologies", finding_id: "b", created_at: new Date() };
+  it("opens Done, Snooze and Change from the chosen button", async () => {
+    mocks.getFocus.mockResolvedValue(current);
+    expect(await onCallbackQuery(tap("f:70:ok"), NOW)).toEqual({ answerText: "Focus: taga product section branch" });
     expect(mocks.getFocus).toHaveBeenCalledWith("2026-10-14");
+    expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[
+      { text: "✅ Done", callback_data: "f:70:d" }, { text: "💤 Snooze", callback_data: "f:70:z" }, { text: "🔄 Change", callback_data: "f:70:c" },
+    ]] });
     expect(mocks.insertFocus).not.toHaveBeenCalled();
+  });
+  it("marks today's focus done", async () => {
+    mocks.getFocus.mockResolvedValue(current);
+    expect(await onCallbackQuery(tap("f:70:d"), NOW)).toEqual({ answerText: "Marked done" });
+    expect(mocks.setFocusStatus).toHaveBeenCalledWith("2026-10-14", "done");
+    expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[{ text: "☑️ Done: taga product section branch", callback_data: "f:70:ok" }]] });
+  });
+  it("snoozes today's focus for three days and offers the suggestions again", async () => {
+    mocks.getFocus.mockResolvedValue(current);
+    expect(await onCallbackQuery(tap("f:70:z"), NOW)).toEqual({ answerText: "Snoozed until Sun 18 Oct. Pick another?" });
+    expect(mocks.setFocusStatus).toHaveBeenCalledWith("2026-10-14", "snoozed", new Date("2026-10-17T22:00:00Z"));
+    expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [
+      [{ text: "1", callback_data: "f:70:1" }, { text: "2", callback_data: "f:70:2" }], [{ text: "Something else", callback_data: "f:70:x" }],
+    ] });
+  });
+  it("brings the suggestions back on Change, or when there is no focus any more", async () => {
+    expect(await onCallbackQuery(tap("f:70:c"), NOW)).toEqual({ answerText: "Pick another" });
+    mocks.getFocus.mockResolvedValue(undefined);
+    expect(await onCallbackQuery(tap("f:70:ok"), NOW)).toEqual({ answerText: "No focus set for today" });
+    expect(mocks.editMessageReplyMarkup).toHaveBeenCalledTimes(2);
+    expect(mocks.setFocusStatus).not.toHaveBeenCalled();
   });
   it("refuses a suggestion number the brief doesn't have", async () => {
     expect(await onCallbackQuery(tap("f:70:3"), NOW)).toEqual({ answerText: "That suggestion isn't on this brief." });
@@ -98,7 +124,7 @@ describe("focus text and commands", () => {
     await onTextMessage(message("  Write the   <M4> plan\n"), NOW);
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42", NOW.toJSDate());
     expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Write the <M4> plan", label: "Write the <M4> plan", findingId: null, repo: null, via: "text", briefId: 70 });
-    expect(mocks.sendMessage).toHaveBeenCalledWith("Focus for today: Write the &lt;M4&gt; plan");
+    expect(mocks.sendMessage).toHaveBeenCalledWith("Got it, Write the &lt;M4&gt; plan today. I'll check in tomorrow.");
   });
   it("ignores plain messages with nothing pending, or once it has expired", async () => {
     mocks.takePendingFocus.mockResolvedValue(undefined);
@@ -115,7 +141,7 @@ describe("focus text and commands", () => {
     await onTextMessage(message("/focus@case_bot Review the backup restore"), NOW);
     expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Review the backup restore", label: "Review the backup restore", findingId: null, repo: null, via: "command", briefId: null });
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42");
-    expect(mocks.sendMessage).toHaveBeenCalledWith("Focus for today: Review the backup restore");
+    expect(mocks.sendMessage).toHaveBeenCalledWith("Got it, Review the backup restore today. I'll check in tomorrow.");
   });
   it("shows today's focus, or how to set one, for a bare /focus", async () => {
     mocks.getFocus.mockResolvedValueOnce({ item_text: "Fix <CI>", repo: null, finding_id: null, created_at: new Date() })

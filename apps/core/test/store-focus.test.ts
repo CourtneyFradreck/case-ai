@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const pool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool }));
-import { activeSnoozes, deleteSnooze, getFocus, insertFocus, listSnoozes, openNextItems, previousRuns, setPendingFocus, takePendingFocus, upsertSnooze } from "../src/store.js";
+import { activeSnoozes, deleteSnooze, getFocus, insertFocus, listSnoozes, openNextItems, previousRuns, setFocusStatus, setPendingFocus, snoozedFocusIds, takePendingFocus, upsertSnooze } from "../src/store.js";
 
 describe("focus storage", () => {
   beforeEach(() => {
@@ -18,6 +18,21 @@ describe("focus storage", () => {
   it("reads the latest focus for a date, so a later choice replaces an earlier one", async () => {
     await getFocus("2026-10-14");
     expect(pool.query.mock.calls[0][0]).toContain("WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1");
+  });
+  it("treats a snoozed latest choice as no focus for the day", async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ item_text: "Fix CI", status: "snoozed" }] });
+    expect(await getFocus("2026-10-14")).toBeUndefined();
+    pool.query.mockResolvedValueOnce({ rows: [{ item_text: "Fix CI", status: "done" }] });
+    expect(await getFocus("2026-10-14")).toMatchObject({ item_text: "Fix CI" });
+  });
+  it("marks the day's latest choice done or snoozed, and lists snoozed findings still parked", async () => {
+    const until = new Date("2026-10-17T22:00:00Z");
+    await setFocusStatus("2026-10-14", "snoozed", until);
+    expect(pool.query.mock.calls[0][0]).toContain("WHERE id = (SELECT id FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1)");
+    expect(pool.query.mock.calls[0][1]).toEqual(["2026-10-14", "snoozed", until]);
+    pool.query.mockResolvedValueOnce({ rows: [{ finding_id: "b" }] });
+    expect(await snoozedFocusIds(new Date("2026-10-15T05:00:00Z"))).toEqual(new Set(["b"]));
+    expect(pool.query.mock.calls[1][0]).toContain("status='snoozed' AND status_until > $1");
   });
   it("upserts the pending state for a chat", async () => {
     const expires = new Date("2026-10-14T22:00:00Z");
