@@ -23,7 +23,7 @@ const NOW = DateTime.fromISO("2026-10-14T21:30:00Z");
 const MIDNIGHT = new Date("2026-10-14T22:00:00Z");
 const focus = [
   { text: "Fix CI", reason: "CI is failing", findingId: "ci", repo: "me/demo" },
-  { text: "Ship the parser", reason: "Open in NEXT.md", findingId: "next_abc", repo: "me/demo" },
+  { text: "Merge or close feat/update-product-section in taga-technologies (idle 8 days)", label: "taga product section branch", reason: "Unmerged", findingId: "b", repo: "me/taga-technologies" },
 ];
 const message = (text: string) => ({ message_id: 9, chat: { id: 42 }, date: 0, text });
 const tap = (data: string) => ({ id: "cb1", from: { id: 42 }, message: { message_id: 555, chat: { id: 42 } }, data });
@@ -37,10 +37,10 @@ describe("focus button taps", () => {
   });
 
   it("stores the chosen suggestion from the stored brief and shows the choice", async () => {
-    expect(await onCallbackQuery(tap("f:70:2"), NOW)).toEqual({ answerText: "Focus set: Ship the parser" });
+    expect(await onCallbackQuery(tap("f:70:2"), NOW)).toEqual({ answerText: "Focus set: Merge or close feat/update-product-section in taga-technologies (idle 8 days)" });
     expect(mocks.getBriefFocus).toHaveBeenCalledWith(70);
-    expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Ship the parser", findingId: "next_abc", repo: "me/demo", via: "button", briefId: 70 });
-    expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[{ text: "Focus: Ship the parser", callback_data: "f:70:ok" }]] });
+    expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: focus[1].text, label: "taga product section branch", findingId: "b", repo: "me/taga-technologies", via: "button", briefId: 70 });
+    expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[{ text: "✅ Focus: taga product section branch", callback_data: "f:70:ok" }]] });
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42");
   });
   it("keeps the stored focus when editing the keyboard fails", async () => {
@@ -97,7 +97,7 @@ describe("focus text and commands", () => {
     mocks.takePendingFocus.mockResolvedValue({ briefId: 70 });
     await onTextMessage(message("  Write the   <M4> plan\n"), NOW);
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42", NOW.toJSDate());
-    expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Write the <M4> plan", findingId: null, repo: null, via: "text", briefId: 70 });
+    expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Write the <M4> plan", label: "Write the <M4> plan", findingId: null, repo: null, via: "text", briefId: 70 });
     expect(mocks.sendMessage).toHaveBeenCalledWith("Focus for today: Write the &lt;M4&gt; plan");
   });
   it("ignores plain messages with nothing pending, or once it has expired", async () => {
@@ -113,16 +113,23 @@ describe("focus text and commands", () => {
   });
   it("sets or replaces today's focus with /focus and clears a pending state", async () => {
     await onTextMessage(message("/focus@case_bot Review the backup restore"), NOW);
-    expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Review the backup restore", findingId: null, repo: null, via: "command", briefId: null });
+    expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Review the backup restore", label: "Review the backup restore", findingId: null, repo: null, via: "command", briefId: null });
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42");
     expect(mocks.sendMessage).toHaveBeenCalledWith("Focus for today: Review the backup restore");
   });
   it("shows today's focus, or how to set one, for a bare /focus", async () => {
-    mocks.getFocus.mockResolvedValueOnce({ item_text: "Fix <CI>", repo: null, finding_id: null, created_at: new Date() }).mockResolvedValueOnce(undefined);
+    mocks.getFocus.mockResolvedValueOnce({ item_text: "Fix <CI>", repo: null, finding_id: null, created_at: new Date() })
+      .mockResolvedValueOnce({ item_text: "Merge or close feat/update-product-section in taga-technologies (idle 8 days)", short_label: "taga product section branch", repo: null, finding_id: null, created_at: new Date() })
+      .mockResolvedValueOnce(undefined);
+    await onTextMessage(message("/focus"), NOW);
     await onTextMessage(message("/focus"), NOW);
     await onTextMessage(message("/focus   "), NOW);
     expect(mocks.insertFocus).not.toHaveBeenCalled();
-    expect(mocks.sendMessage.mock.calls).toEqual([["Today's focus: Fix &lt;CI&gt;"], ["No focus set for today. Send /focus followed by what you'll work on."]]);
+    expect(mocks.sendMessage.mock.calls).toEqual([
+      ["Today's focus: <b>Fix &lt;CI&gt;</b>"],
+      ["Today's focus: <b>taga product section branch</b>\nMerge or close feat/update-product-section in taga-technologies (idle 8 days)"],
+      ["No focus set for today. Send /focus followed by what you'll work on."],
+    ]);
   });
   it("replies to /next with open items for all tracked repos or one", async () => {
     mocks.openNextItems.mockResolvedValue([{ repo: "me/demo", text: "Ship the parser", section: "M3" }]);

@@ -10,6 +10,7 @@ import type { InlineKeyboardMarkup } from "./telegram.js";
 import { esc } from "./render.js";
 import { fid } from "./id.js";
 import type { Window } from "./time.js";
+import { clip, focusLabel } from "./labels.js";
 
 export const MAX_FOCUS = 3;
 
@@ -76,14 +77,14 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
   return [...attention, ...planned].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
 }
 
-// What briefs.focus stores per suggestion, in button order.
-export interface StoredFocus { text: string; reason: string; findingId: string | null; repo: string | null }
+// What briefs.focus stores per suggestion, in button order. label is missing on briefs stored before it existed.
+export interface StoredFocus { text: string; label?: string; reason: string; findingId: string | null; repo: string | null }
 
 export function storedFocus(items: ValidFocus[]): StoredFocus[] {
   return items.map((i) => {
     const f = i.sources[0];
     // old_branches can name several repos; a focus row holds one.
-    return { text: bulletText(i.text), reason: i.reason, findingId: f?.id ?? null, repo: f && !f.repo.includes(", ") ? f.repo : null };
+    return { text: bulletText(i.text), label: focusLabel(i.sources, bulletText(i.text), i.label), reason: i.reason, findingId: f?.id ?? null, repo: f && !f.repo.includes(", ") ? f.repo : null };
   });
 }
 
@@ -119,11 +120,13 @@ export function parseCommand(text: string): { name: string; arg: string } | unde
   return m ? { name: m[1].toLowerCase(), arg: (m[2] ?? "").trim() } : undefined;
 }
 
-// After a choice the keyboard shrinks to one button naming it. Telegram cuts long button text anyway.
-export function chosenKeyboard(briefId: number, text: string): InlineKeyboardMarkup {
-  const label = `Focus: ${text}`;
-  return { inline_keyboard: [[{ text: label.length > 60 ? `${label.slice(0, 59)}…` : label, callback_data: focusCallbackData(briefId, "chosen") }]] };
+// After a choice the keyboard shrinks to one button naming it by its short label, which Telegram shows in full.
+export function chosenKeyboard(briefId: number, label: string): InlineKeyboardMarkup {
+  return { inline_keyboard: [[{ text: `✅ Focus: ${clip(label)}`, callback_data: focusCallbackData(briefId, "chosen") }]] };
 }
+
+// A stored suggestion's label, or one made from its text on briefs stored before labels existed.
+export const storedLabel = (item: StoredFocus) => item.label ?? clip(item.text);
 
 const MAX_NEXT_CHARS = 3800;
 
@@ -159,20 +162,21 @@ export function focusPeriod(previousBriefAt: Date | undefined, recap: Window, no
 
 // An info finding for yesterday's focus: what it was and how many commits its repo had over the period,
 // on every branch. It leads the recap and is never sent to the model.
-export function yesterdayFocus(focus: { item_text: string; repo: string | null; created_at: Date } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
+export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
   if (!focus) return [];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
   // Without a readable repo there is nothing to check commits against.
-  if (!snapshot) return [{ ...base, repo: focus.repo ?? "", summary: `Yesterday's focus: ${focus.item_text}`, sources: [] }];
+  const name = focus.short_label || focus.item_text;
+  if (!snapshot) return [{ ...base, repo: focus.repo ?? "", summary: `Yesterday's focus: ${name}`, sources: [] }];
   const commits = snapshot.commits.filter((c) => new Date(c.date) >= period.since).sort((a, b) => b.date.localeCompare(a.date));
-  const name = snapshot.repo.split("/").pop()!;
+  const repo = snapshot.repo.split("/").pop()!;
   return [{
     ...base,
     repo: snapshot.repo,
     summary: commits.length
-      ? `Yesterday's focus: ${focus.item_text}. ${plural(commits.length, "commit")} in ${name} ${period.label}`
-      : `Yesterday's focus: ${focus.item_text}. No commits in ${name} ${period.label}`,
+      ? `Yesterday's focus: ${name}. ${plural(commits.length, "commit")} in ${repo} ${period.label}`
+      : `Yesterday's focus: ${name}. No commits in ${repo} ${period.label}`,
     sources: commits.length ? [{ label: "commit", url: commits[0].url }] : [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
   }];
 }

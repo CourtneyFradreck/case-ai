@@ -131,8 +131,8 @@ describe("focus buttons", () => {
       { text: "you should fix CI", reason: "CI is failing", sources: [ci, pr] },
       { text: "Prune branches", reason: "Old branches", sources: [branches] },
     ])).toEqual([
-      { text: "Fix CI", reason: "CI is failing", findingId: "ci", repo: "me/demo" },
-      { text: "Prune branches", reason: "Old branches", findingId: "old", repo: null },
+      { text: "Fix CI", label: "CI failing on me/demo main (build)…", reason: "CI is failing", findingId: "ci", repo: "me/demo" },
+      { text: "Prune branches", label: "old branches", reason: "Old branches", findingId: "old", repo: null },
     ]);
   });
 });
@@ -150,9 +150,9 @@ describe("focus commands", () => {
     expect(cleanFocusText(" Ship\n\tthe   parser ")).toBe("Ship the parser");
     expect(cleanFocusText("x".repeat(300))).toHaveLength(200);
   });
-  it("names the choice on the remaining button and keeps it short", () => {
-    expect(chosenKeyboard(70, "Fix CI")).toEqual({ inline_keyboard: [[{ text: "Focus: Fix CI", callback_data: "f:70:ok" }]] });
-    expect(chosenKeyboard(70, "x".repeat(100)).inline_keyboard[0][0].text).toHaveLength(60);
+  it("names the choice on the remaining button by its short label", () => {
+    expect(chosenKeyboard(70, "taga product branch")).toEqual({ inline_keyboard: [[{ text: "✅ Focus: taga product branch", callback_data: "f:70:ok" }]] });
+    expect(chosenKeyboard(70, "x".repeat(100)).inline_keyboard[0][0].text).toBe(`✅ Focus: ${"x".repeat(39)}…`);
   });
 });
 

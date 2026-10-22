@@ -9,10 +9,10 @@ describe("focus storage", () => {
     pool.query.mockResolvedValue({ rows: [] });
   });
   it("inserts a focus row in core.focus", async () => {
-    await insertFocus({ date: "2026-10-14", text: "Fix CI", findingId: "ci", repo: "me/demo", via: "button", briefId: 70 });
+    await insertFocus({ date: "2026-10-14", text: "Fix the failing build CI in demo", label: "demo build CI", findingId: "ci", repo: "me/demo", via: "button", briefId: 70 });
     expect(pool.query).toHaveBeenCalledWith(
-      "INSERT INTO core.focus(date, item_text, finding_id, repo, chosen_via, brief_id) VALUES ($1,$2,$3,$4,$5,$6)",
-      ["2026-10-14", "Fix CI", "ci", "me/demo", "button", 70],
+      "INSERT INTO core.focus(date, item_text, short_label, finding_id, repo, chosen_via, brief_id) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      ["2026-10-14", "Fix the failing build CI in demo", "demo build CI", "ci", "me/demo", "button", 70],
     );
   });
   it("reads the latest focus for a date, so a later choice replaces an earlier one", async () => {

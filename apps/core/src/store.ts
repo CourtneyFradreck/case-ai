@@ -7,6 +7,7 @@ import type { IntentHistory } from "./intent/rules.js";
 import type { StoredFocus } from "./focus.js";
 import type { PastRun } from "./streaks.js";
 import type { StoredSnoozable } from "./snooze.js";
+import { findingLabel } from "./labels.js";
 
 export async function startRun(source: string, w: Window) {
   const { rows } = await pool.query(
@@ -136,8 +137,8 @@ export async function markMissingReported(repos: string[]) {
 export async function storeFindings(runId: number, findings: Finding[]) {
   for (const f of findings) {
     await pool.query(
-      "INSERT INTO findings(run_id, id, rule, severity, repo, summary, sources) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [runId, f.id, f.rule, f.severity, f.repo, f.summary, JSON.stringify(f.sources)],
+      "INSERT INTO findings(run_id, id, rule, severity, repo, summary, sources, short_label) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [runId, f.id, f.rule, f.severity, f.repo, f.summary, JSON.stringify(f.sources), findingLabel(f)],
     );
   }
 }
@@ -179,23 +180,24 @@ export async function getBriefFocus(briefId: number) {
 }
 
 export interface FocusChoice {
-  date: string; text: string; findingId: string | null; repo: string | null;
+  date: string; text: string; label: string; findingId: string | null; repo: string | null;
   via: "button" | "text" | "command"; briefId: number | null;
 }
 
 // A later choice on the same date replaces the earlier one; rows are kept as history.
 export async function insertFocus(c: FocusChoice) {
   await pool.query(
-    "INSERT INTO core.focus(date, item_text, finding_id, repo, chosen_via, brief_id) VALUES ($1,$2,$3,$4,$5,$6)",
-    [c.date, c.text, c.findingId, c.repo, c.via, c.briefId],
+    "INSERT INTO core.focus(date, item_text, short_label, finding_id, repo, chosen_via, brief_id) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [c.date, c.text, c.label, c.findingId, c.repo, c.via, c.briefId],
   );
 }
 
-export interface FocusRow { item_text: string; repo: string | null; finding_id: string | null; created_at: Date }
+// short_label is null on rows stored before it existed.
+export interface FocusRow { item_text: string; short_label?: string | null; repo: string | null; finding_id: string | null; created_at: Date }
 
 export async function getFocus(date: string) {
   const { rows } = await pool.query<FocusRow>(
-    "SELECT item_text, repo, finding_id, created_at FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    "SELECT item_text, short_label, repo, finding_id, created_at FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
     [date],
   );
   return rows[0];

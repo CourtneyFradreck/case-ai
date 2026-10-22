@@ -4,7 +4,9 @@ import { features, type Feature } from "./features.js";
 import { ZONE } from "./time.js";
 import { esc } from "./render.js";
 import { editMessageReplyMarkup, editMessageText, sendMessage } from "./telegram.js";
-import { chosenKeyboard, cleanFocusText, nextItemsText, parseCommand, parseFocusCallback } from "./focus.js";
+import { chosenKeyboard, cleanFocusText, nextItemsText, parseCommand, parseFocusCallback, storedLabel } from "./focus.js";
+import { clip } from "./labels.js";
+import type { FocusRow } from "./store.js";
 import { parseSnoozeCallback, snoozedText, snoozeList, snoozeUntil, untilText } from "./snooze.js";
 import {
   deleteSnooze, getBriefFocus, getBriefSnoozable, getFocus, insertFocus, listSnoozes, openNextItems, setPendingFocus,
@@ -21,6 +23,12 @@ const today = (now: DateTime) => now.setZone(ZONE).toISODate()!;
 const midnight = (now: DateTime) => now.setZone(ZONE).startOf("day").plus({ days: 1 }).toJSDate();
 // answerCallbackQuery text is limited to 200 characters.
 const notice = (text: string) => text.length > 200 ? `${text.slice(0, 199)}…` : text;
+
+// "Today's focus: <label>", with the full text on a second line when the label shortens it.
+const focusText = (row: FocusRow) => {
+  const label = row.short_label || row.item_text;
+  return `Today's focus: <b>${esc(label)}</b>${label !== row.item_text ? `\n${esc(row.item_text)}` : ""}`;
+};
 
 // Returning answerText shows it as a small notice on the tapped button.
 export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTime = DateTime.now()): Promise<{ answerText?: string } | void> {
@@ -43,13 +51,14 @@ export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTim
   }
   const item = brief.focus[callback.choice - 1];
   if (!item) return { answerText: "That suggestion isn't on this brief." };
-  await insertFocus({ date: today(now), text: item.text, findingId: item.findingId, repo: item.repo, via: "button", briefId: callback.briefId });
+  const label = storedLabel(item);
+  await insertFocus({ date: today(now), text: item.text, label, findingId: item.findingId, repo: item.repo, via: "button", briefId: callback.briefId });
   // A tap after "Something else" means the typed reply is no longer wanted.
   if (query.message) await takePendingFocus(String(query.message.chat.id));
   const messageId = query.message?.message_id ?? (brief.telegram_message_id === null ? undefined : Number(brief.telegram_message_id));
   if (messageId !== undefined) {
     // The focus is stored; a failed edit only leaves the old buttons in place.
-    await editMessageReplyMarkup(messageId, chosenKeyboard(callback.briefId, item.text)).catch((e) => console.error("editMessageReplyMarkup failed", e));
+    await editMessageReplyMarkup(messageId, chosenKeyboard(callback.briefId, label)).catch((e) => console.error("editMessageReplyMarkup failed", e));
   }
   return { answerText: notice(`Focus set: ${item.text}`) };
 }
@@ -109,10 +118,10 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
     const text = cleanFocusText(command.arg);
     if (!text) {
       const current = await getFocus(today(now));
-      await sendMessage(current ? `Today's focus: ${esc(current.item_text)}` : "No focus set for today. Send /focus followed by what you'll work on.");
+      await sendMessage(current ? focusText(current) : "No focus set for today. Send /focus followed by what you'll work on.");
       return;
     }
-    await insertFocus({ date: today(now), text, findingId: null, repo: null, via: "command", briefId: null });
+    await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo: null, via: "command", briefId: null });
     await takePendingFocus(chatId);
     await sendMessage(`Focus for today: ${esc(text)}`);
     return;
@@ -127,6 +136,6 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
   if (!text) return;
   const pending = await takePendingFocus(chatId, now.toJSDate());
   if (!pending) return;
-  await insertFocus({ date: today(now), text, findingId: null, repo: null, via: "text", briefId: pending.briefId });
+  await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo: null, via: "text", briefId: pending.briefId });
   await sendMessage(`Focus for today: ${esc(text)}`);
 }
