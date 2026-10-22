@@ -39,7 +39,7 @@ describe("brief validation", () => {
     if (result.ok) {
       expect(result.brief.yesterday).toEqual([]);
       expect(result.brief.attention[1].text).toBe("Review  now");
-      expect(result.brief.attention[0].text).toBe("Fix  CI (Because  it failed)");
+      expect(result.brief.attention[0].text).toBe("Fix  CI");
       expect(result.brief.note).toBe("CI needs attention");
       expect(result.brief.noteSources).toEqual([high]);
     }
@@ -52,7 +52,7 @@ describe("brief validation", () => {
   it("folds a focus citation into attention without repeating it", () => {
     const high = finding({ severity: "high" });
     const result = validate(output({ yesterday: [], focus: [{ ...item, reason: "It failed" }] }), new Map([["F1", high]]), [high]);
-    expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [{ text: "You made progress. (It failed)", sources: [high] }], focus: [] } });
+    expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [{ text: "You made progress.", sources: [high] }], focus: [] } });
   });
   it("adds an uncited medium finding as a plain attention line and records its ID", () => {
     const medium = finding({ id: "medium", severity: "medium", summary: "New comment from tendai" });
@@ -102,10 +102,12 @@ describe("NEXT.md items in validation (focusButtons)", () => {
   it("treats a brief citing only next_item findings outside focus as empty", () => {
     expect(validate(output({ yesterday: [{ text: "Ship the parser", sources: ["F2"] }] }), aliases, [commits, next], true)).toMatchObject({ ok: false, reason: "empty_brief" });
   });
-  it("still lists a high finding in attention when it is cited only in focus", () => {
+  it("shows a high finding cited in focus only as the suggestion, not again in attention", () => {
     const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
     const result = validate(output({ focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }] }), new Map([...aliases, ["F3", high]]), [commits, high, next], true);
-    expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: "CI failing", sources: [high] }], focus: [{ text: "Fix CI", sources: [high] }] }, addedBack: ["ci"] });
+    expect(result).toMatchObject({ ok: true, brief: { attention: [], focus: [{ text: "Fix CI", sources: [high] }] }, addedBack: [] });
+    const both = validate(output({ attention: [{ text: "CI failing", sources: ["F3"] }], focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }] }), new Map([...aliases, ["F3", high]]), [commits, high, next], true);
+    expect(both).toMatchObject({ ok: true, brief: { attention: [], focus: [{ text: "Fix CI" }] } });
   });
   it("drops focus suggestions with no valid source, no reason left, or only already-suggested findings", () => {
     const high = finding({ id: "ci", severity: "high", summary: "CI failing" });

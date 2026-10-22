@@ -3,7 +3,7 @@ import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
 import type { ValidBrief, ValidFocus, ValidItem } from "./llm/schema.js";
 import { deduplicateFindings, focusOnly, organizeBrief } from "./sections.js";
-import { activityAmount, bulletText, recapKind, recapText } from "./recap-text.js";
+import { activityAmount, bulletText, recapKind, recapText, withoutRepeatedAside } from "./recap-text.js";
 import { closingLine } from "./llm/closing.js";
 import { shortLabel } from "./streaks.js";
 import { plural } from "./plural.js";
@@ -114,18 +114,22 @@ export const codeFilenames = (html: string) =>
     .map((part, i) => i % 2 ? part : part.replace(MD_FILE, (name) => `<code>${name}</code>`))
     .join("");
 
-// Numbered to match the focus buttons.
-const focusLines = (items: ValidFocus[]) =>
-  items.map((i, n) => `${n + 1}. ${esc(bulletText(i.text))} (${esc(i.reason)}) ${modelLinks(i)}`);
+// Numbered to match the focus buttons. Reasons are kept with the brief, not shown.
+const focusLines = (items: ValidFocus[], days?: Map<string, number>) =>
+  items.map((i, n) => `${n + 1}. ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, days)} ${modelLinks(i)}`);
+
+// A finding a suggestion is built on appears there instead of in attention.
+export const suggested = (focus: ValidFocus[]) => new Set(focus.flatMap((i) => i.sources.map((f) => f.id)));
 
 export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}, focus: ValidFocus[] = []): string {
   findings = deduplicateFindings(findings.filter((f) => !focusOnly(f)));
   // Stable sort: keeps the caller's order within a severity (e.g. oldest first from rules)
+  const cited = suggested(focus);
   const attention = findings
-    .filter((f) => f.severity !== "info")
+    .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus))];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -162,9 +166,9 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
   const modelLine = (i: ValidItem) => {
     if (i.sources.length === 1 && i.sources[0].rule === "old_branches") return line(i.sources[0])[0];
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
-    return `${icon[severity]} ${esc(bulletText(i.text))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
+    return `${icon[severity]} ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus))];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

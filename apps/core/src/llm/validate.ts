@@ -17,7 +17,7 @@ export function shorten(text: string, max: number): string {
   return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-–—]+$/, "")}…`;
 }
 
-// With keepFocus, focus is its own section: citing a finding there doesn't stand in for listing it.
+// With keepFocus, focus is its own section, and a finding a suggestion cites is shown there instead of in attention.
 export function validate(raw: string, aliasToFinding: Map<string, Finding>, allFindings: Finding[], keepFocus = false): ValidationResult {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch (error) {
@@ -71,7 +71,7 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
     const note = sources.length === aliases.length ? closingLine(stripUrls(result.data.note), sources) : undefined;
     if (note) { brief.note = note; brief.noteSources = sources; }
   }
-  const cited = new Set([...brief.yesterday, ...brief.attention, ...(keepFocus ? [] : brief.focus)].flatMap((i) => i.sources.map((f) => f.id)));
+  const cited = new Set([...brief.yesterday, ...brief.attention, ...brief.focus].flatMap((i) => i.sources.map((f) => f.id)));
   const sent = new Set([...aliasToFinding.values()].map((f) => f.id));
   for (const f of allFindings) {
     if (focusOnly(f)) continue;

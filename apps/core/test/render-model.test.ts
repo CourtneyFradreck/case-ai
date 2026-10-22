@@ -8,12 +8,13 @@ const w = { start: new Date("2026-10-12T22:00:00Z"), end: new Date("2026-10-13T2
 const empty = (): ValidBrief => ({ yesterday: [], attention: [], focus: [] });
 
 describe("model rendering", () => {
-  it("escapes all model text, including focus reasons and notes", () => {
+  it("escapes all model text and notes, and never shows focus reasons", () => {
     const f = finding();
     const ci = finding({ id: "ci", severity: "high", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
     const text = renderModelBrief({ yesterday: [{ text: "<script> & progress", sources: [f] }], attention: [], focus: [{ text: "Fix <CI>", reason: "It failed & needs <help>", sources: [ci] }], note: "<CI> still needs attention & a fix.", noteSources: [ci] }, [snap()], w, 3800);
     expect(text).toContain("• &lt;script&gt; &amp; progress");
-    expect(text).toContain("🔴 Fix &lt;CI&gt; (It failed &amp; needs &lt;help&gt;)");
+    expect(text).toContain("🔴 Fix &lt;CI&gt; [");
+    expect(text).not.toContain("help");
     expect(text).toContain("<i>&lt;CI&gt; still needs attention &amp; a fix.</i>");
     expect(text).not.toContain("<script>");
   });
@@ -54,23 +55,38 @@ describe("model rendering", () => {
       { text: "Fix CI", reason: "CI is failing", sources: [ci] },
       { text: "Ship <it>", reason: "Open in NEXT.md & active", sources: [next] },
     ];
-    it("renders numbered, escaped suggestions between attention and the recap in the rule-only brief", () => {
-      const text = render([ci, finding()], [], w, 3800, undefined, {}, focus);
+    const pr = finding({ id: "pr", severity: "medium", summary: "PR #4 waiting", sources: [{ label: "PR", url: "https://github.com/me/demo/pull/4" }] });
+    it("renders numbered, escaped suggestions between attention and the recap in the rule-only brief, without reasons", () => {
+      const text = render([ci, pr, finding()], [], w, 3800, undefined, {}, focus);
       expect(text).toContain([
         "<b>Today, I'd suggest</b>",
-        '1. Fix CI (CI is failing) [<a href="https://github.com/me/demo/actions/runs/1">run</a>]',
-        '2. Ship &lt;it&gt; (Open in <code>NEXT.md</code> &amp; active) [<a href="https://github.com/me/demo/blob/main/NEXT.md#L3">NEXT.md</a>]',
+        '1. Fix CI [<a href="https://github.com/me/demo/actions/runs/1">run</a>]',
+        '2. Ship &lt;it&gt; [<a href="https://github.com/me/demo/blob/main/NEXT.md#L3">NEXT.md</a>]',
       ].join("\n"));
+      expect(text).not.toContain("CI is failing");
+      expect(text).not.toContain("active");
       expect(text.indexOf("Here's what needs your attention")).toBeLessThan(text.indexOf("Today, I'd suggest"));
       expect(text.indexOf("Today, I'd suggest")).toBeLessThan(text.indexOf("Here's what you worked on"));
       expect(render([ci, finding()], [], w, 3800, undefined, {}, [])).toBe(render([ci, finding()], [], w, 3800));
     });
+    it("shows a suggested finding in the suggestion only, not again in attention", () => {
+      const text = render([ci, pr, finding()], [], w, 3800, undefined, {}, focus);
+      expect(text).not.toContain("CI failing");
+      expect(text).toContain("🟡 PR #4 waiting");
+    });
+    it("never repeats a fact in brackets on the same line", () => {
+      const repeat = [{ text: "Branch feat/x in me/demo: untouched for 8 days (Untouched for 8 days)", reason: "Untouched", sources: [pr] }];
+      expect(render([finding()], [], w, 3800, undefined, {}, repeat)).toContain("1. Branch feat/x in me/demo: untouched for 8 days [");
+      const twice = [{ text: "Merge or close feat/x (idle 8 days) (Unmerged and untouched for 8 days)", reason: "Untouched", sources: [pr] }];
+      expect(renderModelBrief({ ...empty(), focus: twice }, [], w, 3800, { focus: true })).toContain("1. Merge or close feat/x (idle 8 days) [");
+    });
     it("renders the model's suggestions only with the focus option on", () => {
       const brief = { ...empty(), attention: [{ text: "CI failing", sources: [ci] }], focus };
       const on = renderModelBrief(brief, [], w, 3800, { focus: true });
-      expect(on).toContain("<b>Today, I'd suggest</b>\n1. Fix CI (CI is failing)");
-      expect(on).toContain("2. Ship &lt;it&gt;");
-      expect(on.match(/CI failing/g)).toHaveLength(1);
+      expect(on).toContain("<b>Today, I'd suggest</b>\n1. Fix CI [");
+      expect(on).toContain("2. Ship &lt;it&gt; [");
+      expect(on).not.toContain("CI failing");
+      expect(on).not.toContain("CI is failing");
       const off = renderModelBrief(brief, [], w, 3800);
       expect(off).not.toContain("Today, I'd suggest");
       expect(off).not.toContain("Ship");
@@ -85,9 +101,9 @@ describe(".md filenames", () => {
     expect(text).toContain('⚪ <code>NEXT.md</code> in me/demo hasn\'t changed in 20 days; see <code>README.md</code> &amp; <code>docs/setup.md</code> [<a href="https://github.com/me/demo/blob/main/NEXT.md">NEXT.md</a>]');
   });
   it("wraps them in model text, focus suggestions and the footer", () => {
-    const text = renderModelBrief({ ...empty(), attention: [{ text: "Update NEXT.md, it's stale", sources: [stale] }], focus: [{ text: "Rewrite readme.MD", reason: "Open in NEXT.md", sources: [stale] }] }, [], w, 3800, { focus: true });
+    const text = renderModelBrief({ ...empty(), attention: [{ text: "Update NEXT.md, it's stale", sources: [stale] }], focus: [{ text: "Rewrite readme.MD", reason: "Open in NEXT.md", sources: [finding({ id: "next_r", rule: "next_item" })] }] }, [], w, 3800, { focus: true });
     expect(text).toContain("⚪ Update <code>NEXT.md</code>, it's stale [");
-    expect(text).toContain("1. Rewrite <code>readme.MD</code> (Open in <code>NEXT.md</code>) [");
+    expect(text).toContain("1. Rewrite <code>readme.MD</code> [");
     expect(text).toContain('<a href="https://github.com/me/demo/blob/main/NEXT.md">NEXT.md</a>');
     expect(render([], [], w, 3800, "See NEXT.md")).toContain("<i>See <code>NEXT.md</code></i>");
   });

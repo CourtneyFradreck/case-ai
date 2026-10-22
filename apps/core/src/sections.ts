@@ -49,10 +49,13 @@ export function organizeBrief(brief: ValidBrief, findings: Finding[], keepFocus 
       const sources = i.sources.filter((f) => known.has(f.id));
       return sources.length ? [{ ...i, sources }] : [];
     });
+    // A finding a suggestion is built on appears there only: attention items that cite nothing else go.
+    const cited = new Set(result.focus.flatMap((i) => i.sources.map((f) => f.id)));
+    result.attention = result.attention.filter((i) => !i.sources.every((f) => cited.has(f.id)));
   } else {
     // Older model responses may still contain focus suggestions. Fold them into
-    // attention so a finding never appears in a third section as well.
-    brief.focus.forEach((i) => add({ text: `${i.text} (${i.reason})`, sources: i.sources }, "attention"));
+    // attention so a finding never appears in a third section as well. Reasons stay out of the text.
+    brief.focus.forEach((i) => add({ text: i.text, sources: i.sources }, "attention"));
   }
   brief.yesterday.forEach((i) => add(i, "yesterday"));
   // Most severe cited finding first, as in the rule-only brief; the sort is stable, so the model's order holds within a severity.
