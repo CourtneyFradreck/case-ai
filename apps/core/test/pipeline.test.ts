@@ -235,7 +235,7 @@ describe("intent findings in the pipeline", () => {
       const result = await runBrief("command");
       expect(result.text).toContain("<b>Today, I'd suggest</b>\n1. Ship the parser [");
       expect(result.text).not.toContain("recent commits");
-      expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Ship the parser", reason: "Open in NEXT.md, and demo has recent commits", findingId: "next_abcdef0123", repo: "me/demo" }]);
+      expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Ship the parser", label: "Ship the parser", reason: "Open in NEXT.md, and demo has recent commits", findingId: "next_abcdef0123", repo: "me/demo" }]);
       expect(mocks.storeBrief.mock.calls[0][3]).toBe(result.text);
     });
     it("leaves the brief unchanged and stores no focus when nothing qualifies", async () => {
@@ -253,7 +253,7 @@ describe("intent findings in the pipeline", () => {
       const result = await runBrief("command");
       expect(result.text).toContain("1. Finish the parser [");
       expect(result.text).not.toContain("It is next");
-      expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Finish the parser", reason: "It is next in NEXT.md", findingId: "next_abcdef0123", repo: "me/demo" }]);
+      expect(mocks.storeBriefFocus).toHaveBeenCalledWith(70, [{ text: "Finish the parser", label: "Ship the parser", reason: "It is next in NEXT.md", findingId: "next_abcdef0123", repo: "me/demo" }]);
       expect(mocks.storeBrief.mock.calls[0][3]).toContain("1. Ship the parser");
     });
     it("falls back to rule-picked suggestions when the model fails", async () => {

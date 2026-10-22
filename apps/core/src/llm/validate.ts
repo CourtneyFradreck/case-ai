@@ -59,8 +59,10 @@ export function validate(raw: string, aliasToFinding: Map<string, Finding>, allF
       }
       sources.forEach((f) => focusCited.add(f.id));
     }
+    const label = "label" in item && typeof item.label === "string" ? stripUrls(item.label) : "";
     return [{ text: fit(text, TEXT_MAX, section, index, "text"), sources,
-      ...("reason" in item ? { reason: fit(stripUrls(String(item.reason)), REASON_MAX, section, index, "reason") } : {}) }];
+      ...("reason" in item ? { reason: fit(stripUrls(String(item.reason)), REASON_MAX, section, index, "reason") } : {}),
+      ...(label ? { label } : {}) }];
   });
   brief.yesterday = resolve(result.data.yesterday, "yesterday");
   brief.attention = resolve(result.data.attention, "attention");
