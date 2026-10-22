@@ -7,13 +7,14 @@ const mocks = vi.hoisted(() => ({
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
   features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false },
   previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(), storeBriefSentText: vi.fn(),
+  parked: new Set<string>(),
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
-vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, previousBriefAt: mocks.previousBriefAt, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable, storeBriefSentText: mocks.storeBriefSentText }));
+vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, previousBriefAt: mocks.previousBriefAt, snoozedFocusIds: async () => mocks.parked, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable, storeBriefSentText: mocks.storeBriefSentText }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 import { runBrief } from "../src/pipeline.js";
@@ -304,6 +305,14 @@ describe("intent findings in the pipeline", () => {
       const model = await runBrief("command");
       expect(model.text).toContain(line);
       expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("parser");
+    });
+    it("leaves a snoozed focus's finding out of the suggestions", async () => {
+      active();
+      mocks.parked = new Set(["next_abcdef0123"]);
+      const result = await runBrief("command");
+      mocks.parked = new Set();
+      expect(result.text).not.toContain("Today, I'd suggest");
+      expect(mocks.storeBriefFocus).not.toHaveBeenCalled();
     });
     it("sends no buttons when there are no suggestions", async () => {
       mocks.env.delivery = "core";

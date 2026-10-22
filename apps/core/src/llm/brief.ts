@@ -10,9 +10,10 @@ import { validate, type DropReason, type Shortened } from "./validate.js";
 // previousFocus is rendered at the top of the recap and never sent to the model.
 // collapsed and days (features.streaks) are rendered in code; collapsed findings are never sent.
 // done (likely finished NEXT.md items) is rendered in code and never sent.
+// parked: findings behind a snoozed focus; the model's suggestions built only on them are dropped.
 export interface ModelBriefConfig extends InputConfig {
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
-  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[];
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; parked?: Set<string>;
 }
 export interface BriefAudit {
   brief: AliasBrief | null;
@@ -67,7 +68,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
-    const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus);
+    const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus, cfg.parked);
     if (result.ok) { meta.model = null; return complete(result); }
     return fallbackMeta(null, result.reason, result.detail);
   }
@@ -82,7 +83,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
       if (response.outputTokens !== undefined) meta.outputTokens = (meta.outputTokens ?? 0) + response.outputTokens;
       meta.json.raw = response.raw;
       meta.json.responses!.push(response.raw);
-      const result = validate(response.raw, input.aliasToFinding, findings, cfg.focus);
+      const result = validate(response.raw, input.aliasToFinding, findings, cfg.focus, cfg.parked);
       if (result.ok) return complete(result);
       fallbackReason = result.reason;
       fallbackDetail = result.detail ?? result.reason;

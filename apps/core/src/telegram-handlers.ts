@@ -3,13 +3,13 @@ import { env } from "./env.js";
 import { features, type Feature } from "./features.js";
 import { ZONE } from "./time.js";
 import { esc } from "./render.js";
-import { editMessageReplyMarkup, editMessageText, sendMessage } from "./telegram.js";
-import { chosenKeyboard, cleanFocusText, nextItemsText, parseCommand, parseFocusCallback, storedLabel } from "./focus.js";
+import { editMessageReplyMarkup, editMessageText, sendMessage, type InlineKeyboardMarkup } from "./telegram.js";
+import { chosenKeyboard, cleanFocusText, doneKeyboard, FOCUS_SNOOZE_DAYS, focusAck, focusKeyboard, focusMenu, nextItemsText, parseCommand, parseFocusCallback, storedLabel } from "./focus.js";
 import { clip } from "./labels.js";
 import type { FocusRow } from "./store.js";
 import { parseSnoozeCallback, snoozedText, snoozeList, snoozeUntil, untilText } from "./snooze.js";
 import {
-  deleteSnooze, getBriefFocus, getBriefSnoozable, getFocus, insertFocus, listSnoozes, openNextItems, setPendingFocus,
+  deleteSnooze, getBriefFocus, getBriefSnoozable, getFocus, insertFocus, listSnoozes, openNextItems, setFocusStatus, setPendingFocus,
   takePendingFocus, upsertSnooze,
 } from "./store.js";
 import type { TelegramCallbackQuery, TelegramMessage } from "./telegram-update.js";
@@ -40,14 +40,43 @@ export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTim
   if (!brief?.focus?.length) return { answerText: "That brief has no suggestions." };
   if (today(DateTime.fromJSDate(brief.created_at)) !== today(now)) return { answerText: "That brief is from an earlier day. Use /focus to set today's focus." };
 
-  if (callback.choice === "chosen") {
-    const current = await getFocus(today(now));
-    return current ? { answerText: notice(`Focus: ${current.item_text}`) } : undefined;
-  }
+  const messageId = query.message?.message_id ?? (brief.telegram_message_id === null ? undefined : Number(brief.telegram_message_id));
+  // Choices are stored first; a failed edit only leaves the old buttons in place.
+  const setButtons = async (markup: InlineKeyboardMarkup) => {
+    if (messageId !== undefined) await editMessageReplyMarkup(messageId, markup).catch((e) => console.error("editMessageReplyMarkup failed", e));
+  };
+  const suggestions = () => setButtons(focusKeyboard(callback.briefId, brief.focus!.length));
+
   if (callback.choice === "other") {
     await setPendingFocus(String(query.message?.chat.id ?? env.telegramChatId), callback.briefId, midnight(now));
     await sendMessage("What's your focus today? Reply with a short message.");
     return;
+  }
+  if (callback.choice === "change") {
+    await suggestions();
+    return { answerText: "Pick another" };
+  }
+  if (typeof callback.choice !== "number") {
+    const current = await getFocus(today(now));
+    // The focus was snoozed, or changed by /focus since: offer the suggestions again.
+    if (!current) {
+      await suggestions();
+      return { answerText: "No focus set for today" };
+    }
+    const label = current.short_label || clip(current.item_text);
+    if (callback.choice === "chosen") {
+      await setButtons(focusMenu(callback.briefId));
+      return { answerText: notice(`Focus: ${label}`) };
+    }
+    if (callback.choice === "done") {
+      await setFocusStatus(today(now), "done");
+      await setButtons(doneKeyboard(callback.briefId, label));
+      return { answerText: "Marked done" };
+    }
+    const until = snoozeUntil(now, FOCUS_SNOOZE_DAYS);
+    await setFocusStatus(today(now), "snoozed", until);
+    await suggestions();
+    return { answerText: notice(`Snoozed until ${untilText(until)}. Pick another?`) };
   }
   const item = brief.focus[callback.choice - 1];
   if (!item) return { answerText: "That suggestion isn't on this brief." };
@@ -55,12 +84,9 @@ export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTim
   await insertFocus({ date: today(now), text: item.text, label, findingId: item.findingId, repo: item.repo, via: "button", briefId: callback.briefId });
   // A tap after "Something else" means the typed reply is no longer wanted.
   if (query.message) await takePendingFocus(String(query.message.chat.id));
-  const messageId = query.message?.message_id ?? (brief.telegram_message_id === null ? undefined : Number(brief.telegram_message_id));
-  if (messageId !== undefined) {
-    // The focus is stored; a failed edit only leaves the old buttons in place.
-    await editMessageReplyMarkup(messageId, chosenKeyboard(callback.briefId, label)).catch((e) => console.error("editMessageReplyMarkup failed", e));
-  }
-  return { answerText: notice(`Focus set: ${item.text}`) };
+  await setButtons(chosenKeyboard(callback.briefId, label));
+  await sendMessage(focusAck(label));
+  return { answerText: "Focus set for today" };
 }
 
 async function onSnoozeCallback(query: TelegramCallbackQuery, now: DateTime): Promise<{ answerText?: string } | void> {
@@ -123,7 +149,7 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
     }
     await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo: null, via: "command", briefId: null });
     await takePendingFocus(chatId);
-    await sendMessage(`Focus for today: ${esc(text)}`);
+    await sendMessage(focusAck(clip(text)));
     return;
   }
   if (command?.name === "next") {
@@ -137,5 +163,5 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
   const pending = await takePendingFocus(chatId, now.toJSDate());
   if (!pending) return;
   await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo: null, via: "text", briefId: pending.briefId });
-  await sendMessage(`Focus for today: ${esc(text)}`);
+  await sendMessage(focusAck(clip(text)));
 }

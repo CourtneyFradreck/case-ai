@@ -193,14 +193,37 @@ export async function insertFocus(c: FocusChoice) {
 }
 
 // short_label is null on rows stored before it existed.
-export interface FocusRow { item_text: string; short_label?: string | null; repo: string | null; finding_id: string | null; created_at: Date }
+export interface FocusRow {
+  item_text: string; short_label?: string | null; repo: string | null; finding_id: string | null; created_at: Date;
+  status?: "active" | "done" | "snoozed";
+}
 
+// The day's focus is its latest choice, unless that choice was snoozed.
 export async function getFocus(date: string) {
   const { rows } = await pool.query<FocusRow>(
-    "SELECT item_text, short_label, repo, finding_id, created_at FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    "SELECT item_text, short_label, repo, finding_id, created_at, status FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
     [date],
   );
+  return rows[0]?.status === "snoozed" ? undefined : rows[0];
+}
+
+// Marks the day's latest choice done or snoozed, and returns it.
+export async function setFocusStatus(date: string, status: "done" | "snoozed", until: Date | null = null) {
+  const { rows } = await pool.query<FocusRow>(
+    `UPDATE core.focus SET status=$2, status_until=$3
+     WHERE id = (SELECT id FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1)
+     RETURNING item_text, short_label, repo, finding_id, created_at, status`,
+    [date, status, until],
+  );
   return rows[0];
+}
+
+// Findings behind a snoozed focus, kept out of suggestions until their snooze ends.
+export async function snoozedFocusIds(now: Date = new Date()) {
+  const { rows } = await pool.query<{ finding_id: string }>(
+    "SELECT DISTINCT finding_id FROM core.focus WHERE status='snoozed' AND status_until > $1 AND finding_id IS NOT NULL", [now],
+  );
+  return new Set(rows.map((r) => r.finding_id));
 }
 
 export async function setPendingFocus(chatId: string, briefId: number, expiresAt: Date) {

@@ -116,7 +116,7 @@ describe("focus buttons", () => {
   });
   it("keeps callback data inside Telegram's 64-byte limit for any brief ID", () => {
     const id = 999_999_999_999_999;
-    for (const choice of [3, "other", "chosen"] as const) {
+    for (const choice of [3, "other", "chosen", "done", "snooze", "change"] as const) {
       const data = focusCallbackData(id, choice);
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
       expect(parseFocusCallback(data)).toEqual({ briefId: id, choice });
@@ -214,6 +214,10 @@ describe("yesterday's focus", () => {
     const snaps = [snap({ commits: [commit("a", "2026-10-13T09:00:00Z", "feat/m3-intent"), commit("b", "2026-10-13T16:58:00Z", "feat/m3-intent")] })];
     const [f] = yesterdayFocus(evening, snaps, focusPeriod(new Date("2026-10-13T17:00:00Z"), recap, NOW));
     expect(f.summary).toBe("Yesterday's focus: Ship the parser. 2 commits in demo yesterday");
+  });
+  it("says when the focus was marked done", () => {
+    const [f] = yesterdayFocus({ ...row("me/demo"), short_label: "the parser", status: "done" }, [snap()], period);
+    expect(f.summary).toBe("Yesterday's focus: the parser, marked done. No commits in demo yesterday");
   });
   it("says when the repo had no commits over the period", () => {
     const [f] = yesterdayFocus(row("me/demo"), [snap({ commits: [commit("a", "2026-10-12T05:00:00Z")] })], period);

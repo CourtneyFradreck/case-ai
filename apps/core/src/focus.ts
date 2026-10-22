@@ -89,19 +89,41 @@ export function storedFocus(items: ValidFocus[]): StoredFocus[] {
 }
 
 // Callback data stays far below Telegram's 64-byte limit: "f:<briefId>:<n>", never the suggestion text.
-// "x" is "Something else"; "ok" is the button left after a choice, which does nothing.
-export type FocusCallback = { briefId: number; choice: number | "other" | "chosen" };
-const CALLBACK = /^f:(\d{1,15}):([1-9]|x|ok)$/;
+// "x" is "Something else"; "ok" is the button left after a choice, which opens Done / Snooze / Change
+// ("d", "z", "c").
+export type FocusCallback = { briefId: number; choice: number | FocusAction };
+type FocusAction = "other" | "chosen" | "done" | "snooze" | "change";
+const CODES: Record<FocusAction, string> = { other: "x", chosen: "ok", done: "d", snooze: "z", change: "c" };
+const ACTIONS = Object.fromEntries(Object.entries(CODES).map(([action, code]) => [code, action])) as Record<string, FocusAction>;
+const CALLBACK = /^f:(\d{1,15}):([1-9]|x|ok|d|z|c)$/;
 
 export const focusCallbackData = (briefId: number, choice: FocusCallback["choice"]) =>
-  `f:${briefId}:${choice === "other" ? "x" : choice === "chosen" ? "ok" : choice}`;
+  `f:${briefId}:${typeof choice === "number" ? choice : CODES[choice]}`;
 
 export function parseFocusCallback(data: string | undefined): FocusCallback | undefined {
   const m = CALLBACK.exec(data ?? "");
   if (!m) return;
-  const choice = m[2] === "x" ? "other" : m[2] === "ok" ? "chosen" : Number(m[2]);
-  return { briefId: Number(m[1]), choice };
+  return { briefId: Number(m[1]), choice: ACTIONS[m[2]] ?? Number(m[2]) };
 }
+
+// What the chosen button opens.
+export function focusMenu(briefId: number): InlineKeyboardMarkup {
+  return { inline_keyboard: [[
+    { text: "✅ Done", callback_data: focusCallbackData(briefId, "done") },
+    { text: "💤 Snooze", callback_data: focusCallbackData(briefId, "snooze") },
+    { text: "🔄 Change", callback_data: focusCallbackData(briefId, "change") },
+  ]] };
+}
+
+// After Done the button says so, and still opens the menu.
+export const doneKeyboard = (briefId: number, label: string): InlineKeyboardMarkup =>
+  ({ inline_keyboard: [[{ text: `☑️ Done: ${clip(label)}`, callback_data: focusCallbackData(briefId, "chosen") }]] });
+
+// A snoozed focus stays out of suggestions for this many days.
+export const FOCUS_SNOOZE_DAYS = 3;
+
+// The short reply to a focus being set.
+export const focusAck = (label: string) => `Got it, ${esc(label)} today. I'll check in tomorrow.`;
 
 export function focusKeyboard(briefId: number, count: number): InlineKeyboardMarkup {
   return { inline_keyboard: [
@@ -162,12 +184,12 @@ export function focusPeriod(previousBriefAt: Date | undefined, recap: Window, no
 
 // An info finding for yesterday's focus: what it was and how many commits its repo had over the period,
 // on every branch. It leads the recap and is never sent to the model.
-export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
+export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
   if (!focus) return [];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
   // Without a readable repo there is nothing to check commits against.
-  const name = focus.short_label || focus.item_text;
+  const name = `${focus.short_label || focus.item_text}${focus.status === "done" ? ", marked done" : ""}`;
   if (!snapshot) return [{ ...base, repo: focus.repo ?? "", summary: `Yesterday's focus: ${name}`, sources: [] }];
   const commits = snapshot.commits.filter((c) => new Date(c.date) >= period.since).sort((a, b) => b.date.localeCompare(a.date));
   const repo = snapshot.repo.split("/").pop()!;
