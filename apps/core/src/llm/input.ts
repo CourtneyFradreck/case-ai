@@ -14,7 +14,7 @@ Rules:
 Sections:
 - "attention": unfinished work and concrete problems (failing CI, waiting PRs, comments from other people, stale branches, other open issues). Most important first. Put any useful next step directly in the item, with its concrete reason.
 - "yesterday": the recap for the supplied period, which may be yesterday, the weekend or the last active weekday. Describe only info findings here. Return one item per finding, with a single source alias; never combine repos or branches. Code groups items under short repo sub-headings, orders repos by activity, then commits, PRs and issues. Do not repeat repo names inside bullets.
-- Start each bullet with a verb or count, never "You". For multiple commits: "15 commits on feat/m2-model-brief, including fixing model settings fallbacks and personalizing brief greetings." Pick the 2-3 most meaningful highlights per branch from the provided commit messages. For a single commit: "A commit on <branch>: <summary>." For a docs-only change: "A README update on main." or "A documentation update on <branch>: <summary>." Never say "1 commit".
+- Start each bullet with a verb or count, never "You". For multiple commits, name the 2-3 themes of the provided commit messages in a few plain words each: "36 commits on feat/m3-intent, covering focus buttons, the noon greeting and test cleanup." Never quote or paste commit messages. For a single commit: "A commit on <branch>: <summary>." For a docs-only change: "A README update on main." or "A documentation update on <branch>: <summary>." Never say "1 commit".
 - PR and issue bullets use the exact supplied number and title: 'Merged PR #2 "<title>".' or 'Opened issue #1 "<title>".' Strip conventional-commit prefixes such as feat:, fix:, docs: and scoped forms from quoted titles. Code adds the existing source links at the end.
 - Each issue, PR or other item belongs in only one section. A new, still-open issue or PR belongs in the recap. If it has a concrete attention reason (stale, review requested, failing CI or an unanswered comment), put it in attention and omit it from the recap. Never repeat it as a suggestion.
 - "focus": return an empty list. The brief has two sections: attention first, then recap.
@@ -49,7 +49,9 @@ export function buildInput(findings: Finding[], snaps: RepoSnapshot[], windowLab
     const alias = `F${aliasToFinding.size + 1}`;
     aliasToFinding.set(alias, f);
     lines.push([alias, f.severity, f.rule, f.repo, f.summary].map(dataText).join(" | "));
-    for (const detail of f.details?.slice(0, 3) ?? []) lines.push(`    - ${dataText(detail)}`);
+    // A branch's commit subjects (up to 30) let the model name its themes.
+    const details = f.activity?.kind === "commits" ? f.activity.messages : f.details?.slice(0, 3) ?? [];
+    for (const detail of details) lines.push(`    - ${dataText(detail)}`);
   }
   const name = cfg.userName?.trim() || "the user";
   const system = (cfg.focus ? FOCUS_PROMPT : SYSTEM_PROMPT).replaceAll("the user", () => name);

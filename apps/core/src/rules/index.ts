@@ -98,6 +98,8 @@ export function oldBranches(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig): 
   }];
 }
 
+const aheadBy = (s: RepoSnapshot, branch: string) => s.branches.find((b) => b.name === branch)?.aheadBy ?? 0;
+
 export function recapCommits(s: RepoSnapshot): Finding[] {
   const byBranch = new Map<string, typeof s.commits>();
   for (const c of s.commits) byBranch.set(c.branch, [...(byBranch.get(c.branch) ?? []), c]);
@@ -120,7 +122,9 @@ export function recapCommits(s: RepoSnapshot): Finding[] {
       repo: s.repo,
       summary: `${plural(commits.length, "commit")} on ${branch} in ${s.repo}`,
       details: sorted.slice(-3).map((c) => c.message),
-      activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-3).map((c) => c.message) },
+      // Up to 30 subjects, enough to find a busy day's themes; the branch's total unmerged commits for "so far".
+      activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-30).map((c) => c.message),
+        ...(branch !== s.defaultBranch && aheadBy(s, branch) ? { branchTotal: aheadBy(s, branch) } : {}) },
       sources: [{ label: base ? "diff" : "commit", url }],
     };
   });

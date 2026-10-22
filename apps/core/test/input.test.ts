@@ -73,7 +73,8 @@ describe("model input", () => {
     const input = buildInput([publicFinding], snaps, "over the weekend", { modelIncludePrivate: false, userName: "Courtney" });
     expect(input.user).toContain("Recap period: over the weekend");
     expect(input.system).toContain("capable personal assistant talking to Courtney in second person");
-    expect(input.system).toContain("2-3 most meaningful highlights per branch");
+    expect(input.system).toContain("name the 2-3 themes of the provided commit messages");
+    expect(input.system).toContain("Never quote or paste commit messages");
     expect(input.system).toContain('Start each bullet with a verb or count, never "You"');
     expect(input.system).toContain("Do not repeat repo names inside bullets");
     expect(input.system).toContain('Cite that finding\'s aliases in "noteSources"');

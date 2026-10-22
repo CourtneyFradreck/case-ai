@@ -3,7 +3,7 @@ export type Severity = "high" | "medium" | "low" | "info";
 export interface Source { label: string; url: string }
 
 export type Activity =
-  | { kind: "commits"; count: number; branch: string; messages: string[] }
+  | { kind: "commits"; count: number; branch: string; messages: string[]; branchTotal?: number }
   | { kind: "pr" | "issue"; action: "Opened" | "Merged" | "Closed"; number: number; title: string };
 
 export interface Finding {
