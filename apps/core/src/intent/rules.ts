@@ -1,6 +1,8 @@
 import { fid } from "../id.js";
 import { byPriority, daysSince } from "../rules/order.js";
 import type { Finding, RepoSnapshot } from "../types.js";
+import { itemLabel } from "../labels.js";
+import { mergedMatch } from "./done.js";
 
 export interface IntentConfig {
   newRepoDays: number;
@@ -14,17 +16,31 @@ export type IntentHistory = Map<string, { sha: string; openIds: Set<string> }>;
 
 type OkNext = Extract<RepoSnapshot["next"], { status: "ok" }>;
 
+// An open item a merged PR likely finished is never suggested. One line asks to tick it off instead;
+// CASE stays read-only on NEXT.md.
 export function nextItems(s: RepoSnapshot, next: OkNext): Finding[] {
-  return next.items.filter((i) => i.state === "open").map((i) => ({
-    id: `next_${i.id}`,
-    rule: "next_item",
-    severity: "info",
-    repo: s.repo,
-    summary: `Next in ${s.repo}: ${i.text}`,
-    ...(i.section ? { details: [i.section] } : {}),
-    sources: [{ label: "NEXT.md", url: `${next.url}#L${i.line}` }],
-    intent: { itemId: i.id, section: i.section, state: "open" },
-  }));
+  return next.items.filter((i) => i.state === "open").map((i): Finding => {
+    const pr = mergedMatch(i.text, s);
+    if (pr) return {
+      id: fid("next_likely_done", s.repo, i.id),
+      rule: "next_likely_done",
+      severity: "low",
+      repo: s.repo,
+      summary: `Looks like "${itemLabel(i.text)}" is done (PR #${pr.number} merged). Tick it off in NEXT.md?`,
+      sources: [{ label: "PR", url: pr.url }, { label: "NEXT.md", url: `${next.url}#L${i.line}` }],
+      intent: { itemId: i.id, section: i.section, state: "open" },
+    };
+    return {
+      id: `next_${i.id}`,
+      rule: "next_item",
+      severity: "info",
+      repo: s.repo,
+      summary: `Next in ${s.repo}: ${i.text}`,
+      ...(i.section ? { details: [i.section] } : {}),
+      sources: [{ label: "NEXT.md", url: `${next.url}#L${i.line}` }],
+      intent: { itemId: i.id, section: i.section, state: "open" },
+    };
+  });
 }
 
 export function nextDone(s: RepoSnapshot, next: OkNext, history: IntentHistory): Finding[] {

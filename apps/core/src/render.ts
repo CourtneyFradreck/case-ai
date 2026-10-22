@@ -32,9 +32,10 @@ function line(f: Finding, days?: Map<string, number>): string[] {
 // previousFocus: the yesterday_focus finding, shown at the top of the recap in code on both paths.
 // collapsed and days (features.streaks): repeated findings for the "Still open, unchanged" line, and
 // how many scheduled runs in a row each repeated high finding has appeared.
+// done (features.focusButtons): NEXT.md items a merged PR likely finished, one line each at the end of attention.
 export interface GreetingOptions {
   userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
-  collapsed?: Finding[]; days?: Map<string, number>;
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[];
 }
 
 const dayTag = (findings: Finding[], days?: Map<string, number>) => {
@@ -89,6 +90,10 @@ function sections(attention: string[], recap: string[], w: Window, focus: string
   return parts;
 }
 
+// Written by code on both paths; never sent to the model.
+const doneLines = (findings: Finding[] = []) =>
+  findings.map((f) => `☑️ ${esc(f.summary)} [${f.sources.map(link).join(", ")}]`);
+
 const leadLines = (findings: Finding[] = []) =>
   findings.map((f) => `• ${esc(f.summary)}.${f.sources.length ? ` [${f.sources.map(link).join(", ")}]` : ""}`);
 
@@ -120,7 +125,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info")
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus), leadLines(greeting.previousFocus))];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -159,7 +164,7 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
     return `${icon[severity]} ${esc(bulletText(i.text))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed)], recapLines(brief.yesterday, true), w, focusLines(brief.focus), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus), leadLines(greeting.previousFocus))];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

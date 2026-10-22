@@ -9,9 +9,10 @@ import { validate, type DropReason, type Shortened } from "./validate.js";
 
 // previousFocus is rendered at the top of the recap and never sent to the model.
 // collapsed and days (features.streaks) are rendered in code; collapsed findings are never sent.
+// done (likely finished NEXT.md items) is rendered in code and never sent.
 export interface ModelBriefConfig extends InputConfig {
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
-  collapsed?: Finding[]; days?: Map<string, number>;
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[];
 }
 export interface BriefAudit {
   brief: AliasBrief | null;
@@ -63,7 +64,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.shortened = result.shortened;
     meta.json.addedBack = result.addedBack;
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days }), focus: result.brief.focus };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus);
