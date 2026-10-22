@@ -172,6 +172,10 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
         number: p.number, title: p.title, url: p.html_url,
         draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
       })),
+      recentlyMerged: closed.filter((p) => p.merged_at).map((p) => ({
+        number: p.number, title: p.title, url: p.html_url,
+        draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
+      })),
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
         .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state })),

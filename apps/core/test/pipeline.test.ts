@@ -291,6 +291,18 @@ describe("intent findings in the pipeline", () => {
       await runBrief("command");
       expect(mocks.getFocus).not.toHaveBeenCalled();
     });
+    it("asks to tick off an item a merged PR finished instead of suggesting it, on both paths", async () => {
+      const merged = { number: 3, title: "feat: ship the parser", url: "https://github.com/me/demo/pull/3", draft: false, headRef: "feat/parser", updatedAt: "2026-10-12T08:00:00Z", mergedAt: "2026-10-12T08:00:00Z" };
+      mocks.collectAll.mockResolvedValue([snap({ next, recentlyMerged: [merged], branches: [{ name: "main", sha: "abc", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: "https://github.com/me/demo/tree/main" }] })]);
+      const line = '☑️ Looks like "Ship the parser" is done (PR #3 merged). Tick it off in <code>NEXT.md</code>? [<a href="https://github.com/me/demo/pull/3">PR</a>, <a href="https://github.com/me/demo/blob/main/NEXT.md#L2">NEXT.md</a>]';
+      const rules = await runBrief("command");
+      expect(rules.text).toContain(`<b>Here's what needs your attention</b>\n${line}`);
+      expect(rules.text).not.toContain("Today, I'd suggest");
+      mocks.env.briefMode = "all";
+      const model = await runBrief("command");
+      expect(model.text).toContain(line);
+      expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("parser");
+    });
     it("sends no buttons when there are no suggestions", async () => {
       mocks.env.delivery = "core";
       mocks.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 42 } });

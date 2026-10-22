@@ -56,6 +56,7 @@ export function oct15Fixture() {
     commits: [collectedCommit(direct, "main"), ...[...featureCommits].reverse().map((c) => collectedCommit(c, feature))],
     openPrs: [], openedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, createdAt: at, updatedAt: at }],
     mergedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
+    recentlyMerged: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
     newIssues: [{ number: 1, title: issue.title, url: issue.html_url, createdAt: at, state: "open" }],
     closedIssues: [], comments: [], openIssueCount: 1,
     branches: branches.map((b) => ({ name: b.name, sha: b.commit.sha, lastCommitAt: b.name === "main" ? direct.commit.committer.date : featureCommits.at(-1)!.commit.committer.date, aheadBy: b.name === "main" ? 0 : 9, url: `${url}/tree/${b.name}` })),

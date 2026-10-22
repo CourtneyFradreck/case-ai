@@ -48,6 +48,7 @@ export interface RepoSnapshot {
   openPrs: Pr[];
   openedPrs: Pr[];
   mergedPrs: Pr[];
+  recentlyMerged?: Pr[];  // merged PRs among the 50 most recently updated closed ones, any date
   newIssues: Issue[];
   closedIssues: ClosedIssue[];
   comments: IssueComment[];
