@@ -1,6 +1,8 @@
 import type { Finding, RepoSnapshot } from "./types.js";
 import type { ValidFocus } from "./llm/schema.js";
-import { byPriority } from "./rules/order.js";
+import { byPriority, daysSince } from "./rules/order.js";
+import { datePassed } from "./intent/dates.js";
+import { relatesTo } from "./intent/done.js";
 import { plural } from "./plural.js";
 import { lastCommitDays, type IntentConfig } from "./intent/rules.js";
 import { bulletText } from "./recap-text.js";
@@ -26,16 +28,35 @@ function reason(f: Finding): string {
 
 const text = (f: Finding) => f.rule === "next_item" ? f.summary.replace(`Next in ${f.repo}: `, "") : f.summary;
 
+// A NEXT.md item whose date has passed, with nothing recent about it: no commit or recently touched
+// branch in its repo relates to it, and it wasn't yesterday's focus.
+export function overdue(f: Finding, snaps: RepoSnapshot[], now: Date, cfg: Pick<IntentConfig, "activeRepoDays">, focusFindingId?: string | null): boolean {
+  const item = text(f);
+  if (!datePassed(item, now) || f.id === focusFindingId) return false;
+  const s = snaps.find((x) => x.repo === f.repo && !x.error);
+  const recent = !!s && (s.commits.some((c) => relatesTo(item, c.message)) ||
+    s.branches.some((b) => b.lastCommitAt && daysSince(b.lastCommitAt, now) <= cfg.activeRepoDays && relatesTo(item, b.name.replace(/[/_-]+/g, " "))));
+  return !recent;
+}
+
+// Open NEXT.md items in the order to suggest them: overdue ones last, NEXT.md order otherwise.
+export const rankNext = (next: Finding[], snaps: RepoSnapshot[], now: Date, cfg: Pick<IntentConfig, "activeRepoDays">, focusFindingId?: string | null) => {
+  const late = new Set(next.filter((f) => overdue(f, snaps, now, cfg, focusFindingId)).map((f) => f.id));
+  return [...next].sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)));
+};
+
 // Focus suggestions without the model: high findings, then medium, then open NEXT.md
-// items from repos with commits in the last activeRepoDays (most recently active first).
+// items from repos with commits in the last activeRepoDays (most recently active first),
+// with overdue items after the rest.
 export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnapshot[], now: Date,
-                          cfg: Pick<IntentConfig, "activeRepoDays" | "ignoreBranchPrefixes">): ValidFocus[] {
+                          cfg: Pick<IntentConfig, "activeRepoDays" | "ignoreBranchPrefixes">, focusFindingId?: string | null): ValidFocus[] {
   const attention = findings.filter((f) => f.severity === "high" || f.severity === "medium").sort(byPriority);
   const active = new Map(snaps.filter((s) => !s.error).map((s) => [s.repo, lastCommitDays(s, now, cfg)] as const)
     .filter(([, days]) => days <= cfg.activeRepoDays));
+  const late = new Set(next.filter((f) => overdue(f, snaps, now, cfg, focusFindingId)).map((f) => f.id));
   const planned = next.filter((f) => f.rule === "next_item" && active.has(f.repo))
     // Stable sort keeps NEXT.md order within a repo.
-    .sort((a, b) => active.get(a.repo)! - active.get(b.repo)!);
+    .sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)) || active.get(a.repo)! - active.get(b.repo)!);
   return [...attention, ...planned].slice(0, MAX_FOCUS).map((f) => ({ text: text(f), reason: reason(f), sources: [f] }));
 }
 
