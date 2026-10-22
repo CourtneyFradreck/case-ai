@@ -1,7 +1,7 @@
 ## M2 rollout
 
-- [ ] Merge M2 after M1 trial ends (Mon 19 Oct)
-- [ ] Run CASE_BRIEF_MODE=command for 3 days; check logged dropped / fallbackReason
+- [x] Merge M2 after M1 trial ends (Mon 19 Oct)
+- [x] Run CASE_BRIEF_MODE=command for 3 days; check logged dropped / fallbackReason
 - [ ] Switch to CASE_BRIEF_MODE=all
 
 ## M3 Intent
@@ -16,8 +16,8 @@
 
 ## M3 rollout
 
-- [ ] Set CASE_DELIVERY=core with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, so briefs carry buttons
-- [ ] Turn on features.focusButtons and redeploy; check the first brief's suggestions, buttons and /next
+- [x] Set CASE_DELIVERY=core with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, so briefs carry buttons
+- [x] Turn on features.focusButtons and redeploy; check the first brief's suggestions, buttons and /next
 - [ ] Compare model suggestions with the rule-picked ones in rule_text for a week
 
 ## Less repetition
@@ -26,8 +26,8 @@
 - [x] streaks: collapse medium/low repeats into one "Still open, unchanged" line; "day N" on high findings
 - [x] snooze: snoozes table, Snooze… button with 3/7-day choices, /snoozed and /unsnooze
 - [x] quietMornings: short "Nothing has moved" message when attention and activity are unchanged
-- [ ] Turn on streaks (set "streaks": true in apps/core/config.json, redeploy) and watch a week of briefs
-- [ ] Turn on snooze (needs CASE_DELIVERY=core for the buttons; /snoozed works either way)
+- [x] Turn on streaks (set "streaks": true in apps/core/config.json, redeploy) and watch a week of briefs
+- [x] Turn on snooze (needs CASE_DELIVERY=core for the buttons; /snoozed works either way)
 - [ ] Turn on quietMornings once streaks look right; check briefs.sent_text against text on quiet days
 
 ## 22 Oct brief fixes
@@ -40,5 +40,24 @@
 - [x] short_label (≤40 chars) on findings, NEXT.md items and focus rows (migration 011)
 - [x] Focus taps: "Focus set for today" notice and a one-line reply; Done / Snooze / Change on the chosen button (migration 012)
 - [x] Old unmerged branches line weekly (oldBranchesShow, oldBranchesWeekday)
-- [ ] Redeploy (migrations 011 and 012 run on start) and check tomorrow's brief: tick-off line for M2, yesterday's count, labels on the chosen button
+- [x] Redeploy (migrations 011 and 012 run on start) and check tomorrow's brief: tick-off line for M2, yesterday's count, labels on the chosen button
+- [ ] Check the 07:00 brief on Fri 23 Oct: tick-off line gone once M2 is ticked, yesterday's count, labels on the chosen button, old-branches line absent
 - [ ] Try Done, Snooze and Change on the chosen button
+
+## Follow-ups from the 22 Oct deploy check
+
+- [ ] Rewrite NEXT.md-derived suggestions as plain actions instead of quoting the raw item text
+- [ ] Within one NEXT.md section, suggest only the first open item (sections are ordered steps)
+- [ ] Yesterday's focus line: say when the focused item is done (e.g. "Done, PR #3"), instead of only counting commits
+- [ ] Yesterday-line [commit] link should be a compare link (or dropped) when it covers many commits
+- [ ] Check why the open-issue line disappeared after #1 closed and #4 opened
+- [ ] Confirm a manual /brief doesn't become the anchor for the next scheduled brief's yesterday window
+- [ ] Done detection: keyword-only matches show the tick-off line but don't suppress the suggestion; add per-repo stopwords (repo name, words common to that repo's PRs) for matching and commit themes
+
+## M4 Non-code (next)
+
+Starts after the M3 trial in #4 ends.
+
+- [ ] /log command writing to activity_logs
+- [ ] Evening check-in (~20:00–21:00) asking how today's focus went: Done / Partly / Didn't touch it
+- [ ] Show logged non-code work in the next morning's yesterday section
