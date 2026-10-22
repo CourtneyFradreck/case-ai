@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** Milestone 1 (rule-only brief) in trial; M2 (model brief) built, not yet deployed; M3 focus suggestions built behind `features.focusButtons`, off by default.
+> **Status:** M2 done; M3 deployed and in trial ([#4](https://github.com/courtneyfradreck/case-ai/issues/4)); M4 (`/log` and evening check-in) next.
 
 ---
 
@@ -48,7 +48,7 @@ n8n: 7am schedule ──> POST /brief
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
-- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. Each defaults to `false`; only an explicit `true` turns one on. To turn one on, set it to `true`, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
+- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. A flag that is missing counts as `false`; only an explicit `true` turns one on. The shipped `config.json` sets `focusButtons`, `streaks` and `snooze` to `true` and `quietMornings` to `false`. To change one, edit it, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
 
 ## Stack
 
@@ -230,7 +230,7 @@ Every choice is kept in `core.focus`; the latest one for a date is that day's fo
 
 **Old unmerged branches.** Branches older than `oldBranchDays` are often kept on purpose, so their one `⚪` line appears only on `oldBranchesWeekday` (ISO weekday, `1` = Monday, the default), or on another day when the set of old branches differs from the last scheduled brief's. Set `"oldBranchesShow": "daily"` in `apps/core/config.json` to show it every day. The finding is still stored every run.
 
-Three flags stop the brief repeating itself. Each works on its own; turn one on by setting it to `true` under `features` in `apps/core/config.json` and redeploying.
+Three flags stop the brief repeating itself. Each works on its own; turn one on by setting it to `true` under `features` in `apps/core/config.json` and redeploying. The shipped config has `streaks` and `snooze` on and `quietMornings` off.
 
 **Streaks (`"streaks": true`).** For each finding in a scheduled brief, case-core counts how many consecutive previous scheduled briefs (status `ok` or `partial`) contained the same finding ID, with one query per brief. Command briefs, failed runs and unfinished runs are skipped: they neither count nor break a streak. Medium and low findings with a streak of at least `streakCollapseAfter` (in `config.json`, default `3`) move out of the attention list into one linked line at the end of it:
 
@@ -259,8 +259,8 @@ It carries the brief's buttons. The full rule and model briefs are still stored 
 
 - [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
 - [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
-- [ ] **M2 Model brief:** model writes the brief, validator checks every citation
-- [ ] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
+- [x] **M2 Model brief:** model writes the brief, validator checks every citation
+- [ ] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons (in production testing, [#4](https://github.com/courtneyfradreck/case-ai/issues/4))
 - [ ] **M4 Non-code:** `/log` and an evening check-in
 - [ ] **M5 Evaluation:** golden test set, `/wrong` and `/missed` feedback
 
