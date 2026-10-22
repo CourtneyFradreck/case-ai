@@ -4,7 +4,7 @@
 
 **A daily Telegram brief that tells me where I left off.**
 
-Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in each repo and the notes I've logged, then sends me a short brief: what needs my attention, followed by what I worked on most recently. The recap uses the last active day within the past week, or both weekend days on Monday. Dates follow Africa/Harare time. Every line links back to the commit, issue, PR or note it came from.
+Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in each repo and the notes I've logged, then sends me a short brief: what needs my attention, followed by what I worked on most recently. The recap uses the last active day within the past week, or both weekend days on Monday. It sums up each branch's commits by their themes rather than pasting subjects ("36 commits on feat/m3-intent (46 on the branch so far), covering focus, Telegram and backup"); the count is the recap period's, and "so far" is the branch's total unmerged commits. Dates follow Africa/Harare time. Every line links back to the commit, issue, PR or note it came from.
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
@@ -48,7 +48,7 @@ n8n: 7am schedule ──> POST /brief
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
-- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. Each defaults to `false`; only an explicit `true` turns one on. To turn one on, set it to `true`, commit and redeploy (config is read at startup). With every flag off, the brief is the same as before the flags existed. See [Focus](#focus) and [Less repetition](#less-repetition).
+- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. Each defaults to `false`; only an explicit `true` turns one on. To turn one on, set it to `true`, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
 
 ## Stack
 
@@ -179,30 +179,56 @@ CASE remembers every item it has seen, with when it first appeared and when it l
 
 With `features.focusButtons` set to `true` in `apps/core/config.json`, the brief suggests two or three things to work on today, and remembers what you pick.
 
-**Suggestions.** A numbered "Today, I'd suggest" section sits between attention and the recap. Each line names the work, gives a short reason and links its source.
+**Suggestions.** A numbered "Today, I'd suggest" section sits between attention and the recap. Each line is an action that starts with a verb, with at most one short fact in brackets, and links its source:
 
-- **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, a PR with no activity, an open `NEXT.md` item), and prefers high and medium findings, then `NEXT.md` items in repos with commits. Suggestions with no valid source, an empty reason, or only findings an earlier suggestion already cites are dropped.
-- **Rule-only brief and fallback:** code picks up to three: high findings, then medium, then open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first), each with a fixed reason per rule.
+```
+1. Merge or close feat/update-product-section in taga-technologies (idle 8 days)
+```
 
-Suggestions are stored on the brief (`briefs.focus`) in button order.
+A finding a suggestion is built on appears in the suggestion instead of in attention, so no fact is stated twice. Every suggestion also has a reason (such as "Unmerged and untouched for 8 days"); reasons are stored with the brief and logged as `focusReasons` on the `brief` event, never shown.
 
-**Picking one.** With `CASE_DELIVERY=core`, the brief has a button per suggestion (`1`, `2`, `3`) and `Something else`. Buttons carry only `f:<briefId>:<n>`, and case-core looks the suggestion up from the stored brief. A tap stores the choice in `core.focus` and replaces the buttons with `Focus: <text>`. Buttons on an earlier day's brief no longer set a focus. `Something else` asks what your focus is, and your next plain message becomes it; that request expires at midnight Africa/Harare. With `CASE_DELIVERY=n8n` there are no buttons, but the commands below still work.
+- **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, a PR with no activity, an open `NEXT.md` item), and prefers high and medium findings, then `NEXT.md` items in repos with commits. Suggestions with no valid source, an empty reason, only findings an earlier suggestion already cites, or only a snoozed focus's finding are dropped.
+- **Rule-only brief and fallback:** code picks up to three: high findings, then medium, then open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first). Each gets an action built from the finding and a fixed reason per rule.
+
+**Done and overdue items.** CASE never writes to `NEXT.md`. An open item that a merged PR likely finished is not suggested; one line in attention asks you to tick it off instead:
+
+```
+☑️ Looks like "Merge M2" is done (PR #3 merged). Tick it off in NEXT.md?
+```
+
+An item counts as likely done when a merged PR (one of the 50 most recently closed) names the milestone the item names first (`M2` against `feat/m2-model-brief`), or shares at least two keywords, half the item's, with the PR's title or head branch. An item with a date that has passed ("Mon 19 Oct", "Oct 19", "2026-10-19") is suggested after the others, unless a commit or recently touched branch in its repo relates to it, or it was yesterday's focus.
+
+**Short labels.** Every finding and `NEXT.md` item has a `short_label` of at most 40 characters, built from its repo's short name and its branch or item keywords ("taga product section branch", "attachcv PR #14", "Merge M2"). The model may offer its own label, used only when code's had to be cut. Labels are stored in `findings.short_label`, `core.focus.short_label` and each suggestion in `briefs.focus`.
+
+Suggestions are stored on the brief (`briefs.focus`: text, label, reason, finding and repo) in button order.
+
+**Picking one.** With `CASE_DELIVERY=core`, the brief has a button per suggestion (`1`, `2`, `3`) and `Something else`. Buttons carry only `f:<briefId>:<n>`, and case-core looks the suggestion up from the stored brief. A tap stores the choice in `core.focus`, answers with a "Focus set for today" notice, replaces the buttons with `✅ Focus: <label>` and sends one line: "Got it, taga product section branch today. I'll check in tomorrow." Tapping `✅ Focus` opens three buttons:
+
+| Button | What it does |
+| ------ | ------------ |
+| ✅ Done | Marks today's focus done (`core.focus.status`); tomorrow's recap says so |
+| 💤 Snooze | Clears today's focus and keeps its finding out of suggestions for 3 days, then offers the suggestions again |
+| 🔄 Change | Offers the suggestions again |
+
+Buttons on an earlier day's brief no longer set a focus. `Something else` asks what your focus is, and your next plain message becomes it; that request expires at midnight Africa/Harare. With `CASE_DELIVERY=n8n` there are no buttons, but the commands below still work.
 
 **Commands** (handled by case-core; `/brief` stays with n8n):
 
 | Command | What it does |
 | ------- | ------------ |
 | `/focus <text>` | Sets today's focus, replacing any earlier choice for the day |
-| `/focus` | Shows today's focus |
+| `/focus` | Shows today's focus by its label, with the full text on a second line |
 | `/next [repo]` | Lists open `NEXT.md` items, grouped by repo, for all tracked repos or one (`owner/repo` or just `repo`) |
 
 `/snoozed` and `/unsnooze` are under [Less repetition](#less-repetition).
 
 Every choice is kept in `core.focus`; the latest one for a date is that day's focus.
 
-**Yesterday's focus.** The next brief opens its recap with yesterday's focus and whether its repo had commits since you picked it, linking the newest commit. A focus you typed has no repo, so the line only says what it was. This line is written by code and never sent to the model.
+**Yesterday's focus.** The next brief opens its recap with yesterday's focus and how many commits its repo had, on every branch, linking the newest. The count runs from the previous brief (or the last 24 hours without one), widened to the start of the recap, so it always includes every commit the recap shows: "36 commits in case-ai yesterday". A focus you typed has no repo, so the line only says what it was. This line is written by code and never sent to the model.
 
 ## Less repetition
+
+**Old unmerged branches.** Branches older than `oldBranchDays` are often kept on purpose, so their one `⚪` line appears only on `oldBranchesWeekday` (ISO weekday, `1` = Monday, the default), or on another day when the set of old branches differs from the last scheduled brief's. Set `"oldBranchesShow": "daily"` in `apps/core/config.json` to show it every day. The finding is still stored every run.
 
 Three flags stop the brief repeating itself. Each works on its own; turn one on by setting it to `true` under `features` in `apps/core/config.json` and redeploying.
 
