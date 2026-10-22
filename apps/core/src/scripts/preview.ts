@@ -6,7 +6,7 @@ import { render } from "../render.js";
 import { runRules } from "../rules/index.js";
 import { runIntentRules } from "../intent/rules.js";
 import { readFeatures } from "../features.js";
-import { ruleFocus } from "../focus.js";
+import { rankNext, ruleFocus } from "../focus.js";
 import { selectRecap } from "../recap.js";
 import { DateTime } from "luxon";
 import type { RepoSnapshot } from "../types.js";
@@ -38,9 +38,10 @@ async function main() {
   const intent = runIntentRules(snapshots, NOW, config);
   const { focusButtons } = readFeatures(config);
   // As in the pipeline: open NEXT.md items and focus suggestions appear only with focusButtons on.
-  const next = focusButtons ? intent.filter((f) => f.rule === "next_item") : [];
+  const next = focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item"), previewSnapshots, NOW, config) : [];
+  const done = focusButtons ? intent.filter((f) => f.rule === "next_likely_done") : [];
   const focus = focusButtons ? ruleFocus(findings, next, previewSnapshots, NOW, config) : [];
-  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now }, focus);
+  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now, done }, focus);
   const save = (path: string, text: string) => {
     if (!oct15) return;
     const out = new URL("../../../../out/", import.meta.url);
@@ -55,7 +56,7 @@ async function main() {
     console.log(template);
     save("oct15-fallback", renderRules("Rule-only brief: model unavailable"));
   }
-  const result = await generateModelBrief([...findings, ...next], previewSnapshots, w, { ...config, focus: focusButtons }, provider, now);
+  const result = await generateModelBrief([...findings, ...next], previewSnapshots, w, { ...config, focus: focusButtons, done }, provider, now);
   console.log("Raw JSON:");
   for (const raw of result.json.responses ?? []) console.log(raw);
   console.log("Validation report:");
