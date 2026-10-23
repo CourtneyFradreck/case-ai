@@ -279,7 +279,7 @@ describe("intent findings in the pipeline", () => {
       mocks.collectAll.mockResolvedValue([snap({ next, commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] })]);
       const result = await runBrief("command");
       expect(mocks.getFocus).toHaveBeenCalledWith("2026-10-13");
-      expect(result.text).toContain('<b>Here\'s what you worked on yesterday</b>\n• You picked: Ship the parser. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/abc">commit</a>]\n\n<b>demo</b>');
+      expect(result.text).toContain('<b>Yesterday</b>\n• You picked: Ship the parser. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/abc">commit</a>]\n\n<b>demo</b>');
       expect(mocks.storeFindings.mock.calls[0][1].map((f: { rule: string }) => f.rule)).toContain("yesterday_focus");
     });
     it("never sends yesterday's focus to the model", async () => {
@@ -299,7 +299,7 @@ describe("intent findings in the pipeline", () => {
       mocks.collectAll.mockResolvedValue([snap({ next, recentlyMerged: [merged], branches: [{ name: "main", sha: "abc", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: "https://github.com/me/demo/tree/main" }] })]);
       const line = '☑️ Looks like "Ship the parser" is done (PR #3 merged). Tick it off in <code>NEXT.md</code>? [<a href="https://github.com/me/demo/pull/3">PR</a>, <a href="https://github.com/me/demo/blob/main/NEXT.md#L2">NEXT.md</a>]';
       const rules = await runBrief("command");
-      expect(rules.text).toContain(`<b>Here's what needs your attention</b>\n${line}`);
+      expect(rules.text).toContain(`<b>Needs attention</b>\n${line}`);
       expect(rules.text).not.toContain("Today, I'd suggest");
       mocks.env.briefMode = "all";
       const model = await runBrief("command");
@@ -499,7 +499,7 @@ describe("quiet mornings in the pipeline", () => {
     const result = await runBrief("schedule");
     expect(result.text).toBe("Nothing has moved since Monday. Still on CI failing on me/demo main (build), 2 days ago?");
     const [, full, , ruleText] = mocks.storeBrief.mock.calls[0];
-    expect(full).toContain("Here's what needs your attention");
+    expect(full).toContain("Needs attention");
     expect(ruleText).toBe(full);
     expect(mocks.storeBriefSentText).toHaveBeenCalledWith(70, result.text);
     expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ quiet: true });
@@ -520,12 +520,12 @@ describe("quiet mornings in the pipeline", () => {
   it("sends the full brief when an attention finding changed", async () => {
     mocks.previousRuns.mockResolvedValue(ran("2026-10-12T22:00:00Z", ["ci"]));
     const result = await runBrief("schedule");
-    expect(result.text).toContain("Here's what needs your attention");
+    expect(result.text).toContain("Needs attention");
     expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
   });
   it("sends the full brief when there was activity since the previous brief", async () => {
     mocks.collectAll.mockResolvedValue([snap({ commits: [commit("2026-10-13T10:00:00Z")] })]);
-    expect((await runBrief("schedule")).text).toContain("Here's what you worked on yesterday");
+    expect((await runBrief("schedule")).text).toContain("Yesterday");
   });
   it("sends a short message on Monday after an empty weekend", async () => {
     vi.setSystemTime(new Date("2026-10-19T05:00:00Z"));
@@ -538,7 +538,7 @@ describe("quiet mornings in the pipeline", () => {
     vi.setSystemTime(new Date("2026-10-19T05:00:00Z"));
     mocks.collectAll.mockResolvedValue([snap({ commits: [commit("2026-10-16T10:00:00Z")] })]);
     mocks.previousRuns.mockResolvedValue(ran("2026-10-15T22:00:00Z"));
-    expect((await runBrief("schedule")).text).toContain("Here's what you worked on Friday");
+    expect((await runBrief("schedule")).text).toContain("On Friday");
   });
   it("attaches the brief's buttons to the short message", async () => {
     mocks.features.focusButtons = true;
@@ -552,9 +552,9 @@ describe("quiet mornings in the pipeline", () => {
     ] });
   });
   it("never quiets a command brief, or any brief with the flag off", async () => {
-    expect((await runBrief("command")).text).toContain("Here's what needs your attention");
+    expect((await runBrief("command")).text).toContain("Needs attention");
     mocks.features.quietMornings = false;
-    expect((await runBrief("schedule")).text).toContain("Here's what needs your attention");
+    expect((await runBrief("schedule")).text).toContain("Needs attention");
     expect(mocks.previousRuns).not.toHaveBeenCalled();
     expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
   });

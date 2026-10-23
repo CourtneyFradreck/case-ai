@@ -24,14 +24,14 @@ const finding = (over: Partial<Finding> = {}): Finding => ({
 
 describe("render", () => {
   it("uses today's date in the greeting header", () => {
-    expect(render([], [snap()], W, 3800, undefined, { userName: "Courtney", now: DateTime.fromISO("2026-10-16T05:00:00Z") })).toContain("<b>Good morning, Courtney. Here's your morning brief.</b>\nFriday, 16 Oct 2026");
+    expect(render([], [snap()], W, 3800, undefined, { userName: "Courtney", now: DateTime.fromISO("2026-10-16T05:00:00Z") })).toContain("<b>Good morning, Courtney.</b>\nFriday, 16 Oct 2026");
   });
 
   it("reports a quiet day without section headers when there are no findings or failures", () => {
     const out = render([], [snap()], W);
     expect(out).toContain("Nothing new in the past week.");
-    expect(out).not.toContain("Here's what needs your attention");
-    expect(out).not.toContain("Here's what you worked on");
+    expect(out).not.toContain("Needs attention");
+    expect(out).not.toMatch(/<b>(?:Yesterday|Over the weekend|On \w+)<\/b>/);
   });
 
   it("escapes HTML in finding summaries", () => {
@@ -75,8 +75,8 @@ describe("render", () => {
       ],
       [snap()], W,
     );
-    const attention = out.indexOf("Here's what needs your attention");
-    const yesterday = out.indexOf("Here's what you worked on yesterday");
+    const attention = out.indexOf("Needs attention");
+    const yesterday = out.indexOf("Yesterday");
     expect(attention).toBeGreaterThan(-1);
     expect(yesterday).toBeGreaterThan(attention);
     expect(out.indexOf("🔴 HIGH-ITEM")).toBeGreaterThan(attention);

@@ -18,6 +18,8 @@ const pr = { number: 2, title: "feat(core)!: GitHub morning brief pipeline and a
 const data = [snap({ repo: "me/case-ai", commits: Array.from({ length: 15 }, (_, i) => commit(i % 2 ? "fix: model settings fallbacks" : "feat: personalize brief greetings", "feat/m2-model-brief", i)).concat(commit("feat: update README.md", "main")), mergedPrs: [pr], newIssues: [issue(1, "fix: M1 verification: five-morning trial")] })];
 const findings = () => runRules(data, now.toJSDate(), cfg);
 const plain = (text: string) => text.replace(/<[^>]+>/g, "");
+// The recap section, below the opening sentence (which names the busiest repo once).
+const recapOf = (text: string) => text.slice(text.indexOf("<b>Yesterday</b>"));
 const model = (fs: Finding[]) => renderModelBrief({ yesterday: fs.filter((f) => f.severity === "info").map((f) => ({ text: `You worked on ${f.repo}.`, sources: [f] })), attention: [], focus: [] }, [], w, 3800, { now });
 const renderers = [
   ["template", (fs: Finding[]) => render(fs, [], w, 3800, undefined, { now })],
@@ -28,7 +30,7 @@ const renderers = [
 describe.each(renderers)("%s recap", (_, renderBrief) => {
   it("groups a repo once, removes it from bullets, and orders commits before PRs and issues", () => {
     const text = renderBrief(findings().reverse());
-    const visible = plain(text);
+    const visible = plain(recapOf(text));
     expect(text.match(/<b>case-ai<\/b>/g)).toHaveLength(1);
     expect(visible.match(/case-ai/g)).toHaveLength(1);
     expect(visible).not.toContain("me/case-ai");
@@ -72,13 +74,13 @@ describe("model recap and closing discipline", () => {
     expect(output.length).toBeLessThanOrEqual(230);
     expect(output).toContain("more line(s) not shown");
     expect(output).not.toContain("<b>case-ai</b>");
-    expect(output).not.toContain("Here's what you worked on");
+    expect(output).not.toMatch(/<b>(?:Yesterday|Over the weekend|On \w+)<\/b>/);
   });
   it("keeps a model's branch themes inside the same grouped structure", () => {
     const fs = findings();
     const text = renderModelBrief({ yesterday: fs.map((f) => ({ text: f.activity?.kind === "commits" && f.activity.count > 1 ? "15 commits on feat/m2-model-brief, covering greetings and settings fallbacks." : f.summary, sources: [f] })), attention: [], focus: [] }, [], w);
     expect(plain(text)).toContain("15 commits on feat/m2-model-brief, covering greetings and settings fallbacks. [diff]");
-    expect(plain(text).match(/case-ai/g)).toHaveLength(1);
+    expect(plain(recapOf(text)).match(/case-ai/g)).toHaveLength(1);
   });
   it("names themes in code when the model pastes a commit subject", () => {
     const fs = findings();

@@ -29,11 +29,11 @@ describe("model rendering", () => {
     const item = { text: "Progress", sources: [finding()] };
     const attention = { text: "Fix CI", sources: [finding({ id: "ci", severity: "high", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] })] };
     const text = renderModelBrief({ ...empty(), yesterday: [item], attention: [attention] }, [snap({ error: "GitHub 404" })], w, 3800, { userName: "Courtney", now: DateTime.fromISO("2026-10-14T05:00:00Z") });
-    expect(text).toContain("Good morning, Courtney. Here's your morning brief.");
-    expect(text.indexOf("Here's what needs your attention")).toBeLessThan(text.indexOf("Here's what you worked on yesterday"));
+    expect(text).toContain("<b>Good morning, Courtney.</b>");
+    expect(text.indexOf("Needs attention")).toBeLessThan(text.indexOf("<b>Yesterday</b>"));
     expect(text).not.toContain("Today, I'd suggest");
     expect(text).toContain("Couldn't read: me/demo (GitHub 404)");
-    expect(renderModelBrief(empty(), [], w, 3800)).not.toContain("Here's what you worked on");
+    expect(renderModelBrief(empty(), [], w, 3800)).not.toMatch(/<b>(?:Yesterday|Over the weekend|On \w+)<\/b>/);
   });
   it("truncates by complete lines with the shared length limit", () => {
     const items = Array.from({ length: 30 }, (_, i) => ({ text: "Progress ".repeat(20), sources: [finding({ id: `commit-${i}`, sources: [{ label: "commit", url: `https://github.com/me/demo/commit/${i}` }] })] }));
@@ -65,8 +65,8 @@ describe("model rendering", () => {
       ].join("\n"));
       expect(text).not.toContain("CI is failing");
       expect(text).not.toContain("active");
-      expect(text.indexOf("Here's what needs your attention")).toBeLessThan(text.indexOf("Today, I'd suggest"));
-      expect(text.indexOf("Today, I'd suggest")).toBeLessThan(text.indexOf("Here's what you worked on"));
+      expect(text.indexOf("Needs attention")).toBeLessThan(text.indexOf("Today, I'd suggest"));
+      expect(text.indexOf("Today, I'd suggest")).toBeLessThan(text.indexOf("<b>Yesterday</b>"));
       expect(render([ci, finding()], [], w, 3800, undefined, {}, [])).toBe(render([ci, finding()], [], w, 3800));
     });
     it("shows a suggested finding in the suggestion only, not again in attention", () => {

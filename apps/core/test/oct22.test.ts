@@ -51,7 +51,7 @@ describe("the 22 Oct brief", () => {
   it("asks to tick off the M2 merge instead of suggesting it", () => {
     const visible = plain(text);
     expect(visible).toContain('Looks like "Merge M2" is done (PR #3 merged). Tick it off in NEXT.md?');
-    const suggestions = visible.split("Today, I'd suggest")[1]?.split("Here's what you worked on")[0] ?? "";
+    const suggestions = visible.split("Today, I'd suggest")[1]?.split("\nYesterday\n")[0] ?? "";
     expect(suggestions).not.toContain("M2");
   });
   it("names the taga branch once, on the last line, and never suggests closing it", () => {
@@ -64,7 +64,7 @@ describe("the 22 Oct brief", () => {
     expect(visible).not.toContain("Here's your brief\" from noon");
   });
   it("suggests active NEXT.md work first, and only the first CASE_BRIEF_MODE step", () => {
-    const suggestions = plain(text).split("Today, I'd suggest")[1]?.split("Here's what you worked on")[0] ?? "";
+    const suggestions = plain(text).split("Today, I'd suggest")[1]?.split("\nYesterday\n")[0] ?? "";
     expect(suggestions).toMatch(/^\n1\. Run CASE_BRIEF_MODE=command for 3 days/);
     expect(suggestions).not.toContain("Switch to CASE_BRIEF_MODE=all");
   });
