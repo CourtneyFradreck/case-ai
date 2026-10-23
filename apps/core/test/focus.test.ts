@@ -268,7 +268,7 @@ describe("yesterday's focus", () => {
   });
   it("leads the recap in both renderers, escaped", () => {
     const previousFocus = yesterdayFocus({ ...row("me/demo"), item_text: "Ship <it>" }, [snap({ commits: [commit("c", "2026-10-13T15:00:00Z")] })], period);
-    const lead = `<b>Here's what you worked on yesterday</b>\n• You picked: Ship &lt;it&gt;. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/c">commit</a>]\n\n<b>demo</b>`;
+    const lead = `<b>Yesterday</b>\n• You picked: Ship &lt;it&gt;. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/c">commit</a>]\n\n<b>demo</b>`;
     expect(render([finding()], [], recap, 3800, undefined, { previousFocus })).toContain(lead);
     expect(renderModelBrief({ yesterday: [{ text: "Progress", sources: [finding()] }], attention: [], focus: [] }, [], recap, 3800, { previousFocus })).toContain(lead);
   });

@@ -71,7 +71,7 @@ describe("collapsing repeats", () => {
     const still = '⚪ Still open, unchanged: 3 items (<a href="https://github.com/me/attachcv/pull/14">idle PR #14 in attachcv</a>, <a href="https://github.com/me/demo/tree/feat/x">stale branch feat/x in demo</a>, <a href="https://github.com/me/demo/issues">open issues in demo</a>)';
     const rules = render(kept, [], w, 3800, undefined, { collapsed, days });
     expect(rules).toContain(`🔴 CI failing on me/demo main (build), 4 days ago (day 4) [<a href="https://github.com/me/demo/actions/runs/1">run</a>]`);
-    expect(rules).toContain(`${still}\n\n<b>Here's what you worked on yesterday</b>`);
+    expect(rules).toContain(`${still}\n\n<b>Yesterday</b>`);
     expect(rules).not.toContain("no activity for 5 days");
     const model = renderModelBrief({ yesterday: [], attention: [{ text: "CI is failing on main", sources: [ci] }], focus: [] }, [], w, 3800, { collapsed, days });
     expect(model).toContain("🔴 CI is failing on main (day 4) [");

@@ -37,12 +37,12 @@ describe("shared brief structure through the pipeline", () => {
     if (path === "provider failure") mocks.generate.mockRejectedValue(new Error("invalid model settings"));
     const { runBrief } = await import("../src/pipeline.js");
     const { text } = await runBrief("command", DateTime.fromISO("2026-10-16T05:00:00Z"));
-    expect(text.split("\n").slice(0, 2)).toEqual(["<b>Good morning, Courtney. Here's your morning brief.</b>", "Friday, 16 Oct 2026"]);
-    expect([...text.matchAll(/<b>(Here's what[^<]+)<\/b>/g)].map((m) => m[1])).toEqual(["Here's what needs your attention", "Here's what you worked on yesterday"]);
+    expect(text.split("\n").slice(0, 2)).toEqual(["<b>Good morning, Courtney.</b>", "Friday, 16 Oct 2026"]);
+    expect([...text.matchAll(/<b>(Needs attention|Yesterday)<\/b>/g)].map((m) => m[1])).toEqual(["Needs attention", "Yesterday"]);
     expect(text.match(/issue #1/g)).toHaveLength(1);
     expect(text).toContain("<b>demo</b>\n• A commit on main: Add a personal brief.");
     expect(text).toContain('• Opened issue #1 "Plan the next release".');
-    const recap = text.split("<b>Here's what you worked on yesterday</b>")[1];
+    const recap = text.split("<b>Yesterday</b>")[1];
     expect(recap.replace(/<[^>]+>/g, "")).not.toContain("me/demo");
     expect(recap).not.toMatch(/^• You\b/m);
     expect(text).not.toContain("productive day");
