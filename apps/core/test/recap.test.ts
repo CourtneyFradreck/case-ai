@@ -115,7 +115,7 @@ describe("section ownership", () => {
     const pr = { number: 2, title: "Feature", url: "https://github.com/me/demo/pull/2", draft: false, headRef: "feature", createdAt: "2026-10-12T10:00Z", updatedAt: "2026-10-12T10:00Z" };
     const result = brief([snap({ openedPrs: [pr], openPrs: [pr] })]);
     expect(result.text.match(/PR #2/g)).toHaveLength(1);
-    expect(result.text).toContain("no activity for 3 days");
+    expect(result.text).toContain("no activity for 4 days");
     expect(result.text).not.toContain("Opened PR");
   });
   it("shows a PR opened and merged in the same period once, as merged", () => {

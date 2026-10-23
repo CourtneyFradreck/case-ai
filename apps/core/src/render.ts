@@ -33,9 +33,10 @@ function line(f: Finding, days?: Map<string, number>): string[] {
 // collapsed and days (features.streaks): repeated findings for the "Still open, unchanged" line, and
 // how many scheduled runs in a row each repeated high finding has appeared.
 // done (features.focusButtons): NEXT.md items a merged PR likely finished, one line each at the end of attention.
+// leftOpen: stale branches, idle PRs and old branches, kept open on purpose: one low line at the end of the brief.
 export interface GreetingOptions {
   userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
-  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[];
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[];
 }
 
 const dayTag = (findings: Finding[], days?: Map<string, number>) => {
@@ -50,6 +51,21 @@ function collapsedLine(findings: Finding[] = []): string[] {
   const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => f.sources[0] ? link({ label: shortLabel(f), url: f.sources[0].url }) : esc(shortLabel(f)));
   const more = findings.length - names.length;
   return [`⚪ Still open, unchanged: ${plural(findings.length, "item")} (${names.join(", ")}${more ? `, and ${more} more` : ""})`];
+}
+
+// Branches and PRs left open, on one line below everything else, so it's the first cut and never outranks
+// active work. Each is named once, with its link. Written by code on both paths; never sent to the model.
+function leftOpenLine(findings: Finding[] = []): string[] {
+  if (!findings.length) return [];
+  const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => {
+    if (f.rule === "old_branches") return line(f)[0].replace(/^\S+ /, "");
+    // shortLabel already names the repo: "idle PR #4 in demo".
+    const label = f.target ? `${f.target} in ${f.repo.split("/").pop()}` : shortLabel(f);
+    const what = f.sources[0] ? link({ label, url: f.sources[0].url }) : esc(label);
+    return `${what}${f.ageDays === undefined ? "" : ` (${f.rule === "idle_pr" ? "quiet" : "idle"} ${plural(f.ageDays, "day")})`}`;
+  });
+  const more = findings.length - names.length;
+  return ["", `${icon.low} Left open: ${names.join("; ")}${more ? `; and ${more} more` : ""}`];
 }
 
 function recapLines(items: ValidItem[], model = false): string[] {
@@ -129,7 +145,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -168,7 +184,7 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
     return `${icon[severity]} ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus))];
+  const parts = [...header(greeting), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

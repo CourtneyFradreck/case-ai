@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NOW, daysAgo, snap } from "./fixtures.js";
 import { parseNext } from "../src/intent/parse.js";
-import { runIntentRules, type IntentHistory } from "../src/intent/rules.js";
+import { runIntentRules, subjects, type IntentHistory } from "../src/intent/rules.js";
 import type { NextFile, RepoSnapshot } from "../src/types.js";
 
 const cfg = { newRepoDays: 7, nextStaleDays: 14, activeRepoDays: 7 };
@@ -129,5 +129,41 @@ describe("runIntentRules", () => {
   it("sorts like runRules: low before info", () => {
     const found = run({ branches: recent, next: okNext("- [ ] Open", { lastChangedAt: daysAgo(30) }) });
     expect(found.map((f) => f.rule)).toEqual(["next_stale", "next_item"]);
+  });
+});
+
+describe("sequences of NEXT.md items", () => {
+  const waits = (md: string, extra: Partial<RepoSnapshot> = {}) => Object.fromEntries(rules({ next: okNext(md), branches: recent, ...extra }, "next_item")
+    .map((f) => [f.summary.replace("Next in me/demo: ", ""), f.intent?.waitsOn ?? null]));
+
+  it("lets an item that names the same setting as the open item above it wait its turn", () => {
+    const md = ["## M2 rollout", "- [ ] Run CASE_BRIEF_MODE=command for 3 days; check logs", "- [ ] Switch to CASE_BRIEF_MODE=all"].join("\n");
+    expect(waits(md)).toEqual({
+      "Run CASE_BRIEF_MODE=command for 3 days; check logs": null,
+      "Switch to CASE_BRIEF_MODE=all": idFor("Run CASE_BRIEF_MODE=command for 3 days; check logs"),
+    });
+  });
+  it("frees the next step once the one above is ticked, or a merged PR likely finished it", () => {
+    const ticked = ["## M2 rollout", "- [x] Run CASE_BRIEF_MODE=command for 3 days", "- [ ] Switch to CASE_BRIEF_MODE=all"].join("\n");
+    expect(waits(ticked)).toEqual({ "Switch to CASE_BRIEF_MODE=all": null });
+    // 23 Oct: "Merge M2" looked done (PR #3), so the first CASE_BRIEF_MODE step is the one to suggest.
+    const merged = { number: 3, title: "feat: M2 model brief", url: "https://github.com/me/demo/pull/3", draft: false, headRef: "feat/m2-model-brief", updatedAt: daysAgo(3), mergedAt: daysAgo(3) };
+    const md = ["## M2 rollout", "- [ ] Merge M2 after M1 trial ends", "- [ ] Run CASE_BRIEF_MODE=command for 3 days", "- [ ] Switch to CASE_BRIEF_MODE=all"].join("\n");
+    expect(waits(md, { recentlyMerged: [merged] })).toEqual({
+      "Run CASE_BRIEF_MODE=command for 3 days": null,
+      "Switch to CASE_BRIEF_MODE=all": idFor("Run CASE_BRIEF_MODE=command for 3 days"),
+    });
+  });
+  it("follows an explicit after: marker, and chains", () => {
+    const md = ["# Launch", "- [ ] Write the post", "- [ ] after: Publish it", "- [ ] after: Share the link"].join("\n");
+    expect(waits(md)).toEqual({ "Write the post": null, "Publish it": idFor("Write the post"), "Share the link": idFor("Publish it") });
+  });
+  it("leaves unrelated items, and items in other sections, free", () => {
+    const md = ["## A", "- [ ] Turn on features.streaks", "- [ ] Tidy the README.md intro", "- [ ] Fix NEXT.md parsing", "## B", "- [ ] after: Turn on features.streaks again"].join("\n");
+    expect(Object.values(waits(md))).toEqual([null, null, null, null]);
+  });
+  it("names settings and milestones as subjects, not files or abbreviations", () => {
+    expect([...subjects("Run CASE_BRIEF_MODE=command; check features.focusButtons, e.g. in NEXT.md and config.json for M3")])
+      .toEqual(["case_brief_mode", "features.focusbuttons", "m3"]);
   });
 });

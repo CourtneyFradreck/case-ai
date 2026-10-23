@@ -6,7 +6,7 @@ import { render } from "../render.js";
 import { runRules } from "../rules/index.js";
 import { runIntentRules } from "../intent/rules.js";
 import { readFeatures } from "../features.js";
-import { rankNext, ruleFocus } from "../focus.js";
+import { leftOpen, rankNext, ready, ruleFocus } from "../focus.js";
 import { selectRecap } from "../recap.js";
 import { DateTime } from "luxon";
 import type { RepoSnapshot } from "../types.js";
@@ -32,16 +32,19 @@ async function main() {
     NOW = fixture.OCT15_NOW;
   }
   const { window: w, snapshots } = selectRecap(previewSnapshots, DateTime.fromJSDate(NOW));
-  const findings = runRules(snapshots, NOW, config, w);
+  const all = runRules(snapshots, NOW, config, w);
+  // As in the pipeline: branches and PRs left open get one line written by code.
+  const findings = all.filter((f) => !leftOpen(f));
+  const lingering = all.filter(leftOpen);
   const provider = new GeminiBriefModel(apiKey, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite", config.modelTimeoutMs);
   const now = oct15 ? DateTime.fromJSDate(NOW) : DateTime.now();
   const intent = runIntentRules(snapshots, NOW, config);
   const { focusButtons } = readFeatures(config);
   // As in the pipeline: open NEXT.md items and focus suggestions appear only with focusButtons on.
-  const next = focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item"), previewSnapshots, NOW, config) : [];
+  const next = focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item" && ready(f)), previewSnapshots, NOW, config) : [];
   const done = focusButtons ? intent.filter((f) => f.rule === "next_likely_done") : [];
   const focus = focusButtons ? ruleFocus(findings, next, previewSnapshots, NOW, config) : [];
-  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now, done }, focus);
+  const renderRules = (footer?: string) => render(findings, previewSnapshots, w, config.maxBriefChars, footer, { userName: config.userName, now, done, leftOpen: lingering }, focus);
   const save = (path: string, text: string) => {
     if (!oct15) return;
     const out = new URL("../../../../out/", import.meta.url);
@@ -56,7 +59,7 @@ async function main() {
     console.log(template);
     save("oct15-fallback", renderRules("Rule-only brief: model unavailable"));
   }
-  const result = await generateModelBrief([...findings, ...next], previewSnapshots, w, { ...config, focus: focusButtons, done }, provider, now);
+  const result = await generateModelBrief([...findings, ...next], previewSnapshots, w, { ...config, focus: focusButtons, done, leftOpen: lingering }, provider, now);
   console.log("Raw JSON:");
   for (const raw of result.json.responses ?? []) console.log(raw);
   console.log("Validation report:");

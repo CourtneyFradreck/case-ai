@@ -54,13 +54,19 @@ describe("the 22 Oct brief", () => {
     const suggestions = visible.split("Today, I'd suggest")[1]?.split("Here's what you worked on")[0] ?? "";
     expect(suggestions).not.toContain("M2");
   });
-  it("states the taga branch once, as an action, with no reasons or pasted subjects", () => {
+  it("names the taga branch once, on the last line, and never suggests closing it", () => {
     const visible = plain(text);
-    expect(visible).toContain("1. Merge or close feat/update-product-section in taga-technologies (idle 8 days)");
+    expect(visible).not.toMatch(/Merge or close/);
+    expect(visible.trimEnd().split("\n").at(-1)).toBe("⚪ Left open: feat/update-product-section in taga-technologies (idle 8 days)");
     expect(visible.match(/feat\/update-product-section/g)).toHaveLength(1);
     expect(visible).not.toMatch(/Unmerged and untouched|Open in NEXT\.md|has recent commits/);
     expect(visible).not.toContain("including");
     expect(visible).not.toContain("Here's your brief\" from noon");
+  });
+  it("suggests active NEXT.md work first, and only the first CASE_BRIEF_MODE step", () => {
+    const suggestions = plain(text).split("Today, I'd suggest")[1]?.split("Here's what you worked on")[0] ?? "";
+    expect(suggestions).toMatch(/^\n1\. Run CASE_BRIEF_MODE=command for 3 days/);
+    expect(suggestions).not.toContain("Switch to CASE_BRIEF_MODE=all");
   });
   it("leaves the unchanged old branches out on a Thursday, but stores them", () => {
     expect(plain(text)).not.toContain("old unmerged branches");

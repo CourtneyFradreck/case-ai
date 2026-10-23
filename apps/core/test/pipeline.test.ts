@@ -279,7 +279,7 @@ describe("intent findings in the pipeline", () => {
       mocks.collectAll.mockResolvedValue([snap({ next, commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] })]);
       const result = await runBrief("command");
       expect(mocks.getFocus).toHaveBeenCalledWith("2026-10-13");
-      expect(result.text).toContain('<b>Here\'s what you worked on yesterday</b>\n• Yesterday\'s focus: Ship the parser. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/abc">commit</a>]\n\n<b>demo</b>');
+      expect(result.text).toContain('<b>Here\'s what you worked on yesterday</b>\n• You picked: Ship the parser. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/abc">commit</a>]\n\n<b>demo</b>');
       expect(mocks.storeFindings.mock.calls[0][1].map((f: { rule: string }) => f.rule)).toContain("yesterday_focus");
     });
     it("never sends yesterday's focus to the model", async () => {
@@ -287,7 +287,7 @@ describe("intent findings in the pipeline", () => {
       mocks.getFocus.mockResolvedValue({ item_text: "Secret plan", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });
       const result = await runBrief("command");
       expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("Secret plan");
-      expect(result.text).toContain("• Yesterday's focus: Secret plan.");
+      expect(result.text).toContain("• You picked: Secret plan.");
     });
     it("doesn't read the focus table with focusButtons off", async () => {
       mocks.features.focusButtons = false;
@@ -409,7 +409,8 @@ describe("collapsing repeats in the pipeline (streaks)", () => {
     mocks.features.streaks = false;
     const off = await runBrief("schedule");
     expect(command.text).toBe(off.text);
-    expect(off.text).toContain("no activity for 5 days");
+    // A PR left open gets the one low line at the end, never a suggestion.
+    expect(off.text).toMatch(/\n\n⚪ Left open: <a [^>]+>idle PR #14 in demo<\/a>$/);
   });
 });
 
@@ -547,7 +548,7 @@ describe("quiet mornings in the pipeline", () => {
     mocks.features.focusButtons = false;
     expect(result.text).toMatch(/^Nothing has moved/);
     expect(mocks.sendMessage).toHaveBeenCalledWith(result.text, { inline_keyboard: [
-      [{ text: "1", callback_data: "f:70:1" }, { text: "2", callback_data: "f:70:2" }], [{ text: "Something else", callback_data: "f:70:x" }],
+      [{ text: "1", callback_data: "f:70:1" }], [{ text: "Something else", callback_data: "f:70:x" }],
     ] });
   });
   it("never quiets a command brief, or any brief with the flag off", async () => {

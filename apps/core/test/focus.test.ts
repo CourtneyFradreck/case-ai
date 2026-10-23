@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { action, chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, rankNext, ruleFocus, storedFocus, yesterdayFocus } from "../src/focus.js";
+import { action, chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, rankNext, ready, ruleFocus, storedFocus, withoutAge, yesterdayFocus } from "../src/focus.js";
 import { render, renderModelBrief } from "../src/render.js";
 import { datePassed, itemDate } from "../src/intent/dates.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
@@ -15,14 +15,24 @@ const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", summary: 'PR
 const oldPr = finding({ id: "old-pr", rule: "idle_pr", severity: "medium", summary: 'PR #2 "Old" in me/demo: no activity for 9 days', ageDays: 9 });
 
 describe("rule-only focus", () => {
-  it("picks high findings, then medium, then NEXT.md items, at most three", () => {
+  it("picks NEXT.md items in active repos first, then high, then medium findings, at most three", () => {
     const snaps = [snap({ branches: [branch("main", 1)] })];
-    const focus = ruleFocus([pr, finding(), ci, oldPr], [nextItem("me/demo", "Ship the parser")], snaps, NOW, cfg);
+    const comments = finding({ id: "c", rule: "issue_comments", severity: "medium", target: "issue #8" });
+    const focus = ruleFocus([comments, finding(), ci], [nextItem("me/demo", "Ship the parser")], snaps, NOW, cfg);
     expect(focus).toEqual([
+      { text: "Ship the parser", reason: "Open in NEXT.md, and demo has recent commits", sources: [expect.objectContaining({ id: "next_Ship the parser" })] },
       { text: ci.summary, reason: "CI is failing on the default branch", sources: [ci] },
-      { text: oldPr.summary, reason: "No activity for 9 days", sources: [oldPr] },
-      { text: pr.summary, reason: "No activity for 5 days", sources: [pr] },
+      { text: "Reply to the comments on issue #8 in demo", reason: "New comments are waiting for a reply", sources: [comments] },
     ]);
+  });
+  it("never suggests merging or closing branches and PRs left open, however old", () => {
+    const stale = finding({ id: "b", rule: "stale_branch", severity: "medium", repo: "me/taga-technologies", target: "feat/update-product-section", ageDays: 9 });
+    const old = finding({ id: "o", rule: "old_branches", severity: "low", ageDays: 90 });
+    const snaps = [snap({ branches: [branch("main", 1)] })];
+    expect(ruleFocus([stale, pr, oldPr, old], [], snaps, NOW, cfg)).toEqual([]);
+    const focus = ruleFocus([stale, pr, ci], [nextItem("me/demo", "Ship the parser")], snaps, NOW, cfg);
+    expect(focus.map((f) => f.sources[0].id)).toEqual(["next_Ship the parser", "ci"]);
+    expect(focus.map((f) => f.text).join(" ")).not.toMatch(/Merge or close|Review or merge|feat\/update-product-section|PR #4/);
   });
   it("ignores low and info findings", () => {
     expect(ruleFocus([finding(), finding({ id: "low", severity: "low", rule: "open_issues" })], [], [snap()], NOW, cfg)).toEqual([]);
@@ -43,37 +53,42 @@ describe("rule-only focus", () => {
     expect(focus.map((f) => f.text)).toEqual(["First fresh plan", "Second fresh plan", "Demo plan"]);
     expect(focus[0]).toEqual({ text: "First fresh plan", reason: "Open in NEXT.md, and fresh has recent commits", sources: [next[3]] });
   });
-  it("fills remaining slots with NEXT.md items after attention findings", () => {
+  it("fills remaining slots with attention findings after NEXT.md items", () => {
     const next = [nextItem("me/demo", "Ship the parser"), nextItem("me/demo", "Write docs")];
     const focus = ruleFocus([ci], next, [snap({ branches: [branch("main", 0)] })], NOW, cfg);
-    expect(focus.map((f) => f.sources[0].id)).toEqual(["ci", "next_Ship the parser", "next_Write docs"]);
+    expect(focus.map((f) => f.sources[0].id)).toEqual(["next_Ship the parser", "next_Write docs", "ci"]);
   });
   it("cites exactly the finding each suggestion comes from", () => {
-    const focus = ruleFocus([ci, pr], [], [snap()], NOW, cfg);
+    const comments = finding({ id: "c", rule: "issue_comments", severity: "medium" });
+    const focus = ruleFocus([ci, comments], [], [snap()], NOW, cfg);
     expect(focus.every((f) => f.sources.length === 1)).toBe(true);
-    expect(focus.map((f) => f.sources[0])).toEqual([ci, pr]);
+    expect(focus.map((f) => f.sources[0])).toEqual([ci, comments]);
+  });
+  it("suggests only the first open item of a sequence", () => {
+    const waiting = finding({ ...nextItem("me/demo", "Switch to CASE_BRIEF_MODE=all", "switch"), intent: { itemId: "switch", section: "M2 rollout", state: "open", waitsOn: "run" } });
+    const first = nextItem("me/demo", "Run CASE_BRIEF_MODE=command for 3 days", "run");
+    const focus = ruleFocus([], [first, waiting], [snap({ branches: [branch("main", 0)] })], NOW, cfg);
+    expect(focus.map((f) => f.sources[0].id)).toEqual(["next_run"]);
+    expect([first, waiting].map(ready)).toEqual([true, false]);
   });
   it("writes each suggestion as an action starting with a verb, stating its fact once", () => {
-    const stale = finding({ id: "b", rule: "stale_branch", severity: "medium", repo: "me/taga-technologies", target: "feat/update-product-section", ageDays: 8, summary: "Branch feat/update-product-section in me/taga-technologies: 2 unmerged commits, untouched for 8 days" });
-    const idle = finding({ id: "p", rule: "idle_pr", severity: "medium", target: "PR #4", ageDays: 5 });
-    const failing = finding({ id: "f", rule: "failing_ci", severity: "high", target: "build" });
+    const failing = finding({ id: "f", rule: "failing_ci", severity: "high", target: "build", summary: "CI failing on me/demo main (build), today" });
     const comments = finding({ id: "c", rule: "issue_comments", severity: "medium", target: "issue #8" });
-    expect([stale, idle, failing, comments].map(action)).toEqual([
-      "Merge or close feat/update-product-section in taga-technologies (idle 8 days)",
-      "Review or merge PR #4 in demo (quiet 5 days)",
+    expect([failing, comments, finding({ rule: "open_issues", severity: "low" })].map(action)).toEqual([
       "Fix the failing build CI in demo",
       "Reply to the comments on issue #8 in demo",
+      "Triage the open issues in demo",
     ]);
-    const [suggestion] = ruleFocus([stale], [], [], NOW, cfg);
-    expect(suggestion.text).not.toContain(stale.summary);
+    const [suggestion] = ruleFocus([failing], [], [], NOW, cfg);
+    expect(suggestion.text).not.toContain(failing.summary);
     expect(suggestion.text).not.toContain(suggestion.reason);
   });
   it("uses a template reason for other rules", () => {
     const comment = finding({ id: "c", rule: "issue_comments", severity: "medium" });
-    const branchFinding = finding({ id: "b", rule: "stale_branch", severity: "medium", ageDays: 12 });
     const other = finding({ id: "o", rule: "something_new", severity: "medium" });
-    expect(ruleFocus([comment, branchFinding, other], [], [], NOW, cfg).map((f) => f.reason)).toEqual([
-      "Unmerged and untouched for 12 days", "New comments are waiting for a reply", "Needs attention",
+    const high = finding({ id: "h", rule: "something_new", severity: "high" });
+    expect(ruleFocus([comment, other, high], [], [], NOW, cfg).map((f) => f.reason)).toEqual([
+      "Marked high priority", "New comments are waiting for a reply", "Needs attention",
     ]);
   });
 });
@@ -200,28 +215,45 @@ describe("yesterday's focus", () => {
     const snaps = [snap({ commits: [commit("a", "2026-10-12T21:00:00Z"), commit("b", "2026-10-13T09:00:00Z"), commit("c", "2026-10-13T15:00:00Z")] }), snap({ repo: "me/other", commits: [commit("d", "2026-10-13T12:00:00Z")] })];
     expect(yesterdayFocus(row("me/demo"), snaps, period)).toEqual([expect.objectContaining({
       rule: "yesterday_focus", severity: "info", repo: "me/demo",
-      summary: "Yesterday's focus: Ship the parser. 2 commits in demo yesterday",
+      summary: "You picked: Ship the parser. 2 commits in demo yesterday",
       sources: [{ label: "commit", url: "https://github.com/me/demo/commit/c" }],
     })]);
   });
   it("counts commits on every branch, not only the default one", () => {
     const snaps = [snap({ commits: [commit("a", "2026-10-13T09:00:00Z", "feat/m3-intent"), commit("b", "2026-10-13T10:00:00Z", "feat/m3-intent"), commit("c", "2026-10-13T11:00:00Z")] })];
-    expect(yesterdayFocus(row("me/demo"), snaps, period)[0].summary).toBe("Yesterday's focus: Ship the parser. 3 commits in demo yesterday");
+    expect(yesterdayFocus(row("me/demo"), snaps, period)[0].summary).toBe("You picked: Ship the parser. 3 commits in demo yesterday");
   });
   it("still counts the recap's commits when the focus was picked after them", () => {
     // 22 Oct: the focus was picked from an evening /brief, after the day's 36 commits.
     const evening = { ...row("me/demo"), created_at: new Date("2026-10-13T17:00:00Z") };
     const snaps = [snap({ commits: [commit("a", "2026-10-13T09:00:00Z", "feat/m3-intent"), commit("b", "2026-10-13T16:58:00Z", "feat/m3-intent")] })];
     const [f] = yesterdayFocus(evening, snaps, focusPeriod(new Date("2026-10-13T17:00:00Z"), recap, NOW));
-    expect(f.summary).toBe("Yesterday's focus: Ship the parser. 2 commits in demo yesterday");
+    expect(f.summary).toBe("You picked: Ship the parser. 2 commits in demo yesterday");
   });
   it("says when the focus was marked done", () => {
     const [f] = yesterdayFocus({ ...row("me/demo"), short_label: "the parser", status: "done" }, [snap()], period);
-    expect(f.summary).toBe("Yesterday's focus: the parser, marked done. No commits in demo yesterday");
+    expect(f.summary).toBe("You picked: the parser, marked done. No commits in demo yesterday");
+  });
+  it("says where the commits went when none landed in the picked repo", () => {
+    // 23 Oct: the taga branch was picked, but the day's commits were in case-ai.
+    const taga = { ...row("me/taga-technologies"), item_text: "Branch feat/update-product-section in me/taga-technologies: 2 unmerged commits, untouched for 8 days", short_label: null };
+    const snaps = [snap({ repo: "me/taga-technologies" }), snap({ repo: "me/other", commits: [commit("d", "2026-10-13T12:00:00Z")] }),
+      snap({ commits: [commit("a", "2026-10-13T09:00:00Z", "feat/m3-intent"), commit("b", "2026-10-13T10:00:00Z", "feat/m3-intent")] })];
+    expect(yesterdayFocus(taga, snaps, period)).toEqual([expect.objectContaining({
+      repo: "me/taga-technologies",
+      summary: "You picked: Branch feat/update-product-section in me/taga-technologies: 2 unmerged commits, but the commits went to demo (2 commits yesterday)",
+      sources: [{ label: "commit", url: "https://github.com/me/demo/commit/b" }],
+    })]);
+  });
+  it("drops day counts frozen into the stored text, which are a day old by the next brief", () => {
+    expect(withoutAge("Merge or close feat/x in taga-technologies (idle 8 days)")).toBe("Merge or close feat/x in taga-technologies");
+    expect(withoutAge("Review or merge PR #4 in demo (quiet 1 day)")).toBe("Review or merge PR #4 in demo");
+    expect(withoutAge("Branch feat/x in me/taga: 2 unmerged commits, untouched for 8 days")).toBe("Branch feat/x in me/taga: 2 unmerged commits");
+    expect(withoutAge("Ship the parser in 3 days")).toBe("Ship the parser in 3 days");
   });
   it("says when the repo had no commits over the period", () => {
     const [f] = yesterdayFocus(row("me/demo"), [snap({ commits: [commit("a", "2026-10-12T05:00:00Z")] })], period);
-    expect(f).toMatchObject({ summary: "Yesterday's focus: Ship the parser. No commits in demo yesterday", sources: [{ label: "repo", url: "https://github.com/me/demo" }] });
+    expect(f).toMatchObject({ summary: "You picked: Ship the parser. No commits in demo yesterday", sources: [{ label: "repo", url: "https://github.com/me/demo" }] });
   });
   it("counts since the last brief when that is earlier than the recap, or the last day without one", () => {
     const quiet = { ...recap, label: "" };
@@ -231,19 +263,19 @@ describe("yesterday's focus", () => {
   });
   it("states only what the focus was when there is no readable repo to check", () => {
     for (const [repo, snaps] of [[null, [snap()]], ["me/demo", [snap({ error: "GitHub 404" })]], ["me/gone", [snap()]]] as const) {
-      expect(yesterdayFocus(row(repo), [...snaps], period)).toMatchObject([{ summary: "Yesterday's focus: Ship the parser", sources: [] }]);
+      expect(yesterdayFocus(row(repo), [...snaps], period)).toMatchObject([{ summary: "You picked: Ship the parser", sources: [] }]);
     }
   });
   it("leads the recap in both renderers, escaped", () => {
     const previousFocus = yesterdayFocus({ ...row("me/demo"), item_text: "Ship <it>" }, [snap({ commits: [commit("c", "2026-10-13T15:00:00Z")] })], period);
-    const lead = `<b>Here's what you worked on yesterday</b>\n• Yesterday's focus: Ship &lt;it&gt;. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/c">commit</a>]\n\n<b>demo</b>`;
+    const lead = `<b>Here's what you worked on yesterday</b>\n• You picked: Ship &lt;it&gt;. 1 commit in demo yesterday. [<a href="https://github.com/me/demo/commit/c">commit</a>]\n\n<b>demo</b>`;
     expect(render([finding()], [], recap, 3800, undefined, { previousFocus })).toContain(lead);
     expect(renderModelBrief({ yesterday: [{ text: "Progress", sources: [finding()] }], attention: [], focus: [] }, [], recap, 3800, { previousFocus })).toContain(lead);
   });
   it("stands alone without a recap and adds no links without sources", () => {
     const w = { start: new Date("2026-10-07T22:00:00Z"), end: new Date("2026-10-13T22:00:00Z"), label: "" };
     const text = render([], [], w, 3800, undefined, { previousFocus: yesterdayFocus(row(null), [], period) });
-    expect(text).toMatch(/\n\n• Yesterday's focus: Ship the parser\.\n\nNothing new in the past week\.$/);
+    expect(text).toMatch(/\n\n• You picked: Ship the parser\.\n\nNothing new in the past week\.$/);
     expect(text).not.toContain("worked on");
   });
 });
