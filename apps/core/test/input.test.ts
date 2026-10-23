@@ -105,7 +105,8 @@ describe("model input", () => {
     expect(FOCUS_PROMPT).toContain('"focus": 2 or 3 suggestions');
     expect(FOCUS_PROMPT).toContain('Each cites at least one alias in "sources"');
     expect(FOCUS_PROMPT).toContain("states only a fact from a cited finding");
-    expect(FOCUS_PROMPT).toContain("Prefer high, then medium findings; then open next_item findings in repos that have commit findings");
+    expect(FOCUS_PROMPT).toContain("Prefer active work: open next_item findings in repos that have commit findings in this input, first; then high, then medium findings");
+    expect(FOCUS_PROMPT).not.toMatch(/Merge or close|stale branches|waiting PRs/);
     expect(FOCUS_PROMPT.split("\n").length).toBe(SYSTEM_PROMPT.split("\n").length + 1);
   });
 });

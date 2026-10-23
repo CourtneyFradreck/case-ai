@@ -19,7 +19,7 @@ import { gateOldBranches, oldBranchesDay } from "./old-branches.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, focusPeriod, rankNext, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
+import { focusKeyboard, focusPeriod, leftOpen, rankNext, ready, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -51,9 +51,9 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
     // Overdue items go last, for the model as for the rule-picked suggestions.
-    // A snoozed focus keeps its finding out of suggestions for a few days.
+    // A snoozed focus keeps its finding out of suggestions for a few days. An item that waits on an open one above it is left out.
     const parked = features.focusButtons ? await snoozedFocusIds(now.toJSDate()) : new Set<string>();
-    const next = features.focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item" && !parked.has(f.id)), snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
+    const next = features.focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item" && ready(f) && !parked.has(f.id)), snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
     // Items a merged PR likely finished get a tick-off line, written by code, instead of a suggestion.
     const done = features.focusButtons ? intent.filter((f) => f.rule === "next_likely_done") : [];
     const period = features.focusButtons && focusRow ? focusPeriod(await previousBriefAt(runId), w, now.toJSDate()) : undefined;
@@ -73,19 +73,22 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       ? collapseRepeats(visible, countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible, collapsed: [], days: new Map<string, number>() };
     const snoozeItems = features.snooze ? snoozable(visible) : [];
+    // Branches and PRs left open are often kept on purpose: one low line written by code, never suggested or sent to the model.
+    const lingering = kept.filter(leftOpen);
+    const active = kept.filter((f) => !leftOpen(f));
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? ruleFocus(kept.filter((f) => !parked.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
-    const options = { userName: config.userName, now, previousFocus, collapsed, days, done };
-    const renderRules = (footer?: string) => render(kept, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
+    const rulesFocus = features.focusButtons ? ruleFocus(active.filter((f) => !parked.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
+    const options = { userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering };
+    const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;
     let focus: ValidFocus[] = rulesFocus;
     const useModel = env.briefMode === "all" || (env.briefMode === "command" && source === "command");
-    if (useModel && kept.length) {
+    if (useModel && active.length) {
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...kept, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus, collapsed, days, done, parked }, provider, now);
+        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;

@@ -1,9 +1,9 @@
 import type { RepoSnapshot, Finding, Severity } from "../types.js";
 import { fid } from "../id.js";
 import { plural } from "../plural.js";
-import { inWindow, type Window } from "../time.js";
+import { daysSince, inWindow, type Window } from "../time.js";
 import { deduplicateFindings } from "../sections.js";
-import { byPriority, daysSince } from "./order.js";
+import { byPriority } from "./order.js";
 
 export { byPriority } from "./order.js";
 

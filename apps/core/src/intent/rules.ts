@@ -1,5 +1,6 @@
 import { fid } from "../id.js";
-import { byPriority, daysSince } from "../rules/order.js";
+import { byPriority } from "../rules/order.js";
+import { daysSince } from "../time.js";
 import type { Finding, RepoSnapshot } from "../types.js";
 import { itemLabel } from "../labels.js";
 import { mergedMatch } from "./done.js";
@@ -16,11 +17,36 @@ export type IntentHistory = Map<string, { sha: string; openIds: Set<string> }>;
 
 type OkNext = Extract<RepoSnapshot["next"], { status: "ok" }>;
 
+// Settings and milestones an item names: CASE_BRIEF_MODE, features.focusButtons, M2. File names such as
+// NEXT.md are places, not steps, so they don't count.
+export function subjects(text: string): Set<string> {
+  const words = text.match(/[A-Za-z][\w.]*[A-Za-z0-9]/g) ?? [];
+  return new Set(words.filter((w) => /^M\d{1,2}$/i.test(w) ||
+    (/[._]/.test(w) && w.split(/[._]/).every((part) => part.length >= 2) && !/\.(?:md|json|ts|js|sql|ya?ml|txt)$/i.test(w)))
+    .map((w) => w.toLowerCase()));
+}
+
+// Items in a section are often steps. An open item waits on the pending item just above it when it is
+// marked "after:", or, conservatively, when both name the same setting or milestone ("Run CASE_BRIEF_MODE=command
+// for 3 days", then "Switch to CASE_BRIEF_MODE=all"). A done item, or one a merged PR likely finished, blocks nothing.
+export function waitsOn(items: { id: string; text: string; section: string | null; after?: boolean }[], pending: (id: string) => boolean): Map<string, string> {
+  const waits = new Map<string, string>();
+  items.forEach((item, n) => {
+    const prev = items[n - 1];
+    if (!prev || prev.section !== item.section || !pending(prev.id)) return;
+    const shared = [...subjects(item.text)].some((w) => subjects(prev.text).has(w));
+    if (item.after || shared) waits.set(item.id, prev.id);
+  });
+  return waits;
+}
+
 // An open item a merged PR likely finished is never suggested. One line asks to tick it off instead;
 // CASE stays read-only on NEXT.md.
 export function nextItems(s: RepoSnapshot, next: OkNext): Finding[] {
+  const finished = new Map(next.items.filter((i) => i.state === "open").map((i) => [i.id, mergedMatch(i.text, s)] as const));
+  const waits = waitsOn(next.items, (id) => finished.has(id) && !finished.get(id));
   return next.items.filter((i) => i.state === "open").map((i): Finding => {
-    const pr = mergedMatch(i.text, s);
+    const pr = finished.get(i.id);
     if (pr) return {
       id: fid("next_likely_done", s.repo, i.id),
       rule: "next_likely_done",
@@ -38,7 +64,7 @@ export function nextItems(s: RepoSnapshot, next: OkNext): Finding[] {
       summary: `Next in ${s.repo}: ${i.text}`,
       ...(i.section ? { details: [i.section] } : {}),
       sources: [{ label: "NEXT.md", url: `${next.url}#L${i.line}` }],
-      intent: { itemId: i.id, section: i.section, state: "open" },
+      intent: { itemId: i.id, section: i.section, state: "open", ...(waits.has(i.id) ? { waitsOn: waits.get(i.id) } : {}) },
     };
   });
 }

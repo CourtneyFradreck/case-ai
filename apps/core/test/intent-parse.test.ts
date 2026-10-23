@@ -71,4 +71,9 @@ describe("parseNext", () => {
     const [item] = parse(`- [ ] ${long}`);
     expect(item.text).toBe("x".repeat(200));
   });
+  it("reads an after: marker without making it part of the text or ID", () => {
+    const [a, b] = parseNext("me/demo", "- [ ] Write the post\n- [ ] After: Publish it");
+    expect(a.after).toBeUndefined();
+    expect(b).toMatchObject({ text: "Publish it", after: true, id: parseNext("me/demo", "- [ ] Publish it")[0].id });
+  });
 });

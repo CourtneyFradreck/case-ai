@@ -1,6 +1,6 @@
 import type { Finding, RepoSnapshot } from "./types.js";
 import type { ValidFocus } from "./llm/schema.js";
-import { byPriority, daysSince } from "./rules/order.js";
+import { byPriority } from "./rules/order.js";
 import { datePassed } from "./intent/dates.js";
 import { relatesTo } from "./intent/done.js";
 import { plural } from "./plural.js";
@@ -9,7 +9,7 @@ import { bulletText } from "./recap-text.js";
 import type { InlineKeyboardMarkup } from "./telegram.js";
 import { esc } from "./render.js";
 import { fid } from "./id.js";
-import type { Window } from "./time.js";
+import { daysSince, type Window } from "./time.js";
 import { clip, focusLabel } from "./labels.js";
 
 export const MAX_FOCUS = 3;
@@ -17,11 +17,8 @@ export const MAX_FOCUS = 3;
 // One fixed reason per rule, built only from the finding's own fields. Reasons are stored with the
 // brief (briefs.focus) and logged, never shown.
 function reason(f: Finding): string {
-  const days = f.ageDays === undefined ? "" : plural(f.ageDays, "day");
   switch (f.rule) {
     case "failing_ci": return "CI is failing on the default branch";
-    case "idle_pr": return days ? `No activity for ${days}` : "No recent activity";
-    case "stale_branch": return days ? `Unmerged and untouched for ${days}` : "Unmerged and untouched";
     case "issue_comments": return "New comments are waiting for a reply";
     case "next_item": return `Open in NEXT.md, and ${f.repo.split("/").pop()} has recent commits`;
     default: return f.severity === "high" ? "Marked high priority" : "Needs attention";
@@ -34,11 +31,8 @@ const text = (f: Finding) => f.rule === "next_item" ? f.summary.replace(`Next in
 // It replaces the finding's attention line, so the fact appears once.
 export function action(f: Finding): string {
   const repo = f.repo.split("/").pop()!;
-  const days = f.ageDays === undefined ? "" : plural(f.ageDays, "day");
   if (f.target) switch (f.rule) {
     case "failing_ci": return `Fix the failing ${f.target} CI in ${repo}`;
-    case "idle_pr": return `Review or merge ${f.target} in ${repo}${days ? ` (quiet ${days})` : ""}`;
-    case "stale_branch": return `Merge or close ${f.target} in ${repo}${days ? ` (idle ${days})` : ""}`;
     case "issue_comments": return `Reply to the comments on ${f.target} in ${repo}`;
   }
   if (f.rule === "open_issues") return `Triage the open issues in ${repo}`;
@@ -62,19 +56,27 @@ export const rankNext = (next: Finding[], snaps: RepoSnapshot[], now: Date, cfg:
   return [...next].sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)));
 };
 
-// Focus suggestions without the model: high findings, then medium, then open NEXT.md
-// items from repos with commits in the last activeRepoDays (most recently active first),
-// with overdue items after the rest.
+// Branches and PRs left open are often kept on purpose. They are never suggested, never sent to the model,
+// and the brief names them on one low line at the end (leftOpenLine in render.ts).
+const LEFT_OPEN = new Set(["stale_branch", "idle_pr", "old_branches"]);
+export const leftOpen = (f: Finding) => LEFT_OPEN.has(f.rule);
+
+// An open NEXT.md item that follows another open one in a sequence waits its turn: only the first is suggested.
+export const ready = (f: Finding) => !f.intent?.waitsOn;
+
+// Focus suggestions without the model: active work first, as open NEXT.md items from repos with
+// commits in the last activeRepoDays (most recently active first, overdue items after the rest), then
+// high and medium findings. Branches and PRs left open are never suggested.
 export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnapshot[], now: Date,
                           cfg: Pick<IntentConfig, "activeRepoDays" | "ignoreBranchPrefixes">, focusFindingId?: string | null): ValidFocus[] {
-  const attention = findings.filter((f) => f.severity === "high" || f.severity === "medium").sort(byPriority);
+  const attention = findings.filter((f) => (f.severity === "high" || f.severity === "medium") && !leftOpen(f)).sort(byPriority);
   const active = new Map(snaps.filter((s) => !s.error).map((s) => [s.repo, lastCommitDays(s, now, cfg)] as const)
     .filter(([, days]) => days <= cfg.activeRepoDays));
   const late = new Set(next.filter((f) => overdue(f, snaps, now, cfg, focusFindingId)).map((f) => f.id));
-  const planned = next.filter((f) => f.rule === "next_item" && active.has(f.repo))
+  const planned = next.filter((f) => f.rule === "next_item" && ready(f) && active.has(f.repo))
     // Stable sort keeps NEXT.md order within a repo.
     .sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)) || active.get(a.repo)! - active.get(b.repo)!);
-  return [...attention, ...planned].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
+  return [...planned, ...attention].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
 }
 
 // What briefs.focus stores per suggestion, in button order. label is missing on briefs stored before it existed.
@@ -182,23 +184,42 @@ export function focusPeriod(previousBriefAt: Date | undefined, recap: Window, no
   return { since, label: previousBriefAt ? "since the last brief" : "in the last day" };
 }
 
-// An info finding for yesterday's focus: what it was and how many commits its repo had over the period,
-// on every branch. It leads the recap and is never sent to the model.
+// Stored focus text is a snapshot of the day it was picked: its "idle 8 days" is a day out of date by the
+// next brief. "Merge or close feat/x (idle 8 days)" → "Merge or close feat/x".
+export const withoutAge = (text: string) => text
+  .replace(/\s*\((?:idle|quiet|untouched|no activity)(?: for)? \d+ days?\)/gi, "")
+  .replace(/,?\s*(?:untouched|idle|quiet|no activity) for \d+ days?/gi, "")
+  .trim();
+
+// An info finding for yesterday's focus: the one the user picked (by button, typed or /focus; the line is never
+// inferred), and how many commits its repo had over the period, on every branch. When none landed there, it says
+// which repo the commits went to. It leads the recap and is never sent to the model.
 export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
   if (!focus) return [];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
   // Without a readable repo there is nothing to check commits against.
-  const name = `${focus.short_label || focus.item_text}${focus.status === "done" ? ", marked done" : ""}`;
-  if (!snapshot) return [{ ...base, repo: focus.repo ?? "", summary: `Yesterday's focus: ${name}`, sources: [] }];
-  const commits = snapshot.commits.filter((c) => new Date(c.date) >= period.since).sort((a, b) => b.date.localeCompare(a.date));
+  const name = `${withoutAge(focus.short_label || focus.item_text)}${focus.status === "done" ? ", marked done" : ""}`;
+  if (!snapshot) return [{ ...base, repo: focus.repo ?? "", summary: `You picked: ${name}`, sources: [] }];
+  const since = (s: RepoSnapshot) => s.commits.filter((c) => new Date(c.date) >= period.since).sort((a, b) => b.date.localeCompare(a.date));
+  const commits = since(snapshot);
   const repo = snapshot.repo.split("/").pop()!;
+  if (commits.length) return [{
+    ...base, repo: snapshot.repo,
+    summary: `You picked: ${name}. ${plural(commits.length, "commit")} in ${repo} ${period.label}`,
+    sources: [{ label: "commit", url: commits[0].url }],
+  }];
+  // Where the work went instead: the repo with the most commits over the period.
+  const [busiest] = snaps.filter((s) => !s.error && s.repo !== snapshot.repo).map((s) => ({ s, commits: since(s) }))
+    .filter((r) => r.commits.length).sort((a, b) => b.commits.length - a.commits.length || a.s.repo.localeCompare(b.s.repo));
+  if (busiest) return [{
+    ...base, repo: snapshot.repo,
+    summary: `You picked: ${name}, but the commits went to ${busiest.s.repo.split("/").pop()} (${plural(busiest.commits.length, "commit")} ${period.label})`,
+    sources: [{ label: "commit", url: busiest.commits[0].url }],
+  }];
   return [{
-    ...base,
-    repo: snapshot.repo,
-    summary: commits.length
-      ? `Yesterday's focus: ${name}. ${plural(commits.length, "commit")} in ${repo} ${period.label}`
-      : `Yesterday's focus: ${name}. No commits in ${repo} ${period.label}`,
-    sources: commits.length ? [{ label: "commit", url: commits[0].url }] : [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
+    ...base, repo: snapshot.repo,
+    summary: `You picked: ${name}. No commits in ${repo} ${period.label}`,
+    sources: [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
   }];
 }

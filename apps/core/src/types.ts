@@ -16,7 +16,7 @@ export interface Finding {
   sources: Source[];
   ageDays?: number;       // for sorting within a severity
   activity?: Activity;   // structured recap facts, independent of model wording
-  intent?: { itemId: string; section: string | null; state: "open" | "done" };
+  intent?: { itemId: string; section: string | null; state: "open" | "done"; waitsOn?: string };  // waitsOn: the open item it follows
   target?: string;        // what an attention finding is about, as the brief names it: a branch, "PR #4", "issue #8" or a workflow
 }
 
@@ -34,6 +34,7 @@ export interface CiRun { workflowId: number; workflowName: string; conclusion: s
 export interface NextItem {
   id: string; text: string; section: string | null;
   state: "open" | "done"; line: number;   // 1-based line number in NEXT.md
+  after?: boolean;                         // marked "after:": waits for the item above it
 }
 export type NextFile =
   | { status: "ok"; sha: string; url: string; lastChangedAt: string | null; items: NextItem[] }

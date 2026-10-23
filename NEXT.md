@@ -54,6 +54,16 @@
 - [ ] Confirm a manual /brief doesn't become the anchor for the next scheduled brief's yesterday window
 - [ ] Done detection: keyword-only matches show the tick-off line but don't suppress the suggestion; add per-repo stopwords (repo name, words common to that repo's PRs) for matching and commit themes
 
+## 23 Oct brief fixes (#4, trial day 1)
+
+- [x] Never suggest merging or closing stale branches or idle PRs; one low "Left open" line at the end instead
+- [x] Suggestions rank active NEXT.md work first, then high and medium findings
+- [x] Yesterday's focus says "You picked: X" and where the commits went when none landed there; no stale day counts
+- [x] One daysSince helper (Harare calendar days) for every "N days"
+- [x] Suggest only the first open step of a sequence (same setting or milestone, or "after:")
+- [ ] Redeploy and check the next 07:00 brief: no taga suggestion, one CASE_BRIEF_MODE step, "You picked" line
+- [ ] Tick "Merge M2" and the CASE_BRIEF_MODE=command step in NEXT.md on main, so the tick-off line and stale suggestions stop
+
 ## M4 Non-code (next)
 
 Starts after the M3 trial in #4 ends.

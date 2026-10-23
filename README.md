@@ -169,11 +169,30 @@ CASE reads a `NEXT.md` file at the root of each tracked repo to learn what you p
 - `#` to `######` headings start a section. Items before any heading have no section.
 - `- [ ] text` or `* [ ] text` is an open item. `- [x]` or `- [X]` is a done item.
 - Indented checkbox lines are items too (indentation is ignored).
+- `- [ ] after: text` marks an item as the next step after the item just above it (see [Sequences](#sequences)). The `after:` marker is not part of the item's text or ID.
 - Everything else is ignored, including any checkbox lines inside ```` ``` ```` code fences.
 
 Each item's ID comes from its text alone: lowercased, with whitespace collapsed and trailing `.,;:` stripped. Reordering items or moving one to another section (such as a "Done" heading) keeps its ID. Editing the wording gives it a new ID. If the same text appears twice, only the first is kept.
 
 CASE remembers every item it has seen, with when it first appeared and when it last changed section. When you edit an item's wording, CASE re-links the new item to the old one so it keeps that history and isn't reported as finished: an item that disappeared since the last run is paired with a new item when their normalised texts are at least 85% similar (Levenshtein ratio) and each is the other's single best match. Small edits such as typo fixes re-link; rewrites, or edits where two items are equally close, start fresh.
+
+### Sequences
+
+Items in a section are often steps in order. CASE suggests only the first open step of a sequence: an open item waits while the item just above it, in the same section, is still open and
+
+- is marked `after:`, or
+- names the same setting or milestone as it: an environment variable or config key (`CASE_BRIEF_MODE`, `features.streaks`) or a milestone (`M2`). File names such as `NEXT.md` don't count.
+
+```markdown
+## M2 rollout
+
+- [x] Merge M2 after M1 trial ends
+- [ ] Run CASE_BRIEF_MODE=command for 3 days        ← suggested
+- [ ] Switch to CASE_BRIEF_MODE=all                 ← waits (same setting)
+- [ ] after: Remove the n8n fallback                ← waits (marked)
+```
+
+A done item, or one a merged PR likely finished, blocks nothing. Waiting items are still stored and listed by `/next`; they are only kept out of suggestions and the model's input. Without either signal, items are treated as independent, so add `after:` when the order matters and the wording doesn't show it.
 
 ## Focus
 
@@ -182,13 +201,21 @@ With `features.focusButtons` set to `true` in `apps/core/config.json`, the brief
 **Suggestions.** A numbered "Today, I'd suggest" section sits between attention and the recap. Each line is an action that starts with a verb, with at most one short fact in brackets, and links its source:
 
 ```
-1. Merge or close feat/update-product-section in taga-technologies (idle 8 days)
+1. Run CASE_BRIEF_MODE=command for 3 days; check logged dropped / fallbackReason [NEXT.md]
 ```
 
-A finding a suggestion is built on appears in the suggestion instead of in attention, so no fact is stated twice. Every suggestion also has a reason (such as "Unmerged and untouched for 8 days"); reasons are stored with the brief and logged as `focusReasons` on the `brief` event, never shown.
+A finding a suggestion is built on appears in the suggestion instead of in attention, so no fact is stated twice. Every suggestion also has a reason (such as "Open in NEXT.md, and case-ai has recent commits"); reasons are stored with the brief and logged as `focusReasons` on the `brief` event, never shown.
 
-- **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, a PR with no activity, an open `NEXT.md` item), and prefers high and medium findings, then `NEXT.md` items in repos with commits. Suggestions with no valid source, an empty reason, only findings an earlier suggestion already cites, or only a snoozed focus's finding are dropped.
-- **Rule-only brief and fallback:** code picks up to three: high findings, then medium, then open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first). Each gets an action built from the finding and a fixed reason per rule.
+- **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, comments waiting for a reply, an open `NEXT.md` item), and prefers `NEXT.md` items in repos with commits, then high and medium findings. Suggestions with no valid source, an empty reason, only findings an earlier suggestion already cites, or only a snoozed focus's finding are dropped.
+- **Rule-only brief and fallback:** code picks up to three: active work first, as open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first), then high findings, then medium. Each gets an action built from the finding and a fixed reason per rule.
+
+**Branches and PRs left open.** Stale branches, idle PRs and old branches are often kept open on purpose, so CASE never suggests merging or closing them and never sends them to the model. They share one low line at the very end of the brief (the first thing cut when it runs long), each linked, with its age:
+
+```
+⚪ Left open: feat/update-product-section in taga-technologies (idle 9 days)
+```
+
+All day counts ("idle 9 days", "untouched for 9 days") come from one helper, `daysSince` in `src/time.ts`: Harare calendar days since the last commit (or a PR's last update), so a commit at 23:50 is a day old at 00:10.
 
 **Done and overdue items.** CASE never writes to `NEXT.md`. An open item that a merged PR likely finished is not suggested; one line in attention asks you to tick it off instead:
 
@@ -224,7 +251,7 @@ Buttons on an earlier day's brief no longer set a focus. `Something else` asks w
 
 Every choice is kept in `core.focus`; the latest one for a date is that day's focus.
 
-**Yesterday's focus.** The next brief opens its recap with yesterday's focus and how many commits its repo had, on every branch, linking the newest. The count runs from the previous brief (or the last 24 hours without one), widened to the start of the recap, so it always includes every commit the recap shows: "36 commits in case-ai yesterday". A focus you typed has no repo, so the line only says what it was. This line is written by code and never sent to the model.
+**Yesterday's focus.** The next brief opens its recap with the focus you picked yesterday (by button, typed or `/focus`; it is never inferred) and how many commits its repo had, on every branch, linking the newest: "You picked: Merge M2. 36 commits in case-ai yesterday". When none landed there, it says where they went instead, linking that repo's newest commit: "You picked: taga product section branch, but the commits went to case-ai (12 commits yesterday)". The count runs from the previous brief (or the last 24 hours without one), widened to the start of the recap, so it always includes every commit the recap shows. Day counts stored with the pick ("idle 8 days") are dropped, since they are a day old by then. A focus you typed has no repo, so the line only says what it was. This line is written by code and never sent to the model.
 
 ## Less repetition
 
