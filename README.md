@@ -181,7 +181,8 @@ CASE remembers every item it has seen, with when it first appeared and when it l
 Items in a section are often steps in order. CASE suggests only the first open step of a sequence: an open item waits while the item just above it, in the same section, is still open and
 
 - is marked `after:`, or
-- names the same setting or milestone as it: an environment variable or config key (`CASE_BRIEF_MODE`, `features.streaks`) or a milestone (`M2`). File names such as `NEXT.md` don't count.
+- names the same setting or milestone as it: an environment variable or config key (`CASE_BRIEF_MODE`, `features.streaks`) or a milestone (`M2`), or
+- is about the same file: both name it among their first three words ("Parse NEXT.md in each tracked repo", then "NEXT.md items become findings…"). A file named later in an item ("Tick it off in NEXT.md") is a place, not the subject, and doesn't count.
 
 ```markdown
 ## M2 rollout

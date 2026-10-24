@@ -26,15 +26,24 @@ export function subjects(text: string): Set<string> {
     .map((w) => w.toLowerCase()));
 }
 
+// The file an item is about: a file name among its first three words ("Parse NEXT.md in each tracked repo",
+// "NEXT.md items become findings"). A file named later ("Tick it off in NEXT.md") is a place, not the subject.
+const FILE = /^[\w-]+(?:\.[\w-]+)*\.(?:md|json|ts|js|sql|ya?ml|txt)$/i;
+export function leadingFile(text: string): string | undefined {
+  return text.split(/\s+/).slice(0, 3).map((w) => w.replace(/^[`"'(]+|[`"'),.;:]+$/g, "")).find((w) => FILE.test(w))?.toLowerCase();
+}
+
 // Items in a section are often steps. An open item waits on the pending item just above it when it is
 // marked "after:", or, conservatively, when both name the same setting or milestone ("Run CASE_BRIEF_MODE=command
-// for 3 days", then "Switch to CASE_BRIEF_MODE=all"). A done item, or one a merged PR likely finished, blocks nothing.
+// for 3 days", then "Switch to CASE_BRIEF_MODE=all"), or both are about the same file (see leadingFile).
+// A done item, or one a merged PR likely finished, blocks nothing.
 export function waitsOn(items: { id: string; text: string; section: string | null; after?: boolean }[], pending: (id: string) => boolean): Map<string, string> {
   const waits = new Map<string, string>();
   items.forEach((item, n) => {
     const prev = items[n - 1];
     if (!prev || prev.section !== item.section || !pending(prev.id)) return;
-    const shared = [...subjects(item.text)].some((w) => subjects(prev.text).has(w));
+    const file = leadingFile(item.text);
+    const shared = [...subjects(item.text)].some((w) => subjects(prev.text).has(w)) || (!!file && file === leadingFile(prev.text));
     if (item.after || shared) waits.set(item.id, prev.id);
   });
   return waits;
