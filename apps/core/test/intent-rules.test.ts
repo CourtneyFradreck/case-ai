@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NOW, daysAgo, snap } from "./fixtures.js";
 import { parseNext } from "../src/intent/parse.js";
-import { runIntentRules, subjects, type IntentHistory } from "../src/intent/rules.js";
+import { leadingFile, runIntentRules, subjects, type IntentHistory } from "../src/intent/rules.js";
 import type { NextFile, RepoSnapshot } from "../src/types.js";
 
 const cfg = { newRepoDays: 7, nextStaleDays: 14, activeRepoDays: 7 };
@@ -167,6 +167,17 @@ describe("sequences of NEXT.md items", () => {
   it("leaves unrelated items, and items in other sections, free", () => {
     const md = ["## A", "- [ ] Turn on features.streaks", "- [ ] Tidy the README.md intro", "- [ ] Fix NEXT.md parsing", "## B", "- [ ] after: Turn on features.streaks again"].join("\n");
     expect(Object.values(waits(md))).toEqual([null, null, null, null]);
+  });
+  // 24 Oct brief: both were suggested side by side, though turning items into findings needs the parser first.
+  it("waits when both items are about the same file", () => {
+    const md = ["## M1", "- [ ] Parse NEXT.md in each tracked repo (open \"- [ ]\" items, section headings)", "- [ ] NEXT.md items become findings with stable IDs the validator can cite"].join("\n");
+    expect(Object.values(waits(md))).toEqual([null, idFor("Parse NEXT.md in each tracked repo (open \"- [ ]\" items, section headings)")]);
+  });
+  it("finds the file an item is about only in its first three words", () => {
+    expect(leadingFile("Parse NEXT.md in each tracked repo")).toBe("next.md");
+    expect(leadingFile("`config.json`: turn on streaks")).toBe("config.json");
+    expect(leadingFile("Tick it off in NEXT.md")).toBeUndefined();
+    expect(leadingFile("Merge M2")).toBeUndefined();
   });
   it("names settings and milestones as subjects, not files or abbreviations", () => {
     expect([...subjects("Run CASE_BRIEF_MODE=command; check features.focusButtons, e.g. in NEXT.md and config.json for M3")])
