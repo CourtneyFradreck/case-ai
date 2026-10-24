@@ -102,6 +102,12 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       owner, repo, state: "all", since, per_page: 100,
     });
     const issuesByNumber = new Map(issues.map((i) => [i.number, i]));
+    // Unknown identity counts as yours, as for comments: it must never turn issues into requests for attention.
+    const byMe = (i: { user?: { login?: string } | null }) => myLogin === null || i.user?.login === myLogin;
+    // Open issues someone else opened. Issues you opened (a trial checklist, a reminder) are notes, not requests;
+    // new comments on them from others still come through as issue_comments.
+    const openIssues = await gh.paginate(gh.issues.listForRepo, { owner, repo, state: "open", per_page: 100 });
+    const othersOpen = openIssues.filter((i) => !i.pull_request && !byMe(i)).length;
     const comments: IssueComment[] = [];
     try {
       const list = await gh.paginate(gh.issues.listCommentsForRepo, { owner, repo, since, per_page: 100 });
@@ -178,12 +184,12 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       })),
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state, mine: byMe(i) })),
       closedIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.closed_at, w))
         .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),
       comments,
-      openIssueCount: Math.max(0, meta.open_issues_count - open.length),
+      openIssueCount: othersOpen,
       branches,
       ciRuns,
       next,

@@ -22,7 +22,7 @@ export interface Finding {
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }
 export interface Pr { number: number; title: string; url: string; draft: boolean; headRef: string; updatedAt: string; createdAt?: string; mergedAt?: string | null }
-export interface Issue { number: number; title: string; url: string; createdAt: string; state?: string }
+export interface Issue { number: number; title: string; url: string; createdAt: string; state?: string; mine?: boolean }
 export interface ClosedIssue { number: number; title: string; url: string; closedAt: string }
 export interface IssueComment {
   id: number; issueNumber: number; issueTitle: string; isPr: boolean;
@@ -54,7 +54,7 @@ export interface RepoSnapshot {
   newIssues: Issue[];
   closedIssues: ClosedIssue[];
   comments: IssueComment[];
-  openIssueCount: number;
+  openIssueCount: number; // open issues opened by someone else; your own aren't a request for attention
   branches: Branch[];
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
   next: NextFile;         // NEXT.md on the default branch
