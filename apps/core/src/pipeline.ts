@@ -19,7 +19,7 @@ import { gateOldBranches, oldBranchesDay } from "./old-branches.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, focusPeriod, leftOpen, rankNext, ready, ruleFocus, storedFocus, yesterdayFocus } from "./focus.js";
+import { focusKeyboard, focusPeriod, leftOpen, rankNext, ready, ruleFocus, storedFocus, withMissingNext, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -44,7 +44,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   try {
     const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
     await storeSnapshots(runId, snaps);
-    const { history: intentHistory, missingReported } = await storeNextItems(runId, snaps);
+    const { history: intentHistory, missingReported } = await storeNextItems(runId, snaps, now.toJSDate());
     const { window: w, snapshots } = selectRecap(snaps, now);
     const findings = runRules(snapshots, now.toJSDate(), config, w);
     const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported);
@@ -59,7 +59,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const period = features.focusButtons && focusRow ? focusPeriod(await previousBriefAt(runId), w, now.toJSDate()) : undefined;
     const previousFocus = period ? yesterdayFocus(focusRow, snaps, period) : [];
     await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
-    await markMissingReported(intent.filter((f) => f.rule === "next_missing").map((f) => f.repo));
+    // An active repo with no NEXT.md takes the last suggestion slot, added in code after the rules or the model pick the rest.
+    const missing = features.focusButtons ? intent.filter((f) => f.rule === "next_missing" && !parked.has(f.id)) : [];
     // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.
     const unsnoozed = features.snooze ? withoutSnoozed(findings, await activeSnoozes(now.toJSDate())) : findings;
     // Streaks count previous scheduled runs, so only scheduled briefs collapse repeats.
@@ -77,7 +78,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       ? collapseRepeats(visible.filter((f) => !leftOpen(f)), countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible.filter((f) => !leftOpen(f)), collapsed: [], days: new Map<string, number>() };
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? ruleFocus(active.filter((f) => !parked.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
+    const rulesFocus = features.focusButtons ? withMissingNext(ruleFocus(active.filter((f) => !parked.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), missing) : [];
     const options = { userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
@@ -88,7 +89,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked }, provider, now);
+        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked, missing }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;
@@ -107,6 +108,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     if (quiet) await storeBriefSentText(briefId, sent);
     focusReasons = storedFocus(focus).map(({ findingId, reason }) => ({ findingId, reason }));
     if (focus.length) await storeBriefFocus(briefId, storedFocus(focus));
+    // Only a suggestion actually shown starts the week before the repo is suggested again.
+    if (!quiet) await markMissingReported([...new Set(focus.flatMap((i) => i.sources).filter((f) => f.rule === "next_missing").map((f) => f.repo))]);
     if (snoozeItems.length) await storeBriefSnoozable(briefId, snoozeItems);
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     if (env.delivery === "core") {

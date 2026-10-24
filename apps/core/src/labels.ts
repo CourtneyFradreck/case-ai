@@ -41,6 +41,7 @@ export function findingLabel(f: Finding): string {
     case "issue_comments": if (f.target) return clip(`${repo} ${f.target} comments`); break;
     case "open_issues": return clip(`${repo} open issues`);
     case "old_branches": return "old branches";
+    case "next_missing": return clip(`${repo} NEXT.md`);
     case "next_item": return itemLabel(f.summary.replace(`Next in ${f.repo}: `, ""));
     case "next_likely_done": return clip(/^Looks like "(.*)" is done/.exec(f.summary)?.[1] ?? f.summary);
   }

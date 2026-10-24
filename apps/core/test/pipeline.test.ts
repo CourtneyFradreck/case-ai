@@ -185,20 +185,17 @@ describe("intent findings in the pipeline", () => {
     const gone = "0123456789";
     mocks.storeNextItems.mockResolvedValue({ history: new Map([["me/demo", { sha: "n0", openIds: new Set(["abcdef0123", gone]) }]]), missingReported: new Set() });
     await runBrief("command");
-    expect(mocks.storeNextItems).toHaveBeenCalledWith(7, [snap({ next })]);
+    expect(mocks.storeNextItems).toHaveBeenCalledWith(7, [snap({ next })], new Date("2026-10-14T05:00:00Z"));
     const done = mocks.storeFindings.mock.calls[0][1].filter((f: { rule: string }) => f.rule === "next_done");
     expect(done).toMatchObject([{ summary: "Finished in me/demo: an item from NEXT.md", intent: { itemId: gone } }]);
   });
-  it("records next_missing as reported, and skips it for a repo already reported", async () => {
+  it("stores next_missing but neither shows it nor records it as shown with focusButtons off", async () => {
     mocks.env.briefMode = "rules";
     mocks.collectAll.mockResolvedValue([snap({ createdAt: "2026-10-12T10:00:00Z" })]);
-    await runBrief("command");
+    const result = await runBrief("command");
     expect(mocks.storeFindings.mock.calls[0][1].map((f: { rule: string }) => f.rule)).toContain("next_missing");
-    expect(mocks.markMissingReported).toHaveBeenCalledWith(["me/demo"]);
-    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set(["me/demo"]) });
-    await runBrief("command");
-    expect(mocks.storeFindings.mock.calls[1][1].map((f: { rule: string }) => f.rule)).not.toContain("next_missing");
-    expect(mocks.markMissingReported).toHaveBeenLastCalledWith([]);
+    expect(result.text).not.toContain("NEXT.md");
+    expect(mocks.markMissingReported).toHaveBeenCalledWith([]);
   });
   it("keeps intent findings out of the model input with focusButtons off", async () => {
     mocks.env.briefMode = "all";
@@ -313,6 +310,36 @@ describe("intent findings in the pipeline", () => {
       mocks.parked = new Set();
       expect(result.text).not.toContain("Today, I'd suggest");
       expect(mocks.storeBriefFocus).not.toHaveBeenCalled();
+    });
+    // 24 Oct brief: event-hunters had 15 commits and no NEXT.md, and got no suggestion.
+    describe("an active repo with no NEXT.md", () => {
+      const hunters = snap({ repo: "me/event-hunters", branches: [{ name: "master", sha: "e1", lastCommitAt: "2026-10-13T18:00:00Z", aheadBy: 0, url: "https://github.com/me/event-hunters/tree/master" }] });
+      const line = '2. Add a <code>NEXT.md</code> to event-hunters so I can track next steps [<a href="https://github.com/me/event-hunters">repo</a>]';
+      beforeEach(() => {
+        mocks.storeBrief.mockResolvedValue(70);
+        mocks.collectAll.mockResolvedValue([snap({ next, branches: [{ name: "main", sha: "abc", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: "https://github.com/me/demo/tree/main" }] }), hunters]);
+      });
+      it("suggests adding one, after the planned work, and records it as shown", async () => {
+        const result = await runBrief("schedule");
+        expect(result.text).toContain(`<b>Today, I'd suggest</b>\n1. Ship the parser [<a href="https://github.com/me/demo/blob/main/NEXT.md#L2">NEXT.md</a>]\n${line}`);
+        expect(mocks.storeBriefFocus.mock.calls[0][1][1]).toMatchObject({ label: "event-hunters NEXT.md", repo: "me/event-hunters", reason: "event-hunters has recent commits and no NEXT.md" });
+        expect(mocks.markMissingReported).toHaveBeenCalledWith(["me/event-hunters"]);
+      });
+      it("waits a week once shown", async () => {
+        mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set(["me/event-hunters"]) });
+        const result = await runBrief("schedule");
+        expect(result.text).not.toContain("event-hunters so I");
+        expect(mocks.markMissingReported).toHaveBeenCalledWith([]);
+      });
+      it("takes the last slot on the model path, which never sees it", async () => {
+        mocks.env.briefMode = "all";
+        mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [{ text: "Finish the parser", reason: "Next in NEXT.md", sources: ["F2"] }] }), model: "test-model" });
+        const result = await runBrief("schedule");
+        expect(JSON.stringify(mocks.generate.mock.calls[0])).not.toContain("event-hunters");
+        expect(result.text).toContain(`1. Finish the parser [<a href="https://github.com/me/demo/blob/main/NEXT.md#L2">NEXT.md</a>]\n${line}`);
+        expect(mocks.markMissingReported).toHaveBeenCalledWith(["me/event-hunters"]);
+        expect(mocks.storeBrief.mock.calls[0][2].json.brief.focus).toHaveLength(2);
+      });
     });
     it("sends no buttons when there are no suggestions", async () => {
       mocks.env.delivery = "core";

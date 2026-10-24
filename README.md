@@ -209,7 +209,9 @@ A finding a suggestion is built on appears in the suggestion instead of in atten
 - **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, comments waiting for a reply, an open `NEXT.md` item), and prefers `NEXT.md` items in repos with commits, then high and medium findings. Suggestions with no valid source, an empty reason, only findings an earlier suggestion already cites, or only a snoozed focus's finding are dropped.
 - **Rule-only brief and fallback:** code picks up to three: active work first, as open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first), then high findings, then medium. Each gets an action built from the finding and a fixed reason per rule.
 
-**Branches and PRs left open.** Stale branches, idle PRs and old branches are often kept open on purpose, so CASE never suggests merging or closing them and never sends them to the model. They share one low line at the very end of the brief (the first thing cut when it runs long), each linked, with its age:
+**Repos without a `NEXT.md`.** When a repo that is new (`newRepoDays`) or has commits in the last `activeRepoDays` has no `NEXT.md`, code adds one suggestion as the last item, on both paths: `Add a NEXT.md to event-hunters so I can track next steps`. It takes the third slot if there are already three; with several such repos, the most recently active one goes first. It is never sent to the model. Once shown, the repo isn't suggested again for 7 days (`next_files.missing_reported_at`); a quiet morning doesn't count as shown.
+
+**Branches and PRs left open.** Stale branches, idle PRs and old branches are often kept open on purpose, so CASE never suggests merging or closing them, never sends them to the model, and never collapses them into the "Still open, unchanged" line under attention however long they stay. They share one low line at the very end of the brief (the first thing cut when it runs long), each linked, with its age:
 
 ```
 ⚪ Left open: feat/update-product-section in taga-technologies (idle 9 days)
@@ -262,10 +264,10 @@ Three flags stop the brief repeating itself. Each works on its own; turn one on 
 **Streaks (`"streaks": true`).** For each finding in a scheduled brief, case-core counts how many consecutive previous scheduled briefs (status `ok` or `partial`) contained the same finding ID, with one query per brief. Command briefs, failed runs and unfinished runs are skipped: they neither count nor break a streak. Medium and low findings with a streak of at least `streakCollapseAfter` (in `config.json`, default `3`) move out of the attention list into one linked line at the end of it:
 
 ```
-⚪ Still open, unchanged: 3 items (idle PR #14 in attachcv, stale branch feat/x in demo, open issues in demo)
+⚪ Still open, unchanged: 2 items (comments on issue #9 in attachcv, open issues in demo)
 ```
 
-High findings are never collapsed; their line gains `(day N)` instead, where N counts today. Collapsed findings are not sent to the model or used for focus suggestions; code renders the line on both paths. `/brief` (a command brief) always shows everything.
+High findings are never collapsed; their line gains `(day N)` instead, where N counts today. Branches and PRs left open are never collapsed either: they stay on the last `⚪ Left open` line. Collapsed findings are not sent to the model or used for focus suggestions; code renders the line on both paths. `/brief` (a command brief) always shows everything.
 
 **Snooze (`"snooze": true`).** With `CASE_DELIVERY=core`, the brief gets a `Snooze…` button when it has medium or low attention items. Tapping it sends a list of those items, each with `3 days` and `7 days` buttons; a choice is confirmed by editing that list. Snoozing for 3 days skips the next three briefs: the item is back on the brief from midnight Africa/Harare after them. Snoozed findings are left out of the brief, the model input and the focus suggestions, but are still stored, so their streak keeps counting. High findings can't be snoozed, and a snooze on a finding that has become high is ignored.
 

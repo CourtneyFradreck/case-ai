@@ -3,7 +3,7 @@ import type { Window } from "./time.js";
 import type { RepoSnapshot, Finding } from "./types.js";
 import type { BriefMeta } from "./llm/brief.js";
 import { followRelinks, relink } from "./intent/relink.js";
-import type { IntentHistory } from "./intent/rules.js";
+import { MISSING_REPEAT_DAYS, type IntentHistory } from "./intent/rules.js";
 import type { StoredFocus } from "./focus.js";
 import type { PastRun } from "./streaks.js";
 import type { StoredSnoozable } from "./snooze.js";
@@ -65,7 +65,7 @@ interface NextFileRow { sha: string | null; run_id: string | null; missing_repor
 // Upserts the items of every readable NEXT.md. Missing or errored files leave existing rows alone.
 // An item whose wording was edited since the last run inherits the old item's history.
 // Returns the previous run's state for the intent rules, read before this run overwrites it.
-export async function storeNextItems(runId: number, snaps: RepoSnapshot[]) {
+export async function storeNextItems(runId: number, snaps: RepoSnapshot[], now: Date = new Date()) {
   const history: IntentHistory = new Map();
   const missingReported = new Set<string>();
   for (const s of snaps) {
@@ -73,7 +73,8 @@ export async function storeNextItems(runId: number, snaps: RepoSnapshot[]) {
     const prev = (await pool.query<NextFileRow>(
       "SELECT sha, run_id, missing_reported_at FROM next_files WHERE repo=$1", [s.repo],
     )).rows[0];
-    if (prev?.missing_reported_at) missingReported.add(s.repo);
+    // Shown in the last week: the no-NEXT.md suggestion waits until a week has passed.
+    if (prev?.missing_reported_at && now.getTime() - new Date(prev.missing_reported_at).getTime() < MISSING_REPEAT_DAYS * 86_400_000) missingReported.add(s.repo);
     await pool.query(
       `INSERT INTO next_files(repo, sha, run_id) VALUES ($1,$2,$3)
        ON CONFLICT (repo) DO UPDATE SET sha=EXCLUDED.sha, run_id=EXCLUDED.run_id`,
@@ -126,12 +127,10 @@ export async function storeNextItems(runId: number, snaps: RepoSnapshot[]) {
   return { history, missingReported };
 }
 
-// Records that next_missing fired, so it fires only on the first run that sees the repo without NEXT.md.
+// Records when the no-NEXT.md suggestion was last shown for a repo, so it repeats at most once a week.
 export async function markMissingReported(repos: string[]) {
   if (!repos.length) return;
-  await pool.query(
-    "UPDATE next_files SET missing_reported_at=now() WHERE repo = ANY($1) AND missing_reported_at IS NULL", [repos],
-  );
+  await pool.query("UPDATE next_files SET missing_reported_at=now() WHERE repo = ANY($1)", [repos]);
 }
 
 export async function storeFindings(runId: number, findings: Finding[]) {

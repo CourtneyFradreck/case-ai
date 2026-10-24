@@ -21,6 +21,7 @@ function reason(f: Finding): string {
     case "failing_ci": return "CI is failing on the default branch";
     case "issue_comments": return "New comments are waiting for a reply";
     case "next_item": return `Open in NEXT.md, and ${f.repo.split("/").pop()} has recent commits`;
+    case "next_missing": return `${f.repo.split("/").pop()} has recent commits and no NEXT.md`;
     default: return f.severity === "high" ? "Marked high priority" : "Needs attention";
   }
 }
@@ -36,6 +37,7 @@ export function action(f: Finding): string {
     case "issue_comments": return `Reply to the comments on ${f.target} in ${repo}`;
   }
   if (f.rule === "open_issues") return `Triage the open issues in ${repo}`;
+  if (f.rule === "next_missing") return `Add a NEXT.md to ${repo} so I can track next steps`;
   return bulletText(text(f));
 }
 
@@ -77,6 +79,14 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
     // Stable sort keeps NEXT.md order within a repo.
     .sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)) || active.get(a.repo)! - active.get(b.repo)!);
   return [...planned, ...attention].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
+}
+
+// An active repo with no NEXT.md takes the last suggestion, on the rule and model paths alike, so it is
+// shown rather than left to the model: the most recently active one, one per brief. Written by code.
+export function withMissingNext(focus: ValidFocus[], missing: Finding[]): ValidFocus[] {
+  const [f] = [...missing].sort((a, b) => (a.ageDays ?? Infinity) - (b.ageDays ?? Infinity) || a.repo.localeCompare(b.repo));
+  if (!f) return focus;
+  return [...focus.filter((i) => !i.sources.some((x) => x.id === f.id)).slice(0, MAX_FOCUS - 1), { text: action(f), reason: reason(f), sources: [f] }];
 }
 
 // What briefs.focus stores per suggestion, in button order. label is missing on briefs stored before it existed.

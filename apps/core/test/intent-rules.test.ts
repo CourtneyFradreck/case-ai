@@ -74,24 +74,30 @@ describe("next_done", () => {
 });
 
 describe("next_missing", () => {
+  const active = [{ name: "master", sha: "e1", lastCommitAt: daysAgo(1), aheadBy: 0, url: "u" }];
   it("fires for a 2-day-old repo with no NEXT.md, with a stable ID", () => {
     const found = run({ createdAt: daysAgo(2), next: { status: "missing" } });
     expect(found).toMatchObject([{
-      rule: "next_missing", severity: "low", summary: "me/demo is new and has no NEXT.md yet",
+      rule: "next_missing", severity: "low", summary: "demo has no NEXT.md. Add one so I can track next steps?",
       sources: [{ label: "repo", url: "https://github.com/me/demo" }],
     }]);
     expect(run({ createdAt: daysAgo(3), next: { status: "missing" } })[0].id).toBe(found[0].id);
   });
-  it("does not fire again once reported for the repo", () => {
+  // 24 Oct brief: event-hunters had 15 commits on master and no NEXT.md.
+  it("fires for an old repo with commits in the last activeRepoDays", () => {
+    expect(run({ createdAt: daysAgo(300), branches: active, next: { status: "missing" } })).toMatchObject([{ rule: "next_missing", ageDays: 1 }]);
+  });
+  it("does not fire while it was shown in the last week", () => {
     expect(run({ createdAt: daysAgo(2), next: { status: "missing" } }, undefined, new Set(["me/demo"]))).toEqual([]);
     expect(run({ createdAt: daysAgo(2), next: { status: "missing" } }, undefined, new Set(["me/other"]))).toHaveLength(1);
   });
-  it("does not fire for a 30-day-old repo", () => {
+  it("does not fire for an old repo without recent commits", () => {
     expect(run({ createdAt: daysAgo(30), next: { status: "missing" } })).toEqual([]);
+    expect(run({ createdAt: daysAgo(30), branches: [{ ...active[0], lastCommitAt: daysAgo(8) }], next: { status: "missing" } })).toEqual([]);
   });
   it("does not fire when the file exists or errored", () => {
     expect(rules({ createdAt: daysAgo(2), next: okNext("") }, "next_missing")).toEqual([]);
-    expect(run({ createdAt: daysAgo(2), next: { status: "error", error: "GitHub 500" } })).toEqual([]);
+    expect(run({ createdAt: daysAgo(2), branches: active, next: { status: "error", error: "GitHub 500" } })).toEqual([]);
   });
 });
 
