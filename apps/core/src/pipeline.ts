@@ -69,13 +69,13 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const gating = !oldDay && unsnoozed.some((f) => f.rule === "old_branches");
     const past = collapsing || quietCheck || gating ? await previousRuns(runId) : [];
     const visible = gateOldBranches(unsnoozed, oldDay, lastScheduledRun(past));
-    const { kept, collapsed, days } = collapsing
-      ? collapseRepeats(visible, countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
-      : { kept: visible, collapsed: [], days: new Map<string, number>() };
     const snoozeItems = features.snooze ? snoozable(visible) : [];
     // Branches and PRs left open are often kept on purpose: one low line written by code, never suggested or sent to the model.
-    const lingering = kept.filter(leftOpen);
-    const active = kept.filter((f) => !leftOpen(f));
+    // Split them off before collapsing repeats, so a long-lived one never moves to the "Still open, unchanged" line under attention.
+    const lingering = visible.filter(leftOpen);
+    const { kept: active, collapsed, days } = collapsing
+      ? collapseRepeats(visible.filter((f) => !leftOpen(f)), countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
+      : { kept: visible.filter((f) => !leftOpen(f)), collapsed: [], days: new Map<string, number>() };
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
     const rulesFocus = features.focusButtons ? ruleFocus(active.filter((f) => !parked.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
     const options = { userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering };
@@ -102,7 +102,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const activity = activityTimes(snaps, now);
     quiet = quietCheck && isQuietMorning(attentionIds, lastScheduledRun(past), activity, now.setZone(ZONE).startOf("day").toJSDate());
     // The full brief is stored either way; a quiet morning only changes what is sent.
-    const sent = quiet ? quietText(activity, now, focusRow?.item_text ?? kept.find((f) => f.severity !== "info")?.summary) : text;
+    const sent = quiet ? quietText(activity, now, focusRow?.item_text ?? active.find((f) => f.severity !== "info")?.summary) : text;
     const briefId = await storeBrief(runId, text, meta, ruleText);
     if (quiet) await storeBriefSentText(briefId, sent);
     focusReasons = storedFocus(focus).map(({ findingId, reason }) => ({ findingId, reason }));
