@@ -109,19 +109,23 @@ describe("intent history from storeNextItems", () => {
     withRows([], { sha: null, run_id: "6", missing_reported_at: null });
     expect((await storeNextItems(7, [snap({ next: okNext("- [ ] Item") })])).history.size).toBe(0);
   });
-  it("returns repos that already had next_missing reported", async () => {
-    withRows([], { sha: null, run_id: "6", missing_reported_at: new Date() });
-    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })])).missingReported).toEqual(new Set(["me/demo"]));
-    withRows([], { sha: null, run_id: "6", missing_reported_at: null });
-    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })])).missingReported.size).toBe(0);
+  it("returns repos the no-NEXT.md suggestion was shown for in the last week", async () => {
+    const now = new Date("2026-10-24T05:00:00Z");
+    const shown = (daysAgo: number | null) => withRows([], { sha: null, run_id: "6", missing_reported_at: daysAgo === null ? null : new Date(now.getTime() - daysAgo * 86_400_000) });
+    shown(6.9);
+    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })], now)).missingReported).toEqual(new Set(["me/demo"]));
+    shown(7);
+    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })], now)).missingReported.size).toBe(0);
+    shown(null);
+    expect((await storeNextItems(7, [snap({ next: { status: "missing" } })], now)).missingReported.size).toBe(0);
   });
 });
 
 describe("markMissingReported", () => {
   beforeEach(() => vi.resetAllMocks());
-  it("sets missing_reported_at once for the given repos", async () => {
+  it("sets missing_reported_at to now for the given repos, each time it's shown", async () => {
     await markMissingReported(["me/demo"]);
-    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("missing_reported_at IS NULL"), [["me/demo"]]);
+    expect(pool.query).toHaveBeenCalledWith("UPDATE next_files SET missing_reported_at=now() WHERE repo = ANY($1)", [["me/demo"]]);
   });
   it("skips the query with no repos", async () => {
     await markMissingReported([]);

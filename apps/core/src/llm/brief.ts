@@ -6,14 +6,16 @@ import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
 import { validate, type DropReason, type Shortened } from "./validate.js";
+import { withMissingNext } from "../focus.js";
 
 // previousFocus is rendered at the top of the recap and never sent to the model.
 // collapsed and days (features.streaks) are rendered in code; collapsed findings are never sent.
 // done (likely finished NEXT.md items) and leftOpen (branches and PRs left open) are rendered in code and never sent.
 // parked: findings behind a snoozed focus; the model's suggestions built only on them are dropped.
+// missing: active repos with no NEXT.md; one takes the last suggestion, added in code and never sent.
 export interface ModelBriefConfig extends InputConfig {
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
-  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>;
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>; missing?: Finding[];
 }
 export interface BriefAudit {
   brief: AliasBrief | null;
@@ -64,7 +66,8 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.dropped = result.dropped;
     meta.json.shortened = result.shortened;
     meta.json.addedBack = result.addedBack;
-    Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
+    if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
+    Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));
     return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {

@@ -89,16 +89,22 @@ export function nextDone(s: RepoSnapshot, next: OkNext, history: IntentHistory):
   });
 }
 
-// Fires once per repo: missingReported holds the repos it already fired for.
+// A repo without NEXT.md that is new or has commits in the last activeRepoDays. It becomes a suggestion to add one,
+// at most once a week per repo: missingReported holds the repos it was shown for in the last MISSING_REPEAT_DAYS days.
+export const MISSING_REPEAT_DAYS = 7;
 export function nextMissing(s: RepoSnapshot, now: Date, cfg: IntentConfig, missingReported: Set<string> = new Set()): Finding[] {
-  if (s.next.status !== "missing" || missingReported.has(s.repo) || !(daysSince(s.createdAt, now) <= cfg.newRepoDays)) return [];
+  if (s.next.status !== "missing" || missingReported.has(s.repo)) return [];
+  const recent = daysSince(s.createdAt, now) <= cfg.newRepoDays || lastCommitDays(s, now, cfg) <= cfg.activeRepoDays;
+  if (!recent) return [];
+  const name = s.repo.split("/").pop()!;
   return [{
     id: fid("next_missing", s.repo),
     rule: "next_missing",
     severity: "low",
     repo: s.repo,
-    summary: `${s.repo} is new and has no NEXT.md yet`,
+    summary: `${name} has no NEXT.md. Add one so I can track next steps?`,
     sources: [{ label: "repo", url: `https://github.com/${s.repo}` }],
+    ageDays: lastCommitDays(s, now, cfg),
   }];
 }
 
