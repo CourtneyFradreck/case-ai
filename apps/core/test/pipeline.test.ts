@@ -362,9 +362,11 @@ describe("old unmerged branches in the pipeline", () => {
 });
 
 describe("collapsing repeats in the pipeline (streaks)", () => {
-  const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", repo: "me/demo", summary: 'PR #14 "Retry" in me/demo: no activity for 5 days', sources: [{ label: "PR", url: "https://github.com/me/demo/pull/14" }] });
+  const thread = finding({ id: "thread", rule: "issue_comments", severity: "medium", repo: "me/demo", summary: '2 new comments on issue #9 "Retry" in me/demo (from tendai)', sources: [{ label: "comment", url: "https://github.com/me/demo/issues/9#c1" }], target: "issue #9" });
+  const pr = finding({ id: "pr", rule: "idle_pr", severity: "medium", repo: "me/demo", summary: 'PR #14 "Retry" in me/demo: no activity for 5 days', sources: [{ label: "PR", url: "https://github.com/me/demo/pull/14" }], target: "PR #14", ageDays: 5 });
+  const branch = finding({ id: "branch", rule: "stale_branch", severity: "medium", repo: "me/demo", summary: "Branch feat/x in me/demo: 1 unmerged commit, untouched for 9 days", sources: [{ label: "branch", url: "https://github.com/me/demo/tree/feat/x" }], target: "feat/x", ageDays: 9 });
   const ci = finding({ id: "ci", rule: "failing_ci", severity: "high", summary: "CI failing on me/demo main (build), today", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
-  const past = (n: number) => Array.from({ length: n }, (_, i) => ({ id: 6 - i, source: "schedule", status: "ok", windowEnd: new Date(), findingIds: ["pr", "ci"], attentionIds: ["pr", "ci"] }));
+  const past = (n: number) => Array.from({ length: n }, (_, i) => ({ id: 6 - i, source: "schedule", status: "ok", windowEnd: new Date(), findingIds: ["thread", "pr", "branch", "ci"], attentionIds: ["thread", "pr", "branch", "ci"] }));
   beforeEach(() => {
     vi.resetAllMocks();
     vi.useFakeTimers();
@@ -376,7 +378,7 @@ describe("collapsing repeats in the pipeline (streaks)", () => {
     mocks.startRun.mockResolvedValue(7);
     mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
     mocks.collectAll.mockResolvedValue([snap()]);
-    mocks.runRules.mockReturnValue([ci, pr, finding()]);
+    mocks.runRules.mockReturnValue([ci, thread, finding()]);
     mocks.previousRuns.mockResolvedValue(past(3));
     mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F2"] }], attention: [{ text: "CI is failing", sources: ["F1"] }], focus: [] }), model: "test-model" });
   });
@@ -386,16 +388,16 @@ describe("collapsing repeats in the pipeline (streaks)", () => {
     const result = await runBrief("schedule");
     expect(mocks.previousRuns).toHaveBeenCalledWith(7);
     expect(result.text).toContain("CI failing on me/demo main (build), today (day 4)");
-    expect(result.text).toContain('⚪ Still open, unchanged: 1 item (<a href="https://github.com/me/demo/pull/14">idle PR #14 in demo</a>)');
-    expect(mocks.storeFindings.mock.calls[0][1].map((f: { id: string }) => f.id)).toContain("pr");
+    expect(result.text).toContain('⚪ Still open, unchanged: 1 item (<a href="https://github.com/me/demo/issues/9#c1">comments on issue #9 in demo</a>)');
+    expect(mocks.storeFindings.mock.calls[0][1].map((f: { id: string }) => f.id)).toContain("thread");
   });
   it("keeps collapsed findings out of the model input and renders their line in code", async () => {
     mocks.env.briefMode = "all";
     const result = await runBrief("schedule");
-    expect(mocks.generate.mock.calls[0][1]).not.toContain("PR #14");
+    expect(mocks.generate.mock.calls[0][1]).not.toContain("issue #9");
     expect(result.text).toContain("🔴 CI is failing (day 4)");
     expect(result.text).toContain("Still open, unchanged: 1 item");
-    expect(result.text.match(/PR #14|idle PR #14/g)).toHaveLength(1);
+    expect(result.text.match(/issue #9/g)).toHaveLength(1);
   });
   it("shows everything below the threshold", async () => {
     mocks.previousRuns.mockResolvedValue(past(2));
@@ -409,8 +411,16 @@ describe("collapsing repeats in the pipeline (streaks)", () => {
     mocks.features.streaks = false;
     const off = await runBrief("schedule");
     expect(command.text).toBe(off.text);
-    // A PR left open gets the one low line at the end, never a suggestion.
-    expect(off.text).toMatch(/\n\n⚪ Left open: <a [^>]+>idle PR #14 in demo<\/a>$/);
+  });
+  // 24 Oct brief: a stale branch on a streak showed under Needs attention as "Still open, unchanged".
+  it.each(["rules", "all"] as const)("keeps a stale branch or idle PR on a streak on the last line, never under attention (%s)", async (mode) => {
+    mocks.env.briefMode = mode;
+    mocks.runRules.mockReturnValue([ci, branch, pr, finding()]);
+    const result = await runBrief("schedule");
+    expect(result.text).not.toContain("Still open, unchanged");
+    expect(result.text).toMatch(/\n\n⚪ Left open: <a [^>]+>feat\/x in demo<\/a> \(idle 9 days\); <a [^>]+>PR #14 in demo<\/a> \(quiet 5 days\)$/);
+    expect(result.text.match(/feat\/x in demo|Branch feat\/x/g)).toHaveLength(1);
+    if (mode === "all") expect(mocks.generate.mock.calls[0][1]).not.toContain("feat/x");
   });
 });
 
