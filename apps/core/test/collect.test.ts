@@ -194,10 +194,22 @@ describe("issue activity collection", () => {
     issues = [{ ...issue(8), created_at: yesterday, state: "closed" }] as typeof issues;
     expect((await collect())[0].newIssues).toMatchObject([{ number: 8, state: "closed" }]);
   });
-  it.each([[14, 2, 12], [1, 2, 0]])("subtracts %s total items minus %s open PRs to get %s issues", async (total, prs, expected) => {
-    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: total } });
-    openPrs = Array.from({ length: prs }, (_, i) => ({ number: i, title: "PR", html_url: "u", head: { ref: "feature" }, updated_at: yesterday }));
-    expect((await collect())[0].openIssueCount).toBe(expected);
+  // 24 Oct brief: "1 open issue in case-ai" was my own trial issue #4.
+  it("counts only open issues someone else opened, never PRs or my own", async () => {
+    const mine = (n: number) => ({ ...issue(n), user: { login: "me" } });
+    const theirs = (n: number) => ({ ...issue(n), user: { login: "tendai" } });
+    issues = [mine(4), theirs(5), theirs(6), { ...theirs(7), pull_request: {} }] as typeof issues;
+    expect((await collect())[0].openIssueCount).toBe(2);
+    expect(gh.paginate).toHaveBeenCalledWith(gh.issues.listForRepo, { owner: "me", repo: "demo", state: "open", per_page: 100 });
+  });
+  it("counts no open issues as someone else's when my login is unknown", async () => {
+    gh.users.getAuthenticated.mockRejectedValue(new Error("unavailable"));
+    issues = [{ ...issue(5), user: { login: "tendai" } }] as typeof issues;
+    expect((await collect())[0].openIssueCount).toBe(0);
+  });
+  it("marks new issues I opened as mine", async () => {
+    issues = [{ ...issue(4), created_at: yesterday, user: { login: "me" } }, { ...issue(5), created_at: yesterday, user: { login: "tendai" } }] as typeof issues;
+    expect((await collect())[0].newIssues.map((i) => [i.number, i.mine])).toEqual([[4, true], [5, false]]);
   });
   it("retains the snapshot if comments are unavailable", async () => {
     const paginate = gh.paginate.getMockImplementation()!;
@@ -206,7 +218,7 @@ describe("issue activity collection", () => {
       return paginate(endpoint, params);
     });
     const [s] = await collect();
-    expect(s).toMatchObject({ private: true, comments: [], openIssueCount: 14, error: undefined });
+    expect(s).toMatchObject({ private: true, comments: [], openIssueCount: 1, error: undefined });
   });
   it("retains each branch's head timestamp without a repo-wide timestamp", async () => {
     expect((await collect())[0]).not.toHaveProperty("lastCommitAt");
@@ -270,6 +282,8 @@ describe("NEXT.md collection", () => {
   it("records a 500 on NEXT.md without failing the repo", async () => {
     gh.repos.getContent.mockRejectedValue(httpError(500));
     gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: true, open_issues_count: 4, created_at: daysAgo(2) } });
+    gh.paginate.mockImplementation(async (endpoint, params) => endpoint === gh.issues.listForRepo && params.state === "open"
+      ? Array.from({ length: 4 }, (_, n) => ({ number: n, user: { login: "tendai" } })) : []);
     const s = await collect();
     expect(s.error).toBeUndefined();
     expect(s.next).toEqual({ status: "error", error: "GitHub 500" });

@@ -218,7 +218,8 @@ export function issueComments(s: RepoSnapshot): Finding[] {
 
 export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
   const closed = new Set(s.closedIssues.map((i) => i.number));
-  const covered = new Set(s.newIssues.filter((i) => i.state !== "closed" && !closed.has(i.number)).map((i) => i.number));
+  // openIssueCount holds only issues someone else opened, so only theirs can already be covered by the recap.
+  const covered = new Set(s.newIssues.filter((i) => !i.mine && i.state !== "closed" && !closed.has(i.number)).map((i) => i.number));
   const remaining = Math.max(0, s.openIssueCount - covered.size);
   const lastCommitAt = s.branches
     .filter((b) => !cfg.ignoreBranchPrefixes.some((p) => b.name.startsWith(p)))
