@@ -1,8 +1,11 @@
-import { createHash } from "node:crypto";
 import type { RepoSnapshot, Finding, Severity } from "../types.js";
+import { fid } from "../id.js";
 import { plural } from "../plural.js";
-import { inWindow, type Window } from "../time.js";
+import { daysSince, inWindow, type Window } from "../time.js";
 import { deduplicateFindings } from "../sections.js";
+import { byPriority } from "./order.js";
+
+export { byPriority } from "./order.js";
 
 export interface RuleConfig {
   idlePrDays: number;
@@ -12,12 +15,6 @@ export interface RuleConfig {
   activeRepoDays: number;
   ignoreBranchPrefixes: string[];
 }
-
-const fid = (...parts: string[]) =>
-  createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 10);
-
-const daysSince = (iso: string, now: Date) =>
-  Math.floor((now.getTime() - new Date(iso).getTime()) / 86_400_000);
 
 export function failingCi(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
   return s.ciRuns
@@ -33,6 +30,7 @@ export function failingCi(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[
         summary: `CI failing on ${s.repo} ${s.defaultBranch} (${r.workflowName}), ${age}`,
         sources: [{ label: "run", url: r.url }],
         ageDays: days,
+        target: r.workflowName,
       };
     });
 }
@@ -49,6 +47,7 @@ export function idlePrs(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] 
       summary: `PR #${p.number} "${p.title}" in ${s.repo}: no activity for ${days} days`,
       sources: [{ label: "PR", url: p.url }],
       ageDays: days,
+      target: `PR #${p.number}`,
     }];
   });
 }
@@ -73,6 +72,7 @@ export function staleBranches(s: RepoSnapshot, now: Date, cfg: RuleConfig): Find
       summary: `Branch ${b.name} in ${s.repo}: ${plural(b.aheadBy, "unmerged commit")}, untouched for ${days} days`,
       sources: [{ label: "branch", url: b.url }],
       ageDays: days,
+      target: b.name,
     }];
   });
 }
@@ -98,6 +98,8 @@ export function oldBranches(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig): 
   }];
 }
 
+const aheadBy = (s: RepoSnapshot, branch: string) => s.branches.find((b) => b.name === branch)?.aheadBy ?? 0;
+
 export function recapCommits(s: RepoSnapshot): Finding[] {
   const byBranch = new Map<string, typeof s.commits>();
   for (const c of s.commits) byBranch.set(c.branch, [...(byBranch.get(c.branch) ?? []), c]);
@@ -120,7 +122,9 @@ export function recapCommits(s: RepoSnapshot): Finding[] {
       repo: s.repo,
       summary: `${plural(commits.length, "commit")} on ${branch} in ${s.repo}`,
       details: sorted.slice(-3).map((c) => c.message),
-      activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-3).map((c) => c.message) },
+      // Up to 30 subjects, enough to find a busy day's themes; the branch's total unmerged commits for "so far".
+      activity: { kind: "commits" as const, count: commits.length, branch, messages: sorted.slice(-30).map((c) => c.message),
+        ...(branch !== s.defaultBranch && aheadBy(s, branch) ? { branchTotal: aheadBy(s, branch) } : {}) },
       sources: [{ label: base ? "diff" : "commit", url }],
     };
   });
@@ -194,6 +198,7 @@ export function issueComments(s: RepoSnapshot): Finding[] {
           ? `${authors.join(", ")} commented on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo}, you replied`
           : `${plural(others.length, "new comment")} on ${first.isPr ? "PR" : "issue"} #${n} "${first.issueTitle}" in ${s.repo} (from ${authors.join(", ")})`,
         sources: [{ label: "comment", url: first.url }],
+        target: `${first.isPr ? "PR" : "issue"} #${n}`,
       });
     }
     if (mine.length && !replied && !reportedIssues.has(n)) {
@@ -213,7 +218,8 @@ export function issueComments(s: RepoSnapshot): Finding[] {
 
 export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
   const closed = new Set(s.closedIssues.map((i) => i.number));
-  const covered = new Set(s.newIssues.filter((i) => i.state !== "closed" && !closed.has(i.number)).map((i) => i.number));
+  // openIssueCount holds only issues someone else opened, so only theirs can already be covered by the recap.
+  const covered = new Set(s.newIssues.filter((i) => !i.mine && i.state !== "closed" && !closed.has(i.number)).map((i) => i.number));
   const remaining = Math.max(0, s.openIssueCount - covered.size);
   const lastCommitAt = s.branches
     .filter((b) => !cfg.ignoreBranchPrefixes.some((p) => b.name.startsWith(p)))
@@ -229,8 +235,6 @@ export function openIssues(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding
     sources: [{ label: "issues", url: `https://github.com/${s.repo}/issues` }],
   }];
 }
-
-const order: Record<Severity, number> = { high: 0, medium: 1, low: 2, info: 3 };
 
 export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig, recap?: Window): Finding[] {
   const readable = snaps.filter((s) => !s.error);
@@ -250,5 +254,5 @@ export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig, reca
       ...openIssues(s, now, cfg),
     ]),
   ])
-    .sort((a, b) => order[a.severity] - order[b.severity] || (b.ageDays ?? 0) - (a.ageDays ?? 0));
+    .sort(byPriority);
 }

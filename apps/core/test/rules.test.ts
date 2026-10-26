@@ -150,6 +150,12 @@ describe("issue activity rules", () => {
   it.each([[8, 14], [null, 14], [1, 0]])("omits inactive or empty issue counts (%s, %s)", (age, openIssueCount) => {
     expect(openIssues(snap({ branches: age === null ? [] : [br("main", 0, age)], openIssueCount }), NOW, cfg)).toEqual([]);
   });
+  it("subtracts only someone else's new issues, since the count leaves mine out", () => {
+    const opened = (number: number, mine: boolean) => ({ number, title: "title", url, createdAt: daysAgo(1), state: "open", mine });
+    const s = (newIssues: ReturnType<typeof opened>[]) => openIssues(snap({ branches: [br("main", 0, 1)], openIssueCount: 2, newIssues }), NOW, cfg);
+    expect(s([opened(4, true)])).toEqual([expect.objectContaining({ summary: "2 open issues in me/demo" })]);
+    expect(s([opened(5, false)])).toEqual([expect.objectContaining({ summary: "1 other open issue in me/demo" })]);
+  });
   it.each(["dependabot/", "copilot/"])("ignores recent %s branches when counting activity", (prefix) => {
     for (const branches of [[br(`${prefix}x`, 1, 1)], [br("main", 0, 8), br(`${prefix}x`, 1, 1)]]) {
       expect(openIssues(snap({ branches, openIssueCount: 14 }), NOW, cfg)).toEqual([]);

@@ -9,6 +9,8 @@ const repo = "CourtneyFradreck/case-ai";
 const feature = "feat/m2-model-brief";
 const url = `https://github.com/${repo}`;
 const at = "2026-10-15T18:00:00Z";
+export const OCT15_CREATED_AT = "2026-10-01T09:00:00Z";
+const createdAt = OCT15_CREATED_AT;
 const apiCommit = (sha: string, message: string, parents: string[], date = at) => ({
   sha, html_url: `${url}/commit/${sha}`, author: { login: "CourtneyFradreck" },
   commit: { message, committer: { date }, author: { name: "CourtneyFradreck", date } },
@@ -41,7 +43,7 @@ export function oct15Fixture() {
     head: { ref: "feat/m1-ruleonly-brief" }, draft: false,
     created_at: at, updated_at: at, merged_at: at,
   };
-  const issue = { number: 1, title: "M1 verification: five-morning trial", html_url: `${url}/issues/1`, created_at: at, closed_at: null, state: "open" };
+  const issue = { number: 1, title: "M1 verification: five-morning trial", html_url: `${url}/issues/1`, created_at: at, closed_at: null, state: "open", user: { login: "CourtneyFradreck" } };
   const branches = [{ name: feature, commit: { sha: featureCommits.at(-1)!.sha } }, { name: "main", commit: { sha: direct.sha } }];
   const branchCommits = { [feature]: [...featureCommits].reverse().concat(merge, ...[...prCommits].reverse()), main: [direct, merge, ...[...prCommits].reverse()] };
   const collectedCommit = (c: ReturnType<typeof apiCommit>, branch: string) => ({
@@ -50,14 +52,17 @@ export function oct15Fixture() {
   // The preview uses this snapshot, and the regression test verifies it against
   // the real collector driven by the API fixtures above.
   const expected: RepoSnapshot = {
-    repo, private: false, defaultBranch: "main",
+    repo, private: false, defaultBranch: "main", createdAt,
     commits: [collectedCommit(direct, "main"), ...[...featureCommits].reverse().map((c) => collectedCommit(c, feature))],
     openPrs: [], openedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, createdAt: at, updatedAt: at }],
     mergedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
-    newIssues: [{ number: 1, title: issue.title, url: issue.html_url, createdAt: at, state: "open" }],
-    closedIssues: [], comments: [], openIssueCount: 1,
+    recentlyMerged: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
+    newIssues: [{ number: 1, title: issue.title, url: issue.html_url, createdAt: at, state: "open", mine: true }],
+    // Issue #1 is your own trial checklist, so it isn't counted as an open issue needing attention.
+    closedIssues: [], comments: [], openIssueCount: 0,
     branches: branches.map((b) => ({ name: b.name, sha: b.commit.sha, lastCommitAt: b.name === "main" ? direct.commit.committer.date : featureCommits.at(-1)!.commit.committer.date, aheadBy: b.name === "main" ? 0 : 9, url: `${url}/tree/${b.name}` })),
     ciRuns: [],
+    next: { status: "missing" },
   };
   return { repo, feature, branches, branchCommits, prCommits, mergedPr, merge, direct, featureCommits, issue, expected };
 }

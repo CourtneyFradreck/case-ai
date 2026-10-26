@@ -5,7 +5,12 @@ import { snap } from "./fixtures.js";
 const mocks = vi.hoisted(() => ({ generate: vi.fn(), collectAll: vi.fn(), storeBrief: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: vi.fn() }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
-vi.mock("../src/store.js", () => ({ startRun: async () => 7, finishRun: vi.fn(), storeSnapshots: vi.fn(), storeFindings: vi.fn(), storeBrief: mocks.storeBrief }));
+vi.mock("../src/store.js", () => ({ startRun: async () => 7, finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: async () => ({ history: new Map(), missingReported: new Set() }), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: mocks.storeBrief }));
+// This test covers the brief with every flag off, whatever config.json ships with.
+vi.mock("../src/features.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/features.js")>()),
+  features: { focusButtons: false, snooze: false, streaks: false, quietMornings: false },
+}));
 vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-model"; generate = mocks.generate; } }));
 
 describe("shared brief structure through the pipeline", () => {
@@ -32,12 +37,12 @@ describe("shared brief structure through the pipeline", () => {
     if (path === "provider failure") mocks.generate.mockRejectedValue(new Error("invalid model settings"));
     const { runBrief } = await import("../src/pipeline.js");
     const { text } = await runBrief("command", DateTime.fromISO("2026-10-16T05:00:00Z"));
-    expect(text.split("\n").slice(0, 2)).toEqual(["<b>Good morning, Courtney. Here's your morning brief.</b>", "Friday, 16 Oct 2026"]);
-    expect([...text.matchAll(/<b>(Here's what[^<]+)<\/b>/g)].map((m) => m[1])).toEqual(["Here's what needs your attention", "Here's what you worked on yesterday"]);
+    expect(text.split("\n").slice(0, 2)).toEqual(["<b>Good morning, Courtney.</b>", "Friday, 16 Oct 2026"]);
+    expect([...text.matchAll(/<b>(Needs attention|Yesterday)<\/b>/g)].map((m) => m[1])).toEqual(["Needs attention", "Yesterday"]);
     expect(text.match(/issue #1/g)).toHaveLength(1);
     expect(text).toContain("<b>demo</b>\n• A commit on main: Add a personal brief.");
     expect(text).toContain('• Opened issue #1 "Plan the next release".');
-    const recap = text.split("<b>Here's what you worked on yesterday</b>")[1];
+    const recap = text.split("<b>Yesterday</b>")[1];
     expect(recap.replace(/<[^>]+>/g, "")).not.toContain("me/demo");
     expect(recap).not.toMatch(/^• You\b/m);
     expect(text).not.toContain("productive day");

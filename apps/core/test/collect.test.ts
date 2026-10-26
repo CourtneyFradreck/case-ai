@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOW, daysAgo } from "./fixtures.js";
-import { oct15Fixture, OCT15_NOW, OCT15_WINDOW } from "./fixtures/oct15.js";
+import { oct15Fixture, OCT15_NOW, OCT15_WINDOW, OCT15_CREATED_AT } from "./fixtures/oct15.js";
 import { runRules } from "../src/rules/index.js";
 import { render, renderModelBrief } from "../src/render.js";
 import { DateTime } from "luxon";
 
 const gh = vi.hoisted(() => ({
   paginate: vi.fn(),
-  repos: { get: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
+  repos: { get: vi.fn(), getContent: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
   pulls: { list: vi.fn(), listCommits: vi.fn() },
   issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn() },
   users: { getAuthenticated: vi.fn() },
@@ -61,7 +61,8 @@ describe("15 Oct commit attribution regression", () => {
     vi.resetAllMocks();
     fixture = oct15Fixture();
     gh.users.getAuthenticated.mockResolvedValue({ data: { login: "CourtneyFradreck" } });
-    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: 1 } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: 1, created_at: OCT15_CREATED_AT } });
+    gh.repos.getContent.mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
     gh.repos.getCommit.mockImplementation(async ({ ref }) => ({ data: [fixture.direct, ...fixture.featureCommits].find((c) => c.sha === ref) }));
     gh.repos.compareCommitsWithBasehead.mockResolvedValue({ data: { ahead_by: 9 } });
     gh.pulls.list.mockResolvedValue({ data: [fixture.mergedPr] });
@@ -193,10 +194,22 @@ describe("issue activity collection", () => {
     issues = [{ ...issue(8), created_at: yesterday, state: "closed" }] as typeof issues;
     expect((await collect())[0].newIssues).toMatchObject([{ number: 8, state: "closed" }]);
   });
-  it.each([[14, 2, 12], [1, 2, 0]])("subtracts %s total items minus %s open PRs to get %s issues", async (total, prs, expected) => {
-    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, open_issues_count: total } });
-    openPrs = Array.from({ length: prs }, (_, i) => ({ number: i, title: "PR", html_url: "u", head: { ref: "feature" }, updated_at: yesterday }));
-    expect((await collect())[0].openIssueCount).toBe(expected);
+  // 24 Oct brief: "1 open issue in case-ai" was my own trial issue #4.
+  it("counts only open issues someone else opened, never PRs or my own", async () => {
+    const mine = (n: number) => ({ ...issue(n), user: { login: "me" } });
+    const theirs = (n: number) => ({ ...issue(n), user: { login: "tendai" } });
+    issues = [mine(4), theirs(5), theirs(6), { ...theirs(7), pull_request: {} }] as typeof issues;
+    expect((await collect())[0].openIssueCount).toBe(2);
+    expect(gh.paginate).toHaveBeenCalledWith(gh.issues.listForRepo, { owner: "me", repo: "demo", state: "open", per_page: 100 });
+  });
+  it("counts no open issues as someone else's when my login is unknown", async () => {
+    gh.users.getAuthenticated.mockRejectedValue(new Error("unavailable"));
+    issues = [{ ...issue(5), user: { login: "tendai" } }] as typeof issues;
+    expect((await collect())[0].openIssueCount).toBe(0);
+  });
+  it("marks new issues I opened as mine", async () => {
+    issues = [{ ...issue(4), created_at: yesterday, user: { login: "me" } }, { ...issue(5), created_at: yesterday, user: { login: "tendai" } }] as typeof issues;
+    expect((await collect())[0].newIssues.map((i) => [i.number, i.mine])).toEqual([[4, true], [5, false]]);
   });
   it("retains the snapshot if comments are unavailable", async () => {
     const paginate = gh.paginate.getMockImplementation()!;
@@ -205,7 +218,7 @@ describe("issue activity collection", () => {
       return paginate(endpoint, params);
     });
     const [s] = await collect();
-    expect(s).toMatchObject({ private: true, comments: [], openIssueCount: 14, error: undefined });
+    expect(s).toMatchObject({ private: true, comments: [], openIssueCount: 1, error: undefined });
   });
   it("retains each branch's head timestamp without a repo-wide timestamp", async () => {
     expect((await collect())[0]).not.toHaveProperty("lastCommitAt");
@@ -219,5 +232,75 @@ describe("issue activity collection", () => {
   it("keeps safe defaults for a failed repo", async () => {
     gh.repos.get.mockRejectedValue(new Error("unavailable"));
     expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "unavailable" });
+  });
+});
+
+describe("NEXT.md collection", () => {
+  const md = "# Now\r\n- [ ] Ship the parser\r\n- [x] Write docs\r\n";
+  const file = (content = Buffer.from(md, "utf8").toString("base64")) => ({ data: { type: "file", sha: "f1le", content, encoding: "base64" } });
+  const httpError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "me" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: false, open_issues_count: 0, created_at: daysAgo(2) } });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockResolvedValue([]);
+    gh.repos.getContent.mockResolvedValue(file());
+    gh.repos.listCommits.mockResolvedValue({ data: [{ commit: { committer: { date: daysAgo(3) } } }] });
+  });
+  const collect = async () => (await collectAll(["me/demo"], { start: NOW, end: NOW, label: "test" }, []))[0];
+
+  it("reads NEXT.md on the default branch with its last change date", async () => {
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.createdAt).toBe(daysAgo(2));
+    expect(s.next).toMatchObject({ status: "ok", sha: "f1le", url: "https://github.com/me/demo/blob/trunk/NEXT.md", lastChangedAt: daysAgo(3) });
+    expect(s.next.status === "ok" && s.next.items.map((i) => [i.text, i.section, i.state, i.line])).toEqual([
+      ["Ship the parser", "Now", "open", 2], ["Write docs", "Now", "done", 3],
+    ]);
+    expect(gh.repos.getContent).toHaveBeenCalledWith({ owner: "me", repo: "demo", path: "NEXT.md", ref: "trunk" });
+    expect(gh.repos.listCommits).toHaveBeenCalledWith({ owner: "me", repo: "demo", path: "NEXT.md", sha: "trunk", per_page: 1 });
+  });
+  it("decodes base64 with line breaks and non-ASCII text", async () => {
+    const encoded = Buffer.from("- [ ] Café menu — résumé\n", "utf8").toString("base64").replace(/(.{20})/g, "$1\n");
+    gh.repos.getContent.mockResolvedValue(file(encoded));
+    const s = await collect();
+    expect(s.next.status === "ok" && s.next.items.map((i) => i.text)).toEqual(["Café menu — résumé"]);
+  });
+  it("sets lastChangedAt to null when no commit touched the file", async () => {
+    gh.repos.listCommits.mockResolvedValue({ data: [] });
+    expect((await collect()).next).toMatchObject({ status: "ok", lastChangedAt: null });
+  });
+  it("marks a 404 as missing", async () => {
+    gh.repos.getContent.mockRejectedValue(httpError(404));
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.next).toEqual({ status: "missing" });
+    expect(gh.repos.listCommits).not.toHaveBeenCalled();
+  });
+  it("records a 500 on NEXT.md without failing the repo", async () => {
+    gh.repos.getContent.mockRejectedValue(httpError(500));
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: true, open_issues_count: 4, created_at: daysAgo(2) } });
+    gh.paginate.mockImplementation(async (endpoint, params) => endpoint === gh.issues.listForRepo && params.state === "open"
+      ? Array.from({ length: 4 }, (_, n) => ({ number: n, user: { login: "tendai" } })) : []);
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.next).toEqual({ status: "error", error: "GitHub 500" });
+    expect(s).toMatchObject({ private: true, defaultBranch: "trunk", openIssueCount: 4 });
+    expect(gh.actions.listWorkflowRunsForRepo).toHaveBeenCalled();
+  });
+  it("keeps the items with no last change date when the commit lookup returns a 500", async () => {
+    gh.repos.listCommits.mockRejectedValue(httpError(500));
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.next).toMatchObject({ status: "ok", sha: "f1le", lastChangedAt: null });
+    expect(s.next.status === "ok" && s.next.items.map((i) => [i.text, i.state])).toEqual([
+      ["Ship the parser", "open"], ["Write docs", "done"],
+    ]);
+  });
+  it("records an error when NEXT.md is a directory", async () => {
+    gh.repos.getContent.mockResolvedValue({ data: [] });
+    expect((await collect()).next).toEqual({ status: "error", error: "NEXT.md is not a file" });
   });
 });

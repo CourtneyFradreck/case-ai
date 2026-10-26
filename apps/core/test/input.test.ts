@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildInput, SYSTEM_PROMPT } from "../src/llm/input.js";
+import { buildInput, FOCUS_PROMPT, SYSTEM_PROMPT } from "../src/llm/input.js";
 import { finding, snap } from "./fixtures.js";
 
 describe("model input", () => {
+  it("asks for items under 180 characters", () => {
+    expect(SYSTEM_PROMPT).toContain(`- Keep every item's "text" and "reason" under 180 characters.`);
+    expect(FOCUS_PROMPT).toContain(`- Keep every item's "text" and "reason" under 180 characters.`);
+  });
   it("tells the model not to add claims a finding doesn't contain", () => {
     expect(SYSTEM_PROMPT).toContain("Describe each finding using only what its fields state. Do not add urgency, judgements or calls to action (e.g. 'needs your review', 'urgent', 'blocking') that the finding doesn't contain.");
   });
@@ -69,7 +73,8 @@ describe("model input", () => {
     const input = buildInput([publicFinding], snaps, "over the weekend", { modelIncludePrivate: false, userName: "Courtney" });
     expect(input.user).toContain("Recap period: over the weekend");
     expect(input.system).toContain("capable personal assistant talking to Courtney in second person");
-    expect(input.system).toContain("2-3 most meaningful highlights per branch");
+    expect(input.system).toContain("name the 2-3 themes of the provided commit messages");
+    expect(input.system).toContain("Never quote or paste commit messages");
     expect(input.system).toContain('Start each bullet with a verb or count, never "You"');
     expect(input.system).toContain("Do not repeat repo names inside bullets");
     expect(input.system).toContain('Cite that finding\'s aliases in "noteSources"');
@@ -83,4 +88,26 @@ describe("model input", () => {
     expect(input.system).toContain("You are CASE, the user's morning brief assistant.");
     expect(input.system).toContain('Address the user as "you".');
   });
+  it("tells the model NEXT.md items belong only in focus when focusButtons is on", () => {
+    const next = finding({ id: "next_abc", rule: "next_item", summary: "Next in me/demo: Ship the parser", details: ["M3 Intent"] });
+    const input = buildInput([publicFinding, next], snaps, "day", { modelIncludePrivate: false, focus: true });
+    expect(input.system).toBe(FOCUS_PROMPT);
+    expect(input.system).toContain(`"next_item" findings are open items from the user's NEXT.md plans`);
+    expect(input.user).toContain("F2 | info | next_item | me/demo | Next in me/demo: Ship the parser\n    - M3 Intent");
+    expect(buildInput([publicFinding], snaps, "day", { modelIncludePrivate: false }).system).toBe(SYSTEM_PROMPT);
+    expect(SYSTEM_PROMPT).not.toContain("next_item");
+  });
+  it("asks for 2-3 sourced focus suggestions only when focusButtons is on", () => {
+    expect(SYSTEM_PROMPT).toContain('"focus": return an empty list.');
+    expect(SYSTEM_PROMPT).toContain("Never repeat it as a suggestion.");
+    expect(FOCUS_PROMPT).not.toContain("return an empty list");
+    expect(FOCUS_PROMPT).not.toContain("Never repeat it as a suggestion.");
+    expect(FOCUS_PROMPT).toContain('"focus": 2 or 3 suggestions');
+    expect(FOCUS_PROMPT).toContain('Each cites at least one alias in "sources"');
+    expect(FOCUS_PROMPT).toContain("states only a fact from a cited finding");
+    expect(FOCUS_PROMPT).toContain("Prefer active work: open next_item findings in repos that have commit findings in this input, first; then high, then medium findings");
+    expect(FOCUS_PROMPT).not.toMatch(/Merge or close|stale branches|waiting PRs/);
+    expect(FOCUS_PROMPT.split("\n").length).toBe(SYSTEM_PROMPT.split("\n").length + 1);
+  });
 });
+

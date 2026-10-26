@@ -4,14 +4,15 @@
     {
       "parameters": {
         "updates": [
-          "message"
+          "message",
+          "callback_query"
         ],
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.3,
       "position": [
-        -64,
+        -96,
         0
       ],
       "id": "7a255774-7f86-49d3-864d-1c554485760d",
@@ -21,6 +22,34 @@
         "telegramApi": {
           "id": "1WoFUhq2eTGLI4IL",
           "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://core:8080/telegram/update",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        96,
+        0
+      ],
+      "id": "755b9afe-0e52-4196-a4a9-3776a08d3237",
+      "name": "Forward update to core",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "yRhCf4Y9BKwkJdLT",
+          "name": "Header Auth account"
         }
       }
     },
@@ -36,17 +65,17 @@
           "conditions": [
             {
               "id": "670b7e55-83ac-4c5a-a71b-4a083e5c1065",
-              "leftValue": "={{ $json.message.chat.id }}",
-              "rightValue": "5840249884",
+              "leftValue": "={{ $json.owner }}",
+              "rightValue": "",
               "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             },
             {
               "id": "73d8415e-42f6-4b6a-8ddf-ba337cc96dc7",
-              "leftValue": "={{ $json.message.text }}",
+              "leftValue": "={{ $('Telegram Trigger').item.json.message?.text ?? '' }}",
               "rightValue": "/brief",
               "operator": {
                 "type": "string",
@@ -62,11 +91,11 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        96,
-        112
+        288,
+        0
       ],
       "id": "727436ff-e45d-440f-9f1e-a157c5c456b1",
-      "name": "If"
+      "name": "Owner sent /brief?"
     },
     {
       "parameters": {
@@ -90,8 +119,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        416,
-        -96
+        672,
+        0
       ],
       "id": "40dd89e7-84ca-4f72-9516-7aa62a4c9ba9",
       "name": "HTTP Request",
@@ -114,8 +143,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        256,
-        -16
+        480,
+        0
       ],
       "id": "3ba85f2b-587d-460e-8fc0-60f93ee307f8",
       "name": "Ack",
@@ -140,8 +169,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        672,
-        -176
+        1088,
+        -16
       ],
       "id": "98791965-aa06-4dbe-87d9-fb9e5cf239d9",
       "name": "Telegram (send the brief)",
@@ -164,7 +193,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        752,
+        880,
         160
       ],
       "id": "4568c64f-6667-4b90-b1a2-11351ea2f676",
@@ -176,6 +205,41 @@
           "name": "Telegram account"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e0d166d8-211a-4315-986b-b9e8f7055b0b",
+              "leftValue": "={{ $json.delivered === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        -96
+      ],
+      "id": "d28dec84-b460-41d8-8c70-25fcad9cc176",
+      "name": "Already delivered?"
     }
   ],
   "pinData": {},
@@ -184,36 +248,29 @@
       "main": [
         [
           {
-            "node": "If",
+            "node": "Forward update to core",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "If": {
+    "Forward update to core": {
+      "main": [
+        [
+          {
+            "node": "Owner sent /brief?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Owner sent /brief?": {
       "main": [
         [
           {
             "node": "Ack",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "HTTP Request": {
-      "main": [
-        [
-          {
-            "node": "Telegram (send the brief)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Brief failed",
             "type": "main",
             "index": 0
           }
@@ -230,13 +287,44 @@
           }
         ]
       ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Already delivered?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Brief failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already delivered?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Telegram (send the brief)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "errorWorkflow": "gKwCOaGKLWxcJTBL"
   },
   "versionId": "190d2380-ca11-4688-83cb-0124c457a0d0",
   "meta": {

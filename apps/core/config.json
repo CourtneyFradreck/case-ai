@@ -3,11 +3,17 @@
   "idlePrDays": 3,
   "staleBranchDays": 7,
   "oldBranchDays": 60,
+  "oldBranchesShow": "weekly",
+  "oldBranchesWeekday": 1,
   "ciMaxAgeDays": 30,
   "activeRepoDays": 7,
+  "newRepoDays": 7,
+  "nextStaleDays": 14,
   "ignoreBranchPrefixes": ["dependabot/", "renovate/", "copilot/"],
   "ignoreAuthors": ["dependabot[bot]", "github-actions[bot]"],
   "maxBriefChars": 3800,
+  "streakCollapseAfter": 3,
   "modelIncludePrivate": false,
-  "modelTimeoutMs": 20000
+  "modelTimeoutMs": 20000,
+  "features": { "focusButtons": true, "snooze": true, "streaks": true, "quietMornings": false }
 }

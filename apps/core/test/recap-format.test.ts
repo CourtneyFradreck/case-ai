@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import { render, renderModelBrief } from "../src/render.js";
+import { commitText, themes } from "../src/recap-text.js";
 import { runRules } from "../src/rules/index.js";
 import { validate } from "../src/llm/validate.js";
 import { generateModelBrief } from "../src/llm/brief.js";
@@ -17,6 +18,8 @@ const pr = { number: 2, title: "feat(core)!: GitHub morning brief pipeline and a
 const data = [snap({ repo: "me/case-ai", commits: Array.from({ length: 15 }, (_, i) => commit(i % 2 ? "fix: model settings fallbacks" : "feat: personalize brief greetings", "feat/m2-model-brief", i)).concat(commit("feat: update README.md", "main")), mergedPrs: [pr], newIssues: [issue(1, "fix: M1 verification: five-morning trial")] })];
 const findings = () => runRules(data, now.toJSDate(), cfg);
 const plain = (text: string) => text.replace(/<[^>]+>/g, "");
+// The recap section, below the opening sentence (which names the busiest repo once).
+const recapOf = (text: string) => text.slice(text.indexOf("<b>Yesterday</b>"));
 const model = (fs: Finding[]) => renderModelBrief({ yesterday: fs.filter((f) => f.severity === "info").map((f) => ({ text: `You worked on ${f.repo}.`, sources: [f] })), attention: [], focus: [] }, [], w, 3800, { now });
 const renderers = [
   ["template", (fs: Finding[]) => render(fs, [], w, 3800, undefined, { now })],
@@ -27,7 +30,7 @@ const renderers = [
 describe.each(renderers)("%s recap", (_, renderBrief) => {
   it("groups a repo once, removes it from bullets, and orders commits before PRs and issues", () => {
     const text = renderBrief(findings().reverse());
-    const visible = plain(text);
+    const visible = plain(recapOf(text));
     expect(text.match(/<b>case-ai<\/b>/g)).toHaveLength(1);
     expect(visible.match(/case-ai/g)).toHaveLength(1);
     expect(visible).not.toContain("me/case-ai");
@@ -71,13 +74,18 @@ describe("model recap and closing discipline", () => {
     expect(output.length).toBeLessThanOrEqual(230);
     expect(output).toContain("more line(s) not shown");
     expect(output).not.toContain("<b>case-ai</b>");
-    expect(output).not.toContain("Here's what you worked on");
+    expect(output).not.toMatch(/<b>(?:Yesterday|Over the weekend|On \w+)<\/b>/);
   });
-  it("keeps a model's branch highlights inside the same grouped structure", () => {
+  it("keeps a model's branch themes inside the same grouped structure", () => {
     const fs = findings();
-    const text = renderModelBrief({ yesterday: fs.map((f) => ({ text: f.activity?.kind === "commits" && f.activity.count > 1 ? "15 commits on feat/m2-model-brief, including fixing model settings fallbacks and personalizing brief greetings." : f.summary, sources: [f] })), attention: [], focus: [] }, [], w);
-    expect(plain(text)).toContain("15 commits on feat/m2-model-brief, including fixing model settings fallbacks and personalizing brief greetings. [diff]");
-    expect(plain(text).match(/case-ai/g)).toHaveLength(1);
+    const text = renderModelBrief({ yesterday: fs.map((f) => ({ text: f.activity?.kind === "commits" && f.activity.count > 1 ? "15 commits on feat/m2-model-brief, covering greetings and settings fallbacks." : f.summary, sources: [f] })), attention: [], focus: [] }, [], w);
+    expect(plain(text)).toContain("15 commits on feat/m2-model-brief, covering greetings and settings fallbacks. [diff]");
+    expect(plain(recapOf(text)).match(/case-ai/g)).toHaveLength(1);
+  });
+  it("names themes in code when the model pastes a commit subject", () => {
+    const fs = findings();
+    const text = renderModelBrief({ yesterday: fs.map((f) => ({ text: f.activity?.kind === "commits" && f.activity.count > 1 ? "15 commits on feat/m2-model-brief, including model settings fallbacks." : f.summary, sources: [f] })), attention: [], focus: [] }, [], w);
+    expect(plain(text)).toContain("15 commits on feat/m2-model-brief, covering greetings, settings and fallbacks. [diff]");
   });
   it("splits a model sentence that combines different repos into sourced groups", () => {
     const fs = runRules([...data, snap({ repo: "me/portfolio", newIssues: [{ ...issue(9), url: "https://github.com/me/portfolio/issues/9" }] })], now.toJSDate(), cfg);
@@ -114,5 +122,21 @@ describe("model recap and closing discipline", () => {
       expect(result.text).not.toContain("!");
     }
     expect(render([f], [], w)).not.toContain("<i>");
+  });
+});
+
+describe("commit themes", () => {
+  const subjects = [
+    "feat: turn on focus buttons", "fix: say \"Here's your brief\" from noon local time", "feat: handle focus taps, typed focus, /focus and /next",
+    "feat: add a Telegram Bot API client to case-core", "feat: route Telegram updates through case-core", "feat: alert a webhook when a backup run fails",
+    "feat: add nightly encrypted Postgres backup container", "docs: describe focus suggestions, buttons and commands",
+  ];
+  it("names the words that recur across subjects, never the subjects themselves", () => {
+    expect(themes(subjects, ["me/case-ai", "feat/m3-intent"])).toEqual(["focus", "buttons", "Telegram"]);
+  });
+  it("labels the recap's count and the branch's total honestly", () => {
+    expect(commitText({ kind: "commits", count: 8, branch: "feat/m3-intent", messages: subjects, branchTotal: 46 }, "me/case-ai"))
+      .toBe("8 commits on feat/m3-intent (46 on the branch so far), covering focus, buttons and Telegram.");
+    expect(commitText({ kind: "commits", count: 2, branch: "main", messages: ["fix: one thing", "feat: another"] })).toBe("2 commits on main.");
   });
 });

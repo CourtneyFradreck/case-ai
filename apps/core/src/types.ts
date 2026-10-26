@@ -3,7 +3,7 @@ export type Severity = "high" | "medium" | "low" | "info";
 export interface Source { label: string; url: string }
 
 export type Activity =
-  | { kind: "commits"; count: number; branch: string; messages: string[] }
+  | { kind: "commits"; count: number; branch: string; messages: string[]; branchTotal?: number }
   | { kind: "pr" | "issue"; action: "Opened" | "Merged" | "Closed"; number: number; title: string };
 
 export interface Finding {
@@ -16,11 +16,13 @@ export interface Finding {
   sources: Source[];
   ageDays?: number;       // for sorting within a severity
   activity?: Activity;   // structured recap facts, independent of model wording
+  intent?: { itemId: string; section: string | null; state: "open" | "done"; waitsOn?: string };  // waitsOn: the open item it follows
+  target?: string;        // what an attention finding is about, as the brief names it: a branch, "PR #4", "issue #8" or a workflow
 }
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }
 export interface Pr { number: number; title: string; url: string; draft: boolean; headRef: string; updatedAt: string; createdAt?: string; mergedAt?: string | null }
-export interface Issue { number: number; title: string; url: string; createdAt: string; state?: string }
+export interface Issue { number: number; title: string; url: string; createdAt: string; state?: string; mine?: boolean }
 export interface ClosedIssue { number: number; title: string; url: string; closedAt: string }
 export interface IssueComment {
   id: number; issueNumber: number; issueTitle: string; isPr: boolean;
@@ -29,19 +31,32 @@ export interface IssueComment {
 export interface Branch { name: string; sha: string; lastCommitAt: string; aheadBy: number; url: string }
 export interface CiRun { workflowId: number; workflowName: string; conclusion: string | null; url: string; finishedAt: string }
 
+export interface NextItem {
+  id: string; text: string; section: string | null;
+  state: "open" | "done"; line: number;   // 1-based line number in NEXT.md
+  after?: boolean;                         // marked "after:": waits for the item above it
+}
+export type NextFile =
+  | { status: "ok"; sha: string; url: string; lastChangedAt: string | null; items: NextItem[] }
+  | { status: "missing" }
+  | { status: "error"; error: string };
+
 export interface RepoSnapshot {
   repo: string;
   private: boolean;
   defaultBranch: string;
+  createdAt: string;
   commits: Commit[];
   openPrs: Pr[];
   openedPrs: Pr[];
   mergedPrs: Pr[];
+  recentlyMerged?: Pr[];  // merged PRs among the 50 most recently updated closed ones, any date
   newIssues: Issue[];
   closedIssues: ClosedIssue[];
   comments: IssueComment[];
-  openIssueCount: number;
+  openIssueCount: number; // open issues opened by someone else; your own aren't a request for attention
   branches: Branch[];
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
+  next: NextFile;         // NEXT.md on the default branch
   error?: string;         // set if this repo couldn't be read
 }

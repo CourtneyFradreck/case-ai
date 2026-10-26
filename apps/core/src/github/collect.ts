@@ -1,7 +1,8 @@
 import { Octokit } from "@octokit/rest";
 import { env } from "../env.js";
 import { inWindow, type Window } from "../time.js";
-import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment } from "../types.js";
+import { parseNext } from "../intent/parse.js";
+import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment, NextFile } from "../types.js";
 
 const gh = new Octokit({ auth: env.githubToken, userAgent: "case-ai" });
 
@@ -25,9 +26,10 @@ export async function collectAll(repos: string[], w: Window, ignoreAuthors: stri
 async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
   const [owner, repo] = fullName.split("/");
   const empty: RepoSnapshot = {
-    repo: fullName, private: false, defaultBranch: "main",
+    repo: fullName, private: false, defaultBranch: "main", createdAt: "",
     commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
     closedIssues: [], comments: [], openIssueCount: 0,
+    next: { status: "error", error: "not collected" },
   };
 
   try {
@@ -35,6 +37,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     const base = meta.default_branch;
     const since = w.start.toISOString();
     const until = w.end.toISOString();
+    const next = await collectNext(owner, repo, fullName, base);
 
     // 1. Branches: head date and whether unmerged
     const branchList = await gh.paginate(gh.repos.listBranches, { owner, repo, per_page: 100 });
@@ -99,6 +102,12 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       owner, repo, state: "all", since, per_page: 100,
     });
     const issuesByNumber = new Map(issues.map((i) => [i.number, i]));
+    // Unknown identity counts as yours, as for comments: it must never turn issues into requests for attention.
+    const byMe = (i: { user?: { login?: string } | null }) => myLogin === null || i.user?.login === myLogin;
+    // Open issues someone else opened. Issues you opened (a trial checklist, a reminder) are notes, not requests;
+    // new comments on them from others still come through as issue_comments.
+    const openIssues = await gh.paginate(gh.issues.listForRepo, { owner, repo, state: "open", per_page: 100 });
+    const othersOpen = openIssues.filter((i) => !i.pull_request && !byMe(i)).length;
     const comments: IssueComment[] = [];
     try {
       const list = await gh.paginate(gh.issues.listCommentsForRepo, { owner, repo, since, per_page: 100 });
@@ -155,6 +164,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       error: undefined,
       private: meta.private,
       defaultBranch: base,
+      createdAt: meta.created_at,
       commits: [...seen.values()],
       openPrs: open.map((p) => ({
         number: p.number, title: p.title, url: p.html_url,
@@ -168,18 +178,52 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
         number: p.number, title: p.title, url: p.html_url,
         draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
       })),
+      recentlyMerged: closed.filter((p) => p.merged_at).map((p) => ({
+        number: p.number, title: p.title, url: p.html_url,
+        draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
+      })),
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state, mine: byMe(i) })),
       closedIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.closed_at, w))
         .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),
       comments,
-      openIssueCount: Math.max(0, meta.open_issues_count - open.length),
+      openIssueCount: othersOpen,
       branches,
       ciRuns,
+      next,
     };
   } catch (e: any) {
     return { ...empty, error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };
+  }
+}
+
+// NEXT.md is optional: a failure here never marks the whole repo as unreadable.
+async function collectNext(owner: string, repo: string, fullName: string, base: string): Promise<NextFile> {
+  try {
+    const { data } = await gh.repos.getContent({ owner, repo, path: "NEXT.md", ref: base });
+    if (Array.isArray(data) || data.type !== "file" || typeof data.content !== "string") {
+      return { status: "error", error: "NEXT.md is not a file" };
+    }
+    const md = Buffer.from(data.content, "base64").toString("utf8");
+    let lastChangedAt: string | null = null;
+    try {
+      const { data: commits } = await gh.repos.listCommits({ owner, repo, path: "NEXT.md", sha: base, per_page: 1 });
+      const last = commits[0]?.commit;
+      lastChangedAt = last?.committer?.date ?? last?.author?.date ?? null;
+    } catch {
+      // The items are still usable without a change date; next_stale just skips.
+    }
+    return {
+      status: "ok",
+      sha: data.sha,
+      url: `https://github.com/${fullName}/blob/${encodeURI(base)}/NEXT.md`,
+      lastChangedAt,
+      items: parseNext(fullName, md),
+    };
+  } catch (e: any) {
+    if (e?.status === 404) return { status: "missing" };
+    return { status: "error", error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };
   }
 }

@@ -1,10 +1,12 @@
 import type { Finding, RepoSnapshot, Source } from "./types.js";
 import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
-import type { ValidBrief, ValidItem } from "./llm/schema.js";
-import { deduplicateFindings, organizeBrief } from "./sections.js";
-import { activityAmount, bulletText, recapKind, recapText } from "./recap-text.js";
+import type { ValidBrief, ValidFocus, ValidItem } from "./llm/schema.js";
+import { deduplicateFindings, focusOnly, organizeBrief } from "./sections.js";
+import { activityAmount, bulletText, recapKind, recapText, withoutRepeatedAside } from "./recap-text.js";
 import { closingLine } from "./llm/closing.js";
+import { shortLabel } from "./streaks.js";
+import { plural } from "./plural.js";
 
 export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -15,18 +17,56 @@ const link = (s: Source) =>
 const icon = { high: "🔴", medium: "🟡", low: "⚪", info: "•" } as const;
 const rank = { high: 0, medium: 1, low: 2, info: 3 } as const;
 
-function line(f: Finding): string[] {
+function line(f: Finding, days?: Map<string, number>): string[] {
   if (f.rule === "old_branches") {
     const names = f.sources.map((s) => s.label).join(", ");
     const summary = esc(f.summary).replace(esc(names), () => f.sources.map(link).join(", "));
     return [`${icon[f.severity]} ${summary}`];
   }
-  const out = [`${icon[f.severity]} ${esc(f.summary)} [${f.sources.map(link).join(", ")}]`];
+  const out = [`${icon[f.severity]} ${esc(f.summary)}${dayTag([f], days)} [${f.sources.map(link).join(", ")}]`];
   for (const d of f.details ?? []) out.push(`   – ${esc(d)}`);
   return out;
 }
 
-export interface GreetingOptions { userName?: string; now?: DateTime }
+// focus: features.focusButtons, which keeps focus suggestions apart from attention.
+// previousFocus: the yesterday_focus finding, shown at the top of the recap in code on both paths.
+// collapsed and days (features.streaks): repeated findings for the "Still open, unchanged" line, and
+// how many scheduled runs in a row each repeated high finding has appeared.
+// done (features.focusButtons): NEXT.md items a merged PR likely finished, one line each at the end of attention.
+// leftOpen: stale branches, idle PRs and old branches, kept open on purpose: one low line at the end of the brief.
+export interface GreetingOptions {
+  userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[];
+}
+
+const dayTag = (findings: Finding[], days?: Map<string, number>) => {
+  const n = Math.max(0, ...findings.map((f) => days?.get(f.id) ?? 0));
+  return n ? ` (day ${n})` : "";
+};
+
+const MAX_COLLAPSED_NAMES = 5;
+
+function collapsedLine(findings: Finding[] = []): string[] {
+  if (!findings.length) return [];
+  const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => f.sources[0] ? link({ label: shortLabel(f), url: f.sources[0].url }) : esc(shortLabel(f)));
+  const more = findings.length - names.length;
+  return [`⚪ Still open, unchanged: ${plural(findings.length, "item")} (${names.join(", ")}${more ? `, and ${more} more` : ""})`];
+}
+
+// Branches and PRs left open, on one line below everything else, so it's the first cut and never outranks
+// active work. Each is named once, with its link. Written by code on both paths; never sent to the model.
+function leftOpenLine(findings: Finding[] = []): string[] {
+  if (!findings.length) return [];
+  const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => {
+    if (f.rule === "old_branches") return line(f)[0].replace(/^\S+ /, "");
+    // shortLabel already names the repo: "idle PR #4 in demo".
+    const label = f.target ? `${f.target} in ${f.repo.split("/").pop()}` : shortLabel(f);
+    const what = f.sources[0] ? link({ label, url: f.sources[0].url }) : esc(label);
+    return `${what}${f.ageDays === undefined ? "" : ` (${f.rule === "idle_pr" ? "quiet" : "idle"} ${plural(f.ageDays, "day")})`}`;
+  });
+  const more = findings.length - names.length;
+  return ["", `${icon.low} Left open: ${names.join("; ")}${more ? `; and ${more} more` : ""}`];
+}
 
 function recapLines(items: ValidItem[], model = false): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
@@ -43,21 +83,67 @@ function recapLines(items: ValidItem[], model = false): string[] {
         .map((item) => `• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`)]);
 }
 
-function header(options: GreetingOptions): string[] {
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+const count = (n: number, noun: string) => n === 1 ? `one ${noun}` : `${n} ${noun}s`;
+
+// One sentence on the recap period, the way a person would put it, built only from recap findings:
+// "Big case-ai day yesterday: 12 commits on feat/m3-intent." It names the busiest repo and the period's
+// size; numbers of PRs and issues stay in the recap below. Nothing when the period had no activity.
+export function opening(recap: Finding[], w: Window): string | undefined {
+  if (!w.label || !recap.length) return;
+  const commits = recap.filter((f) => recapKind(f) === 0);
+  const byRepo = new Map<string, Finding[]>();
+  for (const f of commits) byRepo.set(f.repo, [...(byRepo.get(f.repo) ?? []), f]);
+  const total = (fs: Finding[]) => fs.reduce((n, f) => n + activityAmount(f), 0);
+  const [top] = [...byRepo].sort(([a, x], [b, y]) => total(y) - total(x) || a.localeCompare(b));
+  const merged = recap.filter((f) => f.activity?.kind === "pr" && f.activity.action === "Merged").length;
+  const and = merged ? `, and ${merged === 1 ? "a PR" : `${merged} PRs`} merged` : "";
+  // "day yesterday", "weekend", "Friday".
+  const when = w.label === "yesterday" ? "day yesterday" : w.label.replace(/^on |^over the /, "");
+  if (!top) return merged ? `No commits ${w.label}, but ${and.slice(6)}.` : `No commits ${w.label}, just PR and issue updates.`;
+  const [repo, found] = top;
+  const name = repo.split("/").pop()!;
+  const n = total(found);
+  const elsewhere = total(commits) - n;
+  if (n >= 10) {
+    // The busiest branch: "12 commits on feat/m3-intent", or "16 commits, most on feat/m2-model-brief" when others had some.
+    const branch = [...found].sort((a, b) => activityAmount(b) - activityAmount(a))[0].activity;
+    const on = branch?.kind !== "commits" ? "" : found.length === 1 ? ` on ${branch.branch}` : `, most on ${branch.branch}`;
+    return `Big ${name} ${when}: ${count(n, "commit")}${on}${elsewhere ? `, and ${elsewhere} elsewhere` : ""}${and}.`;
+  }
+  return `${n >= 3 ? "Steady" : "Quiet"} ${when}: ${count(n, "commit")} in ${name}${elsewhere ? ` and ${elsewhere} elsewhere` : ""}${and}.`;
+}
+
+function header(options: GreetingOptions, recap: Finding[] = [], w?: Window): string[] {
   const today = (options.now ?? DateTime.now()).setZone(ZONE).setLocale("en");
   const hour = today.hour;
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const name = options.userName?.trim();
-  return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}. Here's your morning brief.</b>`, today.toFormat("cccc, d LLL yyyy")];
+  const line = w && opening(recap, w);
+  return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}.</b>`, today.toFormat("cccc, d LLL yyyy"), ...(line ? ["", esc(line)] : [])];
 }
 
-function sections(attention: string[], recap: string[], w: Window): string[] {
+// Suggestions sit before the recap, so truncation cuts the recap first.
+// lead lines open the recap; with no recap they stand alone.
+function sections(attention: string[], recap: string[], w: Window, focus: string[] = [], lead: string[] = []): string[] {
   const parts: string[] = [];
-  if (attention.length) parts.push("", "<b>Here's what needs your attention</b>", ...attention);
-  if (recap.length) parts.push("", `<b>Here's what you worked on ${esc(w.label.replace(/^on /, ""))}</b>`, ...recap);
-  else if (!w.label || !attention.length) parts.push("", "Nothing new in the past week.");
+  if (attention.length) parts.push("", "<b>Needs attention</b>", ...attention);
+  if (focus.length) parts.push("", "<b>Today, I'd suggest</b>", ...focus);
+  if (recap.length) parts.push("", `<b>${esc(capital(w.label))}</b>`, ...lead, ...recap);
+  else {
+    if (lead.length) parts.push("", ...lead);
+    if (!w.label || !attention.length) parts.push("", "Nothing new in the past week.");
+  }
   return parts;
 }
+
+// Written by code on both paths; never sent to the model.
+const doneLines = (findings: Finding[] = []) =>
+  findings.map((f) => `☑️ ${esc(f.summary)} [${f.sources.map(link).join(", ")}]`);
+
+const leadLines = (findings: Finding[] = []) =>
+  findings.map((f) => `• ${esc(f.summary)}.${f.sources.length ? ` [${f.sources.map(link).join(", ")}]` : ""}`);
 
 function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer?: string): string {
   const failed = snaps.filter((s) => s.error);
@@ -65,17 +151,33 @@ function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer
     parts.push("", `<i>Couldn't read: ${failed.map((s) => `${esc(s.repo)} (${esc(s.error!)})`).join(", ")}</i>`);
   }
   if (footer) parts.push("", `<i>${esc(footer)}</i>`);
-  return truncate(parts, maxChars);
+  return truncate(parts.map(codeFilenames), maxChars);
 }
 
-export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}): string {
-  findings = deduplicateFindings(findings);
+// Telegram auto-links "NEXT.md" because .md is a domain. Wrap .md filenames in <code> in escaped
+// text, leaving links (whose labels may be "NEXT.md") and existing code untouched.
+const MD_FILE = /(?<![\w./-])[\w-]+(?:[./][\w-]+)*\.md(?![\w-]|\.[\w-])/gi;
+export const codeFilenames = (html: string) =>
+  html.split(/(<a\b[^>]*>[\s\S]*?<\/a>|<code>[\s\S]*?<\/code>|<[^>]+>)/)
+    .map((part, i) => i % 2 ? part : part.replace(MD_FILE, (name) => `<code>${name}</code>`))
+    .join("");
+
+// Numbered to match the focus buttons. Reasons are kept with the brief, not shown.
+const focusLines = (items: ValidFocus[], days?: Map<string, number>) =>
+  items.map((i, n) => `${n + 1}. ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, days)} ${modelLinks(i)}`);
+
+// A finding a suggestion is built on appears there instead of in attention.
+export const suggested = (focus: ValidFocus[]) => new Set(focus.flatMap((i) => i.sources.map((f) => f.id)));
+
+export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, maxChars = 3800, footer?: string, greeting: GreetingOptions = {}, focus: ValidFocus[] = []): string {
+  findings = deduplicateFindings(findings.filter((f) => !focusOnly(f)));
   // Stable sort: keeps the caller's order within a severity (e.g. oldest first from rules)
+  const cited = suggested(focus);
   const attention = findings
-    .filter((f) => f.severity !== "info")
+    .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting), ...sections(attention.flatMap(line), recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w)];
+  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -108,13 +210,13 @@ function modelLinks(item: ValidItem): string {
 }
 
 export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Window, maxChars = 3800, greeting: GreetingOptions = {}): string {
-  brief = organizeBrief(brief, [...brief.attention, ...brief.yesterday, ...brief.focus].flatMap((i) => i.sources));
+  brief = organizeBrief(brief, [...brief.attention, ...brief.yesterday, ...brief.focus].flatMap((i) => i.sources), greeting.focus);
   const modelLine = (i: ValidItem) => {
     if (i.sources.length === 1 && i.sources[0].rule === "old_branches") return line(i.sources[0])[0];
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
-    return `${icon[severity]} ${esc(bulletText(i.text))} ${modelLinks(i)}`;
+    return `${icon[severity]} ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting), ...sections(brief.attention.map(modelLine), recapLines(brief.yesterday, true), w)];
+  const parts = [...header(greeting, brief.yesterday.flatMap((i) => i.sources), w), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

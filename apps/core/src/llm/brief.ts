@@ -4,23 +4,34 @@ import { DateTime } from "luxon";
 import { renderModelBrief } from "../render.js";
 import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
-import { briefJsonSchema, type AliasBrief, type ValidBrief } from "./schema.js";
-import { validate, type DropReason } from "./validate.js";
+import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
+import { validate, type DropReason, type Shortened } from "./validate.js";
+import { withMissingNext } from "../focus.js";
 
-export interface ModelBriefConfig extends InputConfig { modelTimeoutMs: number; maxBriefChars: number }
+// previousFocus is rendered at the top of the recap and never sent to the model.
+// collapsed and days (features.streaks) are rendered in code; collapsed findings are never sent.
+// done (likely finished NEXT.md items) and leftOpen (branches and PRs left open) are rendered in code and never sent.
+// parked: findings behind a snoozed focus; the model's suggestions built only on them are dropped.
+// missing: active repos with no NEXT.md; one takes the last suggestion, added in code and never sent.
+export interface ModelBriefConfig extends InputConfig {
+  modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
+  collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>; missing?: Finding[];
+}
 export interface BriefAudit {
   brief: AliasBrief | null;
   aliases: Record<string, string>;
   raw: string | null;
   responses?: string[];
   dropped: DropReason[];
+  shortened?: Shortened[];   // overlong text and reasons cut to the schema limits
   addedBack: string[];
   attempts: number;
   fallbackReason: string | null;
   fallbackDetail?: string | null;
 }
 export interface BriefMeta { model: string | null; inputTokens?: number; outputTokens?: number; json: BriefAudit }
-export type ModelBriefResult = BriefMeta & ({ text: string } | { fallbackReason: string });
+// focus is empty unless features.focusButtons (cfg.focus) is on.
+export type ModelBriefResult = BriefMeta & ({ text: string; focus: ValidFocus[] } | { fallbackReason: string });
 
 export function fallbackMeta(model: string | null, reason: string, detail = reason): BriefMeta & { fallbackReason: string } {
   return { model, fallbackReason: reason, json: { brief: null, aliases: {}, raw: null, dropped: [], addedBack: [], attempts: 0, fallbackReason: reason, fallbackDetail: detail.slice(0, 200) } };
@@ -53,12 +64,14 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
   const meta: BriefMeta = { model: provider.name, json: { brief: null, aliases: Object.fromEntries([...input.aliasToFinding].map(([alias, f]) => [alias, f.id])), raw: null, responses: [], dropped: [], addedBack: [], attempts: 0, fallbackReason: null, fallbackDetail: null } };
   const complete = (result: Extract<ReturnType<typeof validate>, { ok: true }>) => {
     meta.json.dropped = result.dropped;
+    meta.json.shortened = result.shortened;
     meta.json.addedBack = result.addedBack;
-    Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, findings));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now }) };
+    if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
+    Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
-    const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings);
+    const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus, cfg.parked);
     if (result.ok) { meta.model = null; return complete(result); }
     return fallbackMeta(null, result.reason, result.detail);
   }
@@ -73,7 +86,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
       if (response.outputTokens !== undefined) meta.outputTokens = (meta.outputTokens ?? 0) + response.outputTokens;
       meta.json.raw = response.raw;
       meta.json.responses!.push(response.raw);
-      const result = validate(response.raw, input.aliasToFinding, findings);
+      const result = validate(response.raw, input.aliasToFinding, findings, cfg.focus, cfg.parked);
       if (result.ok) return complete(result);
       fallbackReason = result.reason;
       fallbackDetail = result.detail ?? result.reason;

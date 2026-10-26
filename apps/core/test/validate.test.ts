@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { validate } from "../src/llm/validate.js";
 import { briefJsonSchema } from "../src/llm/schema.js";
+import { shorten } from "../src/llm/validate.js";
+import { renderModelBrief } from "../src/render.js";
 import { finding } from "./fixtures.js";
 
 describe("brief validation", () => {
@@ -9,7 +11,7 @@ describe("brief validation", () => {
   const item = { text: "You made progress.", sources: ["F1"] };
   const output = (over = {}) => JSON.stringify({ yesterday: [item], attention: [], focus: [], ...over });
   it("resolves valid aliases to stored findings", () => {
-    expect(validate(output(), aliases, [f])).toEqual({ ok: true, brief: { yesterday: [{ ...item, sources: [f] }], attention: [], focus: [] }, dropped: [], addedBack: [] });
+    expect(validate(output(), aliases, [f])).toEqual({ ok: true, brief: { yesterday: [{ ...item, sources: [f] }], attention: [], focus: [] }, dropped: [], addedBack: [], shortened: [] });
     expect(briefJsonSchema).not.toHaveProperty("$schema");
   });
   it("rejects invalid JSON", () => expect(validate("not json", aliases, [f]).ok).toBe(false));
@@ -36,8 +38,8 @@ describe("brief validation", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.brief.yesterday).toEqual([]);
-      expect(result.brief.attention[0].text).toBe("Review  now");
-      expect(result.brief.attention[1].text).toBe("Fix  CI (Because  it failed)");
+      expect(result.brief.attention[1].text).toBe("Review  now");
+      expect(result.brief.attention[0].text).toBe("Fix  CI");
       expect(result.brief.note).toBe("CI needs attention");
       expect(result.brief.noteSources).toEqual([high]);
     }
@@ -50,12 +52,12 @@ describe("brief validation", () => {
   it("folds a focus citation into attention without repeating it", () => {
     const high = finding({ severity: "high" });
     const result = validate(output({ yesterday: [], focus: [{ ...item, reason: "It failed" }] }), new Map([["F1", high]]), [high]);
-    expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [{ text: "You made progress. (It failed)", sources: [high] }], focus: [] } });
+    expect(result).toMatchObject({ ok: true, addedBack: [], brief: { attention: [{ text: "You made progress.", sources: [high] }], focus: [] } });
   });
   it("adds an uncited medium finding as a plain attention line and records its ID", () => {
     const medium = finding({ id: "medium", severity: "medium", summary: "New comment from tendai" });
     const result = validate(output({ yesterday: [] }), new Map([["F1", medium]]), [medium]);
-    expect(result).toEqual({ ok: true, brief: { yesterday: [], attention: [{ text: medium.summary, sources: [medium] }], focus: [] }, dropped: [], addedBack: [medium.id] });
+    expect(result).toEqual({ ok: true, brief: { yesterday: [], attention: [{ text: medium.summary, sources: [medium] }], focus: [] }, dropped: [], addedBack: [medium.id], shortened: [] });
   });
   it("keeps cited medium findings without adding them again", () => {
     const medium = finding({ severity: "medium" });
@@ -72,5 +74,130 @@ describe("brief validation", () => {
   });
   it("rejects all-empty output if findings exist, even if there is a note", () => {
     expect(validate(output({ yesterday: [], note: "Hello" }), aliases, [f])).toEqual({ ok: false, reason: "empty_brief" });
+  });
+});
+
+describe("NEXT.md items in validation (focusButtons)", () => {
+  const commits = finding();
+  const next = finding({ id: "next_abc", rule: "next_item", summary: "Next in me/demo: Ship the parser", sources: [{ label: "NEXT.md", url: "https://github.com/me/demo/blob/main/NEXT.md#L3" }] });
+  const aliases = new Map([["F1", commits], ["F2", next]]);
+  const output = (over = {}) => JSON.stringify({ yesterday: [{ text: "Made progress.", sources: ["F1"] }], attention: [], focus: [], ...over });
+  it("keeps a focus suggestion that cites a next_item finding", () => {
+    const result = validate(output({ focus: [{ text: "Ship the parser", reason: "It's next in NEXT.md", sources: ["F2"] }] }), aliases, [commits, next], true);
+    expect(result).toMatchObject({ ok: true, brief: { focus: [{ text: "Ship the parser", reason: "It's next in NEXT.md", sources: [next] }] } });
+  });
+  it("never lets a next_item finding into the recap or attention", () => {
+    const result = validate(output({ yesterday: [{ text: "Made progress.", sources: ["F1"] }, { text: "Ship the parser", sources: ["F2"] }], attention: [{ text: "Ship it", sources: ["F2"] }] }), aliases, [commits, next], true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.brief.yesterday).toEqual([{ text: "Made progress.", sources: [commits] }]);
+      expect(result.brief.attention).toEqual([]);
+    }
+  });
+  it("doesn't add an uncited or private next_item finding back as a recap line", () => {
+    const privateNext = { ...next, id: "next_private", repo: "me/secret" };
+    const result = validate(output(), aliases, [commits, next, privateNext], true);
+    expect(result).toMatchObject({ ok: true, brief: { yesterday: [{ sources: [commits] }], attention: [], focus: [] }, addedBack: [] });
+  });
+  it("treats a brief citing only next_item findings outside focus as empty", () => {
+    expect(validate(output({ yesterday: [{ text: "Ship the parser", sources: ["F2"] }] }), aliases, [commits, next], true)).toMatchObject({ ok: false, reason: "empty_brief" });
+  });
+  it("shows a high finding cited in focus only as the suggestion, not again in attention", () => {
+    const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
+    const result = validate(output({ focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }] }), new Map([...aliases, ["F3", high]]), [commits, high, next], true);
+    expect(result).toMatchObject({ ok: true, brief: { attention: [], focus: [{ text: "Fix CI", sources: [high] }] }, addedBack: [] });
+    const both = validate(output({ attention: [{ text: "CI failing", sources: ["F3"] }], focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }] }), new Map([...aliases, ["F3", high]]), [commits, high, next], true);
+    expect(both).toMatchObject({ ok: true, brief: { attention: [], focus: [{ text: "Fix CI" }] } });
+  });
+  it("drops focus suggestions with no valid source, no reason left, or only already-suggested findings", () => {
+    const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
+    const all = new Map([...aliases, ["F3", high]]);
+    const fix = { text: "Fix CI", reason: "CI is failing", sources: ["F3"] };
+    const first = validate(output({ focus: [fix,
+      { text: "Invented work", reason: "Seems important", sources: ["F9"] },
+      { text: "Read this", reason: "https://evil.test", sources: ["F2"] },
+    ] }), all, [commits, high, next], true);
+    expect(first).toMatchObject({ ok: true, brief: { focus: [{ text: "Fix CI", sources: [high] }] } });
+    if (first.ok) expect(first.dropped).toEqual([
+      { section: "focus", index: 1, reason: "no_sources", aliases: ["F9"] },
+      { section: "focus", index: 2, reason: "empty_reason" },
+    ]);
+    const second = validate(output({ focus: [fix,
+      { text: "Fix CI again", reason: "Still failing", sources: ["F3"] },
+      { text: "Ship the parser", reason: "Open in NEXT.md", sources: ["F2", "F9"] },
+    ] }), all, [commits, high, next], true);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(second.brief.focus.map((i) => i.text)).toEqual(["Fix CI", "Ship the parser"]);
+      expect(second.brief.focus[1].sources).toEqual([next]);
+      expect(second.dropped).toEqual([
+        { section: "focus", index: 1, reason: "duplicate_focus" },
+        { section: "focus", index: 2, reason: "unknown_aliases", aliases: ["F9"] },
+      ]);
+    }
+  });
+  it("drops suggestions built only on a snoozed focus, and keeps that finding in attention", () => {
+    const high = finding({ id: "ci", severity: "high", summary: "CI failing" });
+    const result = validate(output({ focus: [{ text: "Fix CI", reason: "CI is failing", sources: ["F3"] }, { text: "Ship the parser", reason: "Open", sources: ["F2"] }] }),
+      new Map([...aliases, ["F3", high]]), [commits, high, next], true, new Set(["ci"]));
+    expect(result).toMatchObject({ ok: true, brief: { attention: [{ text: "CI failing", sources: [high] }], focus: [{ text: "Ship the parser" }] }, dropped: [{ section: "focus", index: 0, reason: "snoozed_focus" }] });
+  });
+});
+
+describe("overlong model text", () => {
+  const f = finding();
+  const long = `10 commits on main, including ${"adding delivery retries with backoff, ".repeat(6)}and documenting the brief endpoint`.slice(0, 260);
+  it("accepts a 260-character yesterday item, shortens it at a word boundary and records it", () => {
+    expect(long).toHaveLength(260);
+    const result = validate(JSON.stringify({ yesterday: [{ text: long, sources: ["F1"] }], attention: [], focus: [] }), new Map([["F1", f]]), [f]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const text = result.brief.yesterday[0].text;
+    expect(text.endsWith("…")).toBe(true);
+    expect(text.length).toBeLessThanOrEqual(200);
+    expect(long.startsWith(text.slice(0, -1))).toBe(true);
+    expect(long[text.length - 1]).toMatch(/[\s,]/);
+    expect(result.shortened).toEqual([{ section: "yesterday", index: 0, field: "text", length: 260 }]);
+    expect(result.dropped).toEqual([]);
+  });
+  it("shortens an overlong focus reason to its limit", () => {
+    const high = finding({ severity: "high" });
+    const result = validate(JSON.stringify({ yesterday: [], attention: [], focus: [{ text: "Fix CI", reason: "word ".repeat(40), sources: ["F1"] }] }), new Map([["F1", high]]), [high], true);
+    expect(result).toMatchObject({ ok: true, shortened: [{ section: "focus", index: 0, field: "reason", length: 199 }] });
+    if (result.ok) expect(result.brief.focus[0].reason.length).toBeLessThanOrEqual(160);
+  });
+  it("still asks the model for the limits", () => {
+    expect(JSON.stringify(briefJsonSchema)).toContain('"maxLength":200');
+    expect(JSON.stringify(briefJsonSchema)).toContain('"maxLength":160');
+  });
+  it("cuts at the last word boundary, trims trailing punctuation, and keeps short text", () => {
+    expect(shorten("short", 10)).toBe("short");
+    expect(shorten("one two, three four", 12)).toBe("one two…");
+    expect(shorten("x".repeat(30), 10)).toBe(`${"x".repeat(9)}…`);
+  });
+});
+
+describe("attention order", () => {
+  const low = finding({ id: "low", rule: "open_issues", severity: "low", summary: "3 open issues", sources: [{ label: "issues", url: "https://github.com/me/demo/issues" }] });
+  const medium = finding({ id: "med", rule: "idle_pr", severity: "medium", summary: "PR #4 idle", sources: [{ label: "PR", url: "https://github.com/me/demo/pull/4" }] });
+  const medium2 = finding({ id: "med2", rule: "stale_branch", severity: "medium", summary: "Branch x stale", sources: [{ label: "branch", url: "https://github.com/me/demo/tree/x" }] });
+  const high = finding({ id: "high", rule: "failing_ci", severity: "high", summary: "CI failing", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] });
+  const aliases = new Map([["F1", low], ["F2", medium], ["F3", medium2], ["F4", high]]);
+  const all = [low, medium, medium2, high];
+  it("sorts attention by the most severe cited finding, keeping the model's order within a severity", () => {
+    const result = validate(JSON.stringify({ yesterday: [], attention: [
+      { text: "Open issues", sources: ["F1"] }, { text: "Stale branch", sources: ["F3"] },
+      { text: "Idle PR", sources: ["F2"] }, { text: "CI and issues", sources: ["F1", "F4"] },
+    ], focus: [] }), aliases, all);
+    expect(result.ok && result.brief.attention.map((i) => i.text)).toEqual(["CI failing", "Stale branch", "Idle PR", "Open issues"]);
+  });
+  it("renders a low item listed before a medium one after it", () => {
+    const result = validate(JSON.stringify({ yesterday: [], attention: [{ text: "Open issues", sources: ["F1"] }, { text: "Idle PR", sources: ["F2"] }], focus: [] }), aliases, [low, medium]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.brief.attention.map((i) => i.text)).toEqual(["Idle PR", "Open issues"]);
+    const w = { start: new Date(), end: new Date(), label: "" };
+    const text = renderModelBrief({ yesterday: [], attention: [{ text: "Open issues", sources: [low] }, { text: "Idle PR", sources: [medium] }], focus: [] }, [], w);
+    expect(text.indexOf("🟡 Idle PR")).toBeLessThan(text.indexOf("⚪ Open issues"));
   });
 });
