@@ -18,7 +18,7 @@
 
 - [x] Set CASE_DELIVERY=core with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, so briefs carry buttons
 - [x] Turn on features.focusButtons and redeploy; check the first brief's suggestions, buttons and /next
-- [ ] Compare model suggestions with the rule-picked ones in rule_text for a week
+- [x] Compare model suggestions with the rule-picked ones in rule_text for a week
 
 ## Less repetition
 
@@ -41,7 +41,7 @@
 - [x] Focus taps: "Focus set for today" notice and a one-line reply; Done / Snooze / Change on the chosen button (migration 012)
 - [x] Old unmerged branches line weekly (oldBranchesShow, oldBranchesWeekday)
 - [x] Redeploy (migrations 011 and 012 run on start) and check tomorrow's brief: tick-off line for M2, yesterday's count, labels on the chosen button
-- [ ] Check the 07:00 brief on Fri 23 Oct: tick-off line gone once M2 is ticked, yesterday's count, labels on the chosen button, old-branches line absent
+- [x] Check the 07:00 brief on Fri 23 Oct: tick-off line gone once M2 is ticked, yesterday's count, labels on the chosen button, old-branches line absent
 - [ ] Try Done, Snooze and Change on the chosen button
 
 ## Follow-ups from the 22 Oct deploy check
@@ -61,8 +61,8 @@
 - [x] Yesterday's focus says "You picked: X" and where the commits went when none landed there; no stale day counts
 - [x] One daysSince helper (Harare calendar days) for every "N days"
 - [x] Suggest only the first open step of a sequence (same setting or milestone, or "after:")
-- [ ] Redeploy and check the next 07:00 brief: no taga suggestion, one CASE_BRIEF_MODE step, "You picked" line
-- [ ] Tick "Merge M2" and the CASE_BRIEF_MODE=command step in NEXT.md on main, so the tick-off line and stale suggestions stop
+- [x] Redeploy and check the next 07:00 brief: no taga suggestion, one CASE_BRIEF_MODE step, "You picked" line
+- [x] Tick "Merge M2" and the CASE_BRIEF_MODE=command step in NEXT.md on main, so the tick-off line and stale suggestions stop
 
 ## M4 Non-code (next)
 
