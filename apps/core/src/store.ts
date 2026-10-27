@@ -195,12 +195,13 @@ export async function insertFocus(c: FocusChoice) {
 export interface FocusRow {
   item_text: string; short_label?: string | null; repo: string | null; finding_id: string | null; created_at: Date;
   status?: "active" | "done" | "snoozed";
+  checkin?: "done" | "partly" | "none" | null;
 }
 
 // The day's focus is its latest choice, unless that choice was snoozed.
 export async function getFocus(date: string) {
   const { rows } = await pool.query<FocusRow>(
-    "SELECT item_text, short_label, repo, finding_id, created_at, status FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    "SELECT item_text, short_label, repo, finding_id, created_at, status, checkin FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
     [date],
   );
   return rows[0]?.status === "snoozed" ? undefined : rows[0];
