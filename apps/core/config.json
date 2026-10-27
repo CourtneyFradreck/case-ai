@@ -15,5 +15,5 @@
   "streakCollapseAfter": 3,
   "modelIncludePrivate": false,
   "modelTimeoutMs": 20000,
-  "features": { "focusButtons": true, "snooze": true, "streaks": true, "quietMornings": false, "eveningCheckIn": false }
+  "features": { "focusButtons": true, "snooze": true, "streaks": true, "quietMornings": false, "eveningCheckIn": true }
 }
