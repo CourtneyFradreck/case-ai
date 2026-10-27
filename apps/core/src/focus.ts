@@ -204,8 +204,12 @@ export const withoutAge = (text: string) => text
 // An info finding for yesterday's focus: the one the user picked (by button, typed or /focus; the line is never
 // inferred), and how many commits its repo had over the period, on every branch. When none landed there, it says
 // which repo the commits went to. It leads the recap and is never sent to the model.
-export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
+export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string; checkin?: "done" | "partly" | "none" | null } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
   if (!focus) return [];
+  if (focus.checkin) return [{
+    id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info", repo: focus.repo ?? "",
+    summary: `You picked: ${withoutAge(focus.short_label || focus.item_text)}, ${{ done: "done", partly: "partly done", none: "didn't get to it" }[focus.checkin]}.`, sources: [],
+  }];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
   // Without a readable repo there is nothing to check commits against.

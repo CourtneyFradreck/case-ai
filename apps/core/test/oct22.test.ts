@@ -14,6 +14,8 @@ vi.mock("../src/features.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/features.js")>()),
   features: { focusButtons: true, snooze: false, streaks: false, quietMornings: false },
 }));
+vi.mock("../src/logs.js", () => ({ logsInWindow: async () => [] }));
+vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set() }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: vi.fn() }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: async () => oct22Snapshots() }));
 vi.mock("../src/store.js", () => ({

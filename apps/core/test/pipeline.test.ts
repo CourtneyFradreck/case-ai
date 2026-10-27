@@ -8,9 +8,12 @@ const mocks = vi.hoisted(() => ({
   features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false },
   previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(), storeBriefSentText: vi.fn(),
   parked: new Set<string>(),
+  logs: [] as { id: string; text: string; tag: string | null; created_at: Date }[],
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
+vi.mock("../src/logs.js", () => ({ logsInWindow: async () => mocks.logs }));
+vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set() }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
@@ -20,6 +23,8 @@ vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-
 import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";
 import { yesterdayWindow } from "../src/time.js";
+
+beforeEach(() => { mocks.logs = []; });
 
 describe("model pipeline", () => {
   beforeEach(() => {
@@ -540,6 +545,12 @@ describe("quiet mornings in the pipeline", () => {
     expect(ruleText).toBe(full);
     expect(mocks.storeBriefSentText).toHaveBeenCalledWith(70, result.text);
     expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ quiet: true });
+  });
+  it("does not quiet a morning with logged activity since the previous scheduled brief", async () => {
+    mocks.logs = [{ id: "1", text: "Pitch edits", tag: null, created_at: new Date("2026-10-13T14:00Z") }];
+    const result = await runBrief("schedule");
+    expect(result.text).toContain("Pitch edits");
+    expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
   });
   it("asks about yesterday's focus when there is one", async () => {
     mocks.getFocus.mockResolvedValue({ item_text: "Ship the parser", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });

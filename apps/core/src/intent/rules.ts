@@ -51,11 +51,17 @@ export function waitsOn(items: { id: string; text: string; section: string | nul
 
 // An open item a merged PR likely finished is never suggested. One line asks to tick it off instead;
 // CASE stays read-only on NEXT.md.
-export function nextItems(s: RepoSnapshot, next: OkNext): Finding[] {
+export function nextItems(s: RepoSnapshot, next: OkNext, completed: Set<string> = new Set()): Finding[] {
   const finished = new Map(next.items.filter((i) => i.state === "open").map((i) => [i.id, mergedMatch(i.text, s)] as const));
-  const waits = waitsOn(next.items, (id) => finished.has(id) && !finished.get(id));
+  const waits = waitsOn(next.items, (id) => finished.has(id) && !finished.get(id) && !completed.has(`next_${id}`));
   return next.items.filter((i) => i.state === "open").map((i): Finding => {
     const pr = finished.get(i.id);
+    if (completed.has(`next_${i.id}`)) return {
+      id: fid("next_likely_done", s.repo, i.id), rule: "next_likely_done", severity: "low", repo: s.repo,
+      summary: `You marked "${itemLabel(i.text)}" done. Tick it off in NEXT.md?`,
+      sources: [{ label: "NEXT.md", url: `${next.url}#L${i.line}` }],
+      intent: { itemId: i.id, section: i.section, state: "open" },
+    };
     if (pr) return {
       id: fid("next_likely_done", s.repo, i.id),
       rule: "next_likely_done",
@@ -141,9 +147,9 @@ export function nextStale(s: RepoSnapshot, next: OkNext, now: Date, cfg: IntentC
 }
 
 export function runIntentRules(snaps: RepoSnapshot[], now: Date, cfg: IntentConfig,
-                               history: IntentHistory = new Map(), missingReported: Set<string> = new Set()): Finding[] {
+                               history: IntentHistory = new Map(), missingReported: Set<string> = new Set(), completed: Set<string> = new Set()): Finding[] {
   return snaps.filter((s) => !s.error).flatMap((s) => s.next.status === "ok"
-    ? [...nextItems(s, s.next), ...nextDone(s, s.next, history), ...nextStale(s, s.next, now, cfg)]
+    ? [...nextItems(s, s.next, completed), ...nextDone(s, s.next, history), ...nextStale(s, s.next, now, cfg)]
     : nextMissing(s, now, cfg, missingReported))
     .sort(byPriority);
 }

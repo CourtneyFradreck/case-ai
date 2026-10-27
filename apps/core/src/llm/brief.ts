@@ -1,3 +1,4 @@
+import type { ActivityLog } from "../logs.js";
 import type { Finding, RepoSnapshot } from "../types.js";
 import type { Window } from "../time.js";
 import { DateTime } from "luxon";
@@ -14,6 +15,7 @@ import { withMissingNext } from "../focus.js";
 // parked: findings behind a snoozed focus; the model's suggestions built only on them are dropped.
 // missing: active repos with no NEXT.md; one takes the last suggestion, added in code and never sent.
 export interface ModelBriefConfig extends InputConfig {
+  logs?: ActivityLog[];
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>; missing?: Finding[];
 }
@@ -68,7 +70,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.addedBack = result.addedBack;
     if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen }), focus: result.brief.focus };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { logs: cfg.logs, userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus, cfg.parked);

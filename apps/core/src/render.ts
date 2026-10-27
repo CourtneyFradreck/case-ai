@@ -1,3 +1,4 @@
+import type { ActivityLog } from "./logs.js";
 import type { Finding, RepoSnapshot, Source } from "./types.js";
 import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
@@ -35,6 +36,7 @@ function line(f: Finding, days?: Map<string, number>): string[] {
 // done (features.focusButtons): NEXT.md items a merged PR likely finished, one line each at the end of attention.
 // leftOpen: stale branches, idle PRs and old branches, kept open on purpose: one low line at the end of the brief.
 export interface GreetingOptions {
+  logs?: ActivityLog[];
   userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[];
 }
@@ -68,7 +70,7 @@ function leftOpenLine(findings: Finding[] = []): string[] {
   return ["", `${icon.low} Left open: ${names.join("; ")}${more ? `; and ${more} more` : ""}`];
 }
 
-function recapLines(items: ValidItem[], model = false): string[] {
+function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = []): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
   for (const item of items) {
     const f = item.sources[0];
@@ -77,31 +79,39 @@ function recapLines(items: ValidItem[], model = false): string[] {
     group.items.push(item);
     groups.set(f.repo, group);
   }
+  const logGroups = new Map<string, ActivityLog[]>();
+  for (const log of logs) {
+    const key = [...groups.keys()].find((r) => r.split("/").pop()!.toLowerCase() === log.tag?.toLowerCase()) ?? log.tag ?? "Other";
+    logGroups.set(key, [...(logGroups.get(key) ?? []), log]);
+    if (!groups.has(key)) groups.set(key, { amount: 0, items: [] });
+  }
   return [...groups].sort(([repoA, a], [repoB, b]) => b.amount - a.amount || repoA.localeCompare(repoB))
     .flatMap(([repo, group]) => ["", `<b>${esc(repo.split("/").pop()!)}</b>`,
       ...group.items.sort((a, b) => recapKind(a.sources[0]) - recapKind(b.sources[0]) || activityAmount(b.sources[0]) - activityAmount(a.sources[0]))
-        .map((item) => `• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`)]);
+        .map((item) => `• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`),
+      ...(logGroups.get(repo) ?? []).map((log) => `• ${esc(log.text)}`)]);
 }
 
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const count = (n: number, noun: string) => n === 1 ? `one ${noun}` : `${n} ${noun}s`;
 
-// One sentence on the recap period, the way a person would put it, built only from recap findings:
+// One sentence on the recap period, the way a person would put it, built from recap findings and the log count:
 // "Big case-ai day yesterday: 12 commits on feat/m3-intent." It names the busiest repo and the period's
-// size; numbers of PRs and issues stay in the recap below. Nothing when the period had no activity.
-export function opening(recap: Finding[], w: Window): string | undefined {
-  if (!w.label || !recap.length) return;
+// size, merged PRs and logs. Nothing when the period had no activity.
+export function opening(recap: Finding[], w: Window, logs = 0): string | undefined {
+  if (!w.label || (!recap.length && !logs)) return;
   const commits = recap.filter((f) => recapKind(f) === 0);
   const byRepo = new Map<string, Finding[]>();
   for (const f of commits) byRepo.set(f.repo, [...(byRepo.get(f.repo) ?? []), f]);
   const total = (fs: Finding[]) => fs.reduce((n, f) => n + activityAmount(f), 0);
   const [top] = [...byRepo].sort(([a, x], [b, y]) => total(y) - total(x) || a.localeCompare(b));
   const merged = recap.filter((f) => f.activity?.kind === "pr" && f.activity.action === "Merged").length;
-  const and = merged ? `, and ${merged === 1 ? "a PR" : `${merged} PRs`} merged` : "";
+  const extras = [merged ? `${merged === 1 ? "a PR" : `${merged} PRs`} merged` : "", logs ? `${logs} ${logs === 1 ? "thing" : "things"} logged` : ""].filter(Boolean).join(" and ");
+  const and = extras ? `, and ${extras}` : "";
   // "day yesterday", "weekend", "Friday".
   const when = w.label === "yesterday" ? "day yesterday" : w.label.replace(/^on |^over the /, "");
-  if (!top) return merged ? `No commits ${w.label}, but ${and.slice(6)}.` : `No commits ${w.label}, just PR and issue updates.`;
+  if (!top) return extras ? `No commits ${w.label}, but ${extras}.` : `No commits ${w.label}, just PR and issue updates.`;
   const [repo, found] = top;
   const name = repo.split("/").pop()!;
   const n = total(found);
@@ -112,7 +122,7 @@ export function opening(recap: Finding[], w: Window): string | undefined {
     const on = branch?.kind !== "commits" ? "" : found.length === 1 ? ` on ${branch.branch}` : `, most on ${branch.branch}`;
     return `Big ${name} ${when}: ${count(n, "commit")}${on}${elsewhere ? `, and ${elsewhere} elsewhere` : ""}${and}.`;
   }
-  return `${n >= 3 ? "Steady" : "Quiet"} ${when}: ${count(n, "commit")} in ${name}${elsewhere ? ` and ${elsewhere} elsewhere` : ""}${and}.`;
+  return `${total(commits) + merged + logs >= 3 ? "Steady" : "Quiet"} ${when}: ${count(n, "commit")} in ${name}${elsewhere ? ` and ${elsewhere} elsewhere` : ""}${and}.`;
 }
 
 function header(options: GreetingOptions, recap: Finding[] = [], w?: Window): string[] {
@@ -120,7 +130,7 @@ function header(options: GreetingOptions, recap: Finding[] = [], w?: Window): st
   const hour = today.hour;
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const name = options.userName?.trim();
-  const line = w && opening(recap, w);
+  const line = w && opening(recap, w, options.logs?.length);
   return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}.</b>`, today.toFormat("cccc, d LLL yyyy"), ...(line ? ["", esc(line)] : [])];
 }
 
@@ -177,7 +187,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] }))), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
+  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -216,7 +226,7 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
     return `${icon[severity]} ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting, brief.yesterday.flatMap((i) => i.sources), w), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
+  const parts = [...header(greeting, brief.yesterday.flatMap((i) => i.sources), w), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true, greeting.logs), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);
