@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** M2 done; M3 deployed and in trial ([#4](https://github.com/courtneyfradreck/case-ai/issues/4)); M4 (`/log` and evening check-in) implemented; evening check-in disabled pending rollout.
+> **Status:** M2 and M3 done; M4 (`/log` and evening check-in) implemented; evening check-in disabled pending rollout.
 
 ---
 
@@ -304,7 +304,7 @@ Morning briefs render logs in the selected recap window under repo/tag headings,
 - [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
 - [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
-- [ ] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons (in production testing, [#4](https://github.com/courtneyfradreck/case-ai/issues/4))
+- [x] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
 - [x] **M4 Non-code:** `/log` and an evening check-in (check-in rollout pending)
 - [ ] **M5 Evaluation:** golden test set, `/wrong` and `/missed` feedback
 
