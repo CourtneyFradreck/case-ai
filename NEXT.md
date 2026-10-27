@@ -64,10 +64,12 @@
 - [x] Redeploy and check the next 07:00 brief: no taga suggestion, one CASE_BRIEF_MODE step, "You picked" line
 - [x] Tick "Merge M2" and the CASE_BRIEF_MODE=command step in NEXT.md on main, so the tick-off line and stale suggestions stop
 
-## M4 Non-code (next)
+## M4 Non-code
 
-Starts after the M3 trial in #4 ends.
-
-- [ ] /log command writing to activity_logs
-- [ ] Evening check-in (~20:00–21:00) asking how today's focus went: Done / Partly / Didn't touch it
-- [ ] Show logged non-code work in the next morning's yesterday section
+- [x] /log and /undo commands writing to activity_logs
+- [x] Evening check-in asking how today's focus went: Done / Partly / Didn't touch it
+- [x] Show logged non-code work in the morning recap without sending logs to the model
+- [x] Count logs and merged PRs in the activity sentence; include check-in completion in suggestions
+- [ ] Redeploy for migrations 013 and 014; enable features.eveningCheckIn
+- [ ] Import and activate evening-checkin.json with Header Auth and errors workflow; test at 15:45 Africa/Harare
+- [ ] Verify Telegram replies, midnight expiry and the following morning's recap in production

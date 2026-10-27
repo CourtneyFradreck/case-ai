@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** M2 done; M3 deployed and in trial ([#4](https://github.com/courtneyfradreck/case-ai/issues/4)); M4 (`/log` and evening check-in) next.
+> **Status:** M2 done; M3 deployed and in trial ([#4](https://github.com/courtneyfradreck/case-ai/issues/4)); M4 (`/log` and evening check-in) implemented; evening check-in disabled pending rollout.
 
 ---
 
@@ -48,7 +48,7 @@ n8n: 7am schedule ──> POST /brief
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
-- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. A flag that is missing counts as `false`; only an explicit `true` turns one on. The shipped `config.json` sets `focusButtons`, `streaks` and `snooze` to `true` and `quietMornings` to `false`. To change one, edit it, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
+- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze`, `quietMornings` and `eveningCheckIn`. A flag that is missing counts as `false`; only an explicit `true` turns one on. The shipped `config.json` sets `focusButtons`, `streaks` and `snooze` to `true` and `quietMornings` and `eveningCheckIn` to `false`. To change one, edit it, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
 
 ## Stack
 
@@ -277,7 +277,7 @@ High findings are never collapsed; their line gains `(day N)` instead, where N c
 | `/snoozed` | Lists active snoozes, numbered, with the day each comes back |
 | `/unsnooze <n>` | Brings item `n` from `/snoozed` back on the brief |
 
-**Quiet mornings (`"quietMornings": true`).** Scheduled briefs only. If the brief's attention finding IDs are exactly those of the previous scheduled brief, and nothing has happened since that brief's day began (no commits, PRs or issues opened, merged or closed), case-core sends a short message instead:
+**Quiet mornings (`"quietMornings": true`).** Scheduled briefs only. If the brief's attention finding IDs are exactly those of the previous scheduled brief, and nothing has happened since that brief's day began (no logs, commits, PRs or issues opened, merged or closed), case-core sends a short message instead:
 
 ```
 Nothing has moved since Friday. Still on <yesterday's focus, or the top attention item>?
@@ -285,13 +285,27 @@ Nothing has moved since Friday. Still on <yesterday's focus, or the top attentio
 
 It carries the brief's buttons. The full rule and model briefs are still stored in `briefs` (`text`, `rule_text`), and the short message in `briefs.sent_text`. On a Monday after an empty weekend, Sunday's brief is the one compared with. `/brief` always sends the full brief.
 
+## Non-code activity and evening check-in
+
+`/log pitch deck edits #dot` saves one entry for the current Africa/Harare day. `/log` and `/undo` are always available. A leading or trailing `#word` supplies one tag; a leading tag wins when both are present. Other hashtags stay in the text. Tags are lowercased, except a tracked repo match uses that repo's short name (case-insensitive matching). Empty or tag-only entries show usage. Keep the entry, including its tag, under 500 characters; longer entries are rejected. `/undo` removes the most recently created log today, including check-in replies, or says there is nothing to undo.
+
+Migrations `013_activity_logs.sql` and `014_focus_checkin.sql` run on core startup. Logs live in `core.activity_logs`; the check-in answer and timestamp live on `core.focus`, and `core.checkin_pending` stores each chat's reply expiry.
+
+To enable check-ins, set `features.eveningCheckIn` to `true` in `apps/core/config.json`, configure `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, and redeploy. Check-ins send through core regardless of `CASE_DELIVERY`. Import and activate `n8n/workflows/evening-checkin.json`, select the same Header Auth credential (`x-case-key`) and errors workflow as the morning brief. Its testing schedule is **15:45 Africa/Harare**, explicitly set in the workflow. The export is inactive until activated in n8n.
+
+`POST /checkin` requires the same key as `/brief`. With the flag off it returns HTTP 200 with `{ "sent": false, "reason": "off" }`. With it on, it asks how today's latest active/done focus went, offering Done / Partly / Didn't touch it. Without a focus it asks for anything worth logging. A successful send returns `{ "sent": true }`; delivery failure returns HTTP 500 for the workflow's existing error handler.
+
+Done marks the focus done; Partly and Didn't touch it leave its status unchanged. Tapping replaces the question's buttons with the answer and asks for anything else. Plain-text replies are logged until Harare midnight, with the same tag and length rules; several replies work. A pending focus reply from Something else takes priority. Commands do not consume pending replies. Turning the flag off ignores check-in taps and replies. No reply causes no reminder or streak change.
+
+Morning briefs render logs in the selected recap window under repo/tag headings, with untagged entries under Other. Log timestamps participate in window selection and prevent quiet mornings when there is new logged activity. The text is rendered by code and never sent to the model. The activity sentence counts commits, merged PRs and logs for Steady (3+); Big still needs 10 commits in one repo. The You picked line includes the recorded answer. Completed focus items are excluded from suggestions; completed NEXT.md steps get a tick-off line and release dependent steps, alongside existing GitHub completion detection.
+
 ## Roadmap
 
 - [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
 - [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
 - [ ] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons (in production testing, [#4](https://github.com/courtneyfradreck/case-ai/issues/4))
-- [ ] **M4 Non-code:** `/log` and an evening check-in
+- [x] **M4 Non-code:** `/log` and an evening check-in (check-in rollout pending)
 - [ ] **M5 Evaluation:** golden test set, `/wrong` and `/missed` feedback
 
 ## Security notes
