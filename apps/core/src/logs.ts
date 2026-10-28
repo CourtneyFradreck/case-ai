@@ -17,11 +17,12 @@ export function parseLog(input: string, repos: string[] = env.repos) {
   return { text, tag };
 }
 
-export async function logText(input: string, via: "command" | "checkin", now: DateTime) {
+export async function logText(input: string, via: "command" | "checkin", now: DateTime, focusId: string | null = null) {
   if (input.trim().length >= 500) { await sendMessage("Keep logs under 500 characters."); return; }
   const entry = parseLog(input);
   if (!entry.text) { await sendMessage("Use /log <text> [#tag]."); return; }
-  await pool.query("INSERT INTO core.activity_logs(date, text, tag, via) VALUES ($1,$2,$3,$4)", [today(now), entry.text, entry.tag, via]);
+  await pool.query(`INSERT INTO core.activity_logs(date, text, tag, via, focus_id) VALUES ($1,$2,$3,$4,
+    COALESCE($5, (SELECT focus_id FROM core.checkins WHERE date=$1 AND sent_at IS NOT NULL)))`, [today(now), entry.text, entry.tag, via, focusId]);
   await sendMessage(via === "checkin" ? "Logged." : `Logged: ${esc(entry.text.replace(/\s+/g, " "))}${entry.tag ? ` (#${esc(entry.tag)})` : ""}`);
 }
 

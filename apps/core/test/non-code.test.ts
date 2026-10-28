@@ -4,7 +4,8 @@ import { DateTime } from "luxon";
 const m = vi.hoisted(() => ({ query: vi.fn(), send: vi.fn(), edit: vi.fn(), pendingFocus: vi.fn(), insertFocus: vi.fn(),
   features: { focusButtons: false, eveningCheckIn: true },
 }));
-vi.mock("../src/db.js", () => ({ pool: { query: m.query } }));
+vi.mock("../src/db.js", () => ({ pool: { query: m.query, connect: async () => ({ query: m.query, release: vi.fn() }) } }));
+vi.mock("../src/checkin-config.js", () => ({ cutoff: "23:59" }));
 vi.mock("../src/env.js", () => ({ env: { repos: ["me/Case-AI"], telegramChatId: "42", apiKey: "k" } }));
 vi.mock("../src/features.js", () => ({ features: m.features }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: m.send, editMessageText: m.edit }));
@@ -43,7 +44,7 @@ it.each([
 it("logs with all flags off, using the Harare date and escaped confirmation", async () => {
   m.features.eveningCheckIn = false;
   await onTextMessage(message("/log #DOT <pitch> edits"), now.plus({ hours: 1 }));
-  expect(m.query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO core.activity_logs"), ["2026-10-28", "<pitch> edits", "dot", "command"]);
+  expect(m.query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO core.activity_logs"), ["2026-10-28", "<pitch> edits", "dot", "command", null]);
   expect(m.send).toHaveBeenCalledWith("Logged: &lt;pitch&gt; edits (#dot)");
 });
 
@@ -89,44 +90,50 @@ it("returns off and ignores taps and pending replies when disabled", async () =>
 });
 
 it("sends today's focus and answer buttons", async () => {
-  m.query.mockResolvedValueOnce({ rows: [{ id: "7", item_text: "Long pitch text", short_label: "Pitch" }] });
+  m.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT * FROM core.checkins")
+    ? [{ id: "3", focus_id: "7", kind: "focus", status: "pending" }]
+    : sql.startsWith("SELECT id, item_text") || sql.startsWith("SELECT item_text")
+      ? [{ id: "7", item_text: "Long pitch text", short_label: "Pitch" }] : [] }));
   expect(await (await post()).json()).toEqual({ sent: true });
-  expect(m.query.mock.calls[0][0]).toContain("status IN ('active','done')");
+  expect(m.query.mock.calls[1][0]).toContain("status IN ('active','done')");
   expect(m.send).toHaveBeenCalledWith("How did Pitch go?", { inline_keyboard: [[
-    { text: "Done", callback_data: "c:7:done" }, { text: "Partly", callback_data: "c:7:partly" }, { text: "Didn't touch it", callback_data: "c:7:none" },
+    { text: "Done", callback_data: "c:3:done" }, { text: "Partly", callback_data: "c:3:partly" }, { text: "Didn't touch it", callback_data: "c:3:none" },
   ]] });
-  expect(m.query.mock.calls[1][0]).toContain("core.checkin_pending");
+  expect(m.query).toHaveBeenCalledWith(expect.stringContaining("telegram_message_id=$3"), ["3", expect.any(Date), 9]);
 });
 
 it("sends an open question without focus and no keyboard", async () => {
+  m.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT * FROM core.checkins")
+    ? [{ id: "3", kind: "open", status: "pending", focus_id: null }] : [] }));
   expect(await (await post()).json()).toEqual({ sent: true });
   expect(m.send).toHaveBeenCalledWith("Anything worth logging from today? Just reply.");
 });
 
-it.each(["done", "partly", "none"])("records %s and opens replies until midnight", async (answer) => {
-  m.query.mockResolvedValueOnce({ rows: [{ item_text: "Pitch" }] });
+it.each(["done", "partly", "none"])("records %s on both the focus and check-in", async (answer) => {
+  m.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT * FROM core.checkins")
+    ? [{ id: "7", date: "2026-10-27", focus_id: "12" }] : sql.startsWith("UPDATE core.focus") ? [{ item_text: "Pitch" }] : [] }));
   await onCallbackQuery(tap(answer), now);
-  expect(m.query.mock.calls[0][1]).toEqual(["7", answer, now.toJSDate(), "2026-10-27"]);
-  expect(m.query.mock.calls[0][0]).toContain("WHEN $2='done' THEN 'done' WHEN status='done' THEN 'active' ELSE status END");
-  expect(m.query.mock.calls[1][1]).toEqual(["42", new Date("2026-10-27T22:00:00Z")]);
-  expect(m.edit).toHaveBeenCalledWith(9, expect.stringContaining("Anything else from today? Just reply."));
+  expect(m.query.mock.calls[2][1]).toEqual(["12", answer, now.toJSDate(), "2026-10-27"]);
+  expect(m.query.mock.calls[3][1]).toEqual(["7", answer, now.toJSDate()]);
+  expect(m.query.mock.calls[4][0]).toBe("COMMIT");
+  expect(m.edit).toHaveBeenCalledWith(9, expect.stringContaining(answer === "done" ? "Anything else from today?" : "What got in the way?"));
 });
 
 it("ignores malformed callbacks and does not reopen expired check-ins", async () => {
   expect(parseCheckinCallback("c:7:other")).toBeUndefined();
   expect(await onCallbackQuery(tap("done"), now)).toEqual({ answerText: "That check-in has expired." });
-  expect(m.query).toHaveBeenCalledOnce();
+  expect(m.query).toHaveBeenCalledTimes(3);
   expect(m.edit).not.toHaveBeenCalled();
 });
 
 it("keeps pending state for multiple replies and ignores commands", async () => {
-  m.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT chat_id") ? [{ chat_id: "42" }] : [] }));
+  m.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT * FROM core.checkins") ? [{ id: "3", focus_id: "7", answer: null }] : [] }));
   await onTextMessage(message("#DOT first"), now);
   await onTextMessage(message("second"), now);
   await onTextMessage(message("/brief"), now);
   expect(m.query).toHaveBeenCalledTimes(4);
-  expect(m.query.mock.calls[0][0]).toContain("expires_at > $2");
-  expect(m.query.mock.calls[1][1]).toEqual(["2026-10-27", "first", "dot", "checkin"]);
+  expect(m.query.mock.calls[0][0]).toContain("date=$1 AND sent_at IS NOT NULL");
+  expect(m.query.mock.calls[1][1]).toEqual(["2026-10-27", "first", "dot", "checkin", "7"]);
   expect(m.send.mock.calls).toEqual([["Logged."], ["Logged."]]);
 });
 
@@ -139,4 +146,21 @@ it("lets focus pending win and ignores replies with no live pending state", asyn
   m.send.mockClear();
   await onTextMessage(message("Nothing pending"), now);
   expect(m.send).not.toHaveBeenCalled();
+});
+
+it.each(["pause", "unpause"])("gates /%s behind eveningCheckIn", async (name) => {
+  m.features.eveningCheckIn = false;
+  await onTextMessage(message(`/${name}`), now);
+  expect(m.query).not.toHaveBeenCalled();
+  expect(m.send).toHaveBeenCalledWith(expect.stringContaining("features.eveningCheckIn"));
+});
+
+it("returns HTTP 500 when Telegram delivery fails", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  m.query.mockImplementation(async (sql: string) => ({ rows: sql.startsWith("SELECT * FROM core.checkins")
+    ? [{ id: "3", kind: "open", status: "pending", focus_id: null }] : [] }));
+  m.send.mockRejectedValueOnce(new Error("offline"));
+  expect((await post()).status).toBe(500);
+  expect(m.query.mock.calls.some(([sql]) => sql.includes("status='sent'"))).toBe(false);
+  error.mockRestore();
 });

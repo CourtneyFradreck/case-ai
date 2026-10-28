@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import { logText, undoLog } from "./logs.js";
-import { onCheckinCallback, onCheckinText } from "./checkin.js";
+import { onCheckinCallback, onCheckinText, onPauseCommand } from "./checkin.js";
 import { env } from "./env.js";
 import { features, type Feature } from "./features.js";
 import { today, midnight } from "./time.js";
@@ -19,7 +19,7 @@ import type { TelegramCallbackQuery, TelegramMessage } from "./telegram-update.j
 // Focus taps and commands are behind features.focusButtons, snooze taps and commands behind features.snooze.
 // With a flag off, its taps and plain text are ignored, and its commands reply that they're off.
 
-const COMMAND_FLAGS = { focus: "focusButtons", next: "focusButtons", snoozed: "snooze", unsnooze: "snooze", checkin: "eveningCheckIn" } as const satisfies Record<string, Feature>;
+const COMMAND_FLAGS = { focus: "focusButtons", next: "focusButtons", snoozed: "snooze", unsnooze: "snooze", checkin: "eveningCheckIn", pause: "eveningCheckIn", unpause: "eveningCheckIn" } as const satisfies Record<string, Feature>;
 
 
 // answerCallbackQuery text is limited to 200 characters.
@@ -140,6 +140,7 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
     await onSnoozeCommand(command, now);
     return;
   }
+  if (command?.name === "pause" || command?.name === "unpause") return onPauseCommand(command.name, command.arg, now);
   if (command?.name === "log") return logText(command.arg, "command", now);
   if (command?.name === "undo") return undoLog(now);
   const chatId = String(message.chat.id);
