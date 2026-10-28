@@ -70,6 +70,13 @@
 - [x] Evening check-in asking how today's focus went: Done / Partly / Didn't touch it
 - [x] Show logged non-code work in the morning recap without sending logs to the model
 - [x] Count logs and merged PRs in the activity sentence; include check-in completion in suggestions
-- [ ] Redeploy for migrations 013 and 014; enable features.eveningCheckIn
-- [ ] Import and activate evening-checkin.json with Header Auth and errors workflow; test at 15:45 Africa/Harare
-- [ ] Verify Telegram replies, midnight expiry and the following morning's recap in production
+- [x] Migrations 013 and 014 deployed; keep both unchanged
+- [x] Latest focus answer wins; yesterday check-in line ends with one full stop
+- [x] Migration 015: daily check-in records, pauses, focus-linked logs; replace checkin_pending
+- [x] Idempotent sends and retries; eveningCheckIn.cutoff defaults to 22:00 Harare
+- [x] /pause and /pause <n> (1–30 days), /unpause; evening check-ins only
+- [x] Late buttons until next-day noon; optional why reply before midnight, then logs
+- [x] Stable self_log / self_checkin findings kept out of model input; Partly note on next day's first brief
+- [ ] Redeploy core/config for migration 015; confirm features.eveningCheckIn and eveningCheckIn.cutoff
+- [ ] Re-import evening-checkin.json with Header Auth and errors workflow; activate its 15:45, 16:15 and 16:45 Africa/Harare triggers, keeping retryOnFail
+- [ ] Verify duplicate sends stay silent, pause/unpause, why then log, midnight text expiry, late buttons and the following morning's recap in production

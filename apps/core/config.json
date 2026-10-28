@@ -15,5 +15,6 @@
   "streakCollapseAfter": 3,
   "modelIncludePrivate": false,
   "modelTimeoutMs": 20000,
+  "eveningCheckIn": { "cutoff": "22:00" },
   "features": { "focusButtons": true, "snooze": true, "streaks": true, "quietMornings": false, "eveningCheckIn": true }
 }

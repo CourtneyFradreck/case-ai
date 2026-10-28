@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** M2 and M3 done; M4 (`/log` and evening check-in) implemented; evening check-in disabled pending rollout.
+> **Status:** M2 and M3 done; M4 (`/log` and evening check-in) deployed through migration 014. Check-in hardening in migration 015 is ready for rollout.
 
 ---
 
@@ -289,15 +289,34 @@ It carries the brief's buttons. The full rule and model briefs are still stored 
 
 `/log pitch deck edits #dot` saves one entry for the current Africa/Harare day. `/log` and `/undo` are always available. A leading or trailing `#word` supplies one tag; a leading tag wins when both are present. Other hashtags stay in the text. Tags are lowercased, except a tracked repo match uses that repo's short name (case-insensitive matching). Empty or tag-only entries show usage. Keep the entry, including its tag, under 500 characters; longer entries are rejected. `/undo` removes the most recently created log today, including check-in replies, or says there is nothing to undo.
 
-Migrations `013_activity_logs.sql` and `014_focus_checkin.sql` run on core startup. Logs live in `core.activity_logs`; the check-in answer and timestamp live on `core.focus`, and `core.checkin_pending` stores each chat's reply expiry.
+Migrations 013 and 014 are already deployed and unchanged. New migration `015_checkin_records.sql` runs on core startup: it creates `core.checkins` and `core.pauses`, adds `activity_logs.focus_id`, and drops `core.checkin_pending`. Each check-in has a unique Harare date, its original focus (or kind `open`), delivery status and attempts, message ID, answer, optional reason, and expiry. The answer and timestamp on `core.focus` remain in sync with the check-in record in the same transaction. Existing focus answers and logs are preserved; old reply windows close at deployment. Old buttons are rejected if their message does not match the new record.
 
-To enable check-ins, set `features.eveningCheckIn` to `true` in `apps/core/config.json`, configure `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, and redeploy. Check-ins send through core regardless of `CASE_DELIVERY`. Import and activate `n8n/workflows/evening-checkin.json`, select the same Header Auth credential (`x-case-key`) and errors workflow as the morning brief. Its testing schedule is **15:45 Africa/Harare**, explicitly set in the workflow. The export is inactive until activated in n8n.
+Check-ins need `features.eveningCheckIn: true` in `apps/core/config.json`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`. They send through core regardless of `CASE_DELIVERY`. Configure `eveningCheckIn.cutoff` as `HH:mm` in Harare time; the default is `"22:00"`. Runs after that time are recorded as `skipped`. A new day gets a new record; yesterday's failed check-in is never sent the next morning.
 
-`POST /checkin` requires the same key as `/brief`. With the flag off it returns HTTP 200 with `{ "sent": false, "reason": "off" }`. With it on, it asks how today's latest active/done focus went, offering Done / Partly / Didn't touch it. Without a focus it asks for anything worth logging. A successful send returns `{ "sent": true }`; delivery failure returns HTTP 500 for the workflow's existing error handler.
+`POST /checkin` requires the same key as `/brief`. With the flag off it returns HTTP 200 with `{ "sent": false, "reason": "off" }`. With it on, it asks how today's selected active/done focus went, offering Done / Partly / Didn't touch it. Without a focus it asks for anything worth logging. A successful send returns `{ "sent": true }`; repeat calls return `{ "sent": false, "reason": "sent" }` without sending again. `skipped` and `paused` records also return their status without sending. Pending attempts are serialized; a send error preserves `pending`, increments attempts, and returns HTTP 500 so n8n records the failure and can retry. Telegram delivery and database storage cannot be atomic: a timeout after Telegram accepted a message, or a crash before recording success, can still cause a duplicate on retry.
 
-Done marks the focus done; Partly and Didn't touch it leave its status unchanged. Tapping replaces the question's buttons with the answer and asks for anything else. Plain-text replies are logged until Harare midnight, with the same tag and length rules; several replies work. A pending focus reply from Something else takes priority. Commands do not consume pending replies. Turning the flag off ignores check-in taps and replies. No reply causes no reminder or streak change.
+Button payloads use `c:<checkinId>:<answer>`. Answers are accepted until **12:00 Harare the next day**, and apply to the record's date and focus even after midnight. Done marks that focus done; Partly or Didn't touch it reopens a done focus as active. Snoozed focuses are untouched. A later Done tap in the focus menu also updates an earlier check-in answer. The latest answer wins.
 
-Morning briefs render logs in the selected recap window under repo/tag headings, with untagged entries under Other. Log timestamps participate in window selection and prevent quiet mornings when there is new logged activity. The text is rendered by code and never sent to the model. The activity sentence counts commits, merged PRs and logs for Steady (3+); Big still needs 10 commits in one repo. The You picked line includes the recorded answer. Completed focus items are excluded from suggestions; completed NEXT.md steps get a tick-off line and release dependent steps, alongside existing GitHub completion detection.
+After Partly or Didn't touch it, the edited message asks **“What got in the way? (optional, just reply)”**. The first plain-text reply before that day's midnight becomes the check-in's `reason`; subsequent replies become logs linked to its focus. Done asks for anything else and logs replies directly. All free-text check-in handling closes at **Harare midnight**, earlier than the button expiry. `/log` entries made during that window also link to the focus. A pending focus reply from Something else takes priority, and commands do not consume the optional reason. Turning the flag off ignores check-in taps and replies. An unanswered record is derived from `answer IS NULL AND expires_at < now`, never stored or rendered as Didn't touch it; the existing unanswered You picked line remains unchanged.
+
+| Command | Effect (requires `features.eveningCheckIn`) |
+| ------- | ----------------------------------------- |
+| `/pause` | Skip today's evening check-in; reply with the inclusive end date |
+| `/pause <n>` | Pause for 1–30 Harare days, including today |
+| `/unpause` | Clear active pauses and reopen today's paused record for the next trigger |
+
+Pauses affect only evening check-ins. They do not suppress the morning brief or retract a check-in already sent.
+
+Morning briefs render logs in the selected recap window under repo/tag headings, with untagged entries under Other. Log timestamps participate in window selection and prevent quiet mornings when there is new logged activity. Logs and answered check-ins are stored as info findings (`self_log` / `self_checkin`) with stable IDs (`fid("log", id)` / `fid("checkin", date)`) and `{ "label": "you", "kind": "self_reported" }` provenance instead of a URL. They are rendered by code, never sent to the model, and never treated as GitHub events. The activity sentence counts commits, merged PRs and logs for Steady (3+); Big still needs 10 commits in one repo.
+
+The You picked line includes the recorded answer. Completed focus items are excluded from suggestions; completed NEXT.md steps get a tick-off line and release dependent steps, alongside existing GitHub completion detection. Partly leaves the finding eligible and appends ` (partly done yesterday)` to a matching suggestion in code after validation, on the next day's first brief only. Didn't touch it leaves suggestions unchanged.
+
+Deploy this hardening:
+
+1. Deploy the new code/config and run `docker compose up -d --build core`. Confirm the startup log says `migrated 015_checkin_records.sql`; do not rerun or edit 013/014.
+2. **Re-import** `n8n/workflows/evening-checkin.json` to replace the existing evening workflow. Re-select Header Auth (`x-case-key`) and the errors workflow, then activate it. Keep only one evening workflow active.
+3. Confirm all three Schedule Trigger nodes feed the same HTTP Request node: **15:45, 16:15, and 16:45 Africa/Harare** (testing times). Keep `retryOnFail` enabled. The later triggers retry pending delivery; a recorded success makes them no-ops.
+4. Check a successful send followed by a silent duplicate call, `/pause` and `/unpause`, an optional reason followed by a log, and a late button answer before next-day noon. Confirm the following brief's answer and suggestion agree.
 
 ## Roadmap
 
@@ -305,7 +324,7 @@ Morning briefs render logs in the selected recap window under repo/tag headings,
 - [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
 - [x] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
-- [x] **M4 Non-code:** `/log` and an evening check-in (check-in rollout pending)
+- [x] **M4 Non-code:** `/log` and evening check-in; durable records, pause controls and retry hardening implemented (015 rollout pending)
 - [ ] **M5 Evaluation:** golden test set, `/wrong` and `/missed` feedback
 
 ## Security notes

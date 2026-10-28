@@ -23,6 +23,30 @@
     },
     {
       "parameters": {
+        "rule": {
+          "interval": [{ "triggerAtHour": 16, "triggerAtMinute": 15 }]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 160],
+      "id": "a07fe466-dcb5-4cae-b5eb-e16ff6199c27",
+      "name": "Retry at 16:15"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "triggerAtHour": 16, "triggerAtMinute": 45 }]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 320],
+      "id": "1cfbde77-3b83-40f7-aa07-4b475ce76747",
+      "name": "Retry at 16:45"
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "http://core:8080/checkin",
         "authentication": "genericCredentialType",
@@ -51,6 +75,12 @@
   ],
   "pinData": {},
   "connections": {
+    "Retry at 16:15": {
+      "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]]
+    },
+    "Retry at 16:45": {
+      "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]]
+    },
     "Schedule Trigger": {
       "main": [
         [
