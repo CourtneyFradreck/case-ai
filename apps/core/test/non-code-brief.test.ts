@@ -45,7 +45,16 @@ it("selects a log-only day, including the Harare boundary", () => {
 
 it.each([['done', 'done'], ['partly', 'partly done'], ['none', "didn't get to it"]] as const)("shows the %s check-in answer", (checkin, words) => {
   const result = yesterdayFocus({ item_text: "Pitch", repo: null, created_at: w.start, checkin }, [], { since: w.start, label: "yesterday" });
-  expect(result[0].summary).toBe(`You picked: Pitch, ${words}.`);
+  expect(result[0].summary).toBe(`You picked: Pitch, ${words}`);
+  const options = { previousFocus: result };
+  const texts = [
+    render([], [], w, 3800, undefined, options),
+    renderModelBrief({ yesterday: [], attention: [], focus: [] }, [], w, 3800, options),
+  ];
+  for (const text of texts) {
+    const line = text.split("\n").find((line) => line.includes("You picked:"));
+    expect(line).toBe(`• You picked: Pitch, ${words}.`);
+  }
 });
 
 it("replaces a completed NEXT step with a tick-off line and releases the next step", () => {

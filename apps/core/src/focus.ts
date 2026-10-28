@@ -208,7 +208,7 @@ export function yesterdayFocus(focus: { item_text: string; short_label?: string 
   if (!focus) return [];
   if (focus.checkin) return [{
     id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info", repo: focus.repo ?? "",
-    summary: `You picked: ${withoutAge(focus.short_label || focus.item_text)}, ${{ done: "done", partly: "partly done", none: "didn't get to it" }[focus.checkin]}.`, sources: [],
+    summary: `You picked: ${withoutAge(focus.short_label || focus.item_text)}, ${{ done: "done", partly: "partly done", none: "didn't get to it" }[focus.checkin]}`, sources: [],
   }];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
