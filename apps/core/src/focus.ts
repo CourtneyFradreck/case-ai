@@ -11,6 +11,8 @@ import { esc } from "./render.js";
 import { fid } from "./id.js";
 import { daysSince, type Window } from "./time.js";
 import { clip, focusLabel } from "./labels.js";
+import { DateTime } from "luxon";
+import { today } from "./time.js";
 
 export const MAX_FOCUS = 3;
 
@@ -204,11 +206,11 @@ export const withoutAge = (text: string) => text
 // An info finding for yesterday's focus: the one the user picked (by button, typed or /focus; the line is never
 // inferred), and how many commits its repo had over the period, on every branch. When none landed there, it says
 // which repo the commits went to. It leads the recap and is never sent to the model.
-export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string; checkin?: "done" | "partly" | "none" | null } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
+export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string; checkin?: "done" | "partly" | "none" | null } | undefined, snaps: RepoSnapshot[], period: FocusPeriod, date?: string): Finding[] {
   if (!focus) return [];
   if (focus.checkin) return [{
-    id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info", repo: focus.repo ?? "",
-    summary: `You picked: ${withoutAge(focus.short_label || focus.item_text)}, ${{ done: "done", partly: "partly done", none: "didn't get to it" }[focus.checkin]}`, sources: [],
+    id: fid("checkin", date ?? today(DateTime.fromJSDate(focus.created_at))), rule: "self_checkin", severity: "info", repo: focus.repo ?? "",
+    summary: `You picked: ${withoutAge(focus.short_label || focus.item_text)}, ${{ done: "done", partly: "partly done", none: "didn't get to it" }[focus.checkin]}`, sources: [{ label: "you", kind: "self_reported" }],
   }];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };

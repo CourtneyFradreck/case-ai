@@ -22,6 +22,14 @@ export async function completedFocusIds(): Promise<Set<string>> {
     "SELECT DISTINCT finding_id FROM core.focus WHERE COALESCE(checkin, status) = 'done' AND finding_id IS NOT NULL");
   return new Set(rows.map((row) => row.finding_id));
 }
+
+// Read the focus actually answered, even when a different focus was chosen later that day.
+export async function answeredCheckinFocus(date: string): Promise<FocusRow | undefined> {
+  const { rows } = await pool.query<FocusRow>(`SELECT f.item_text, f.short_label, f.repo, f.finding_id,
+    f.created_at, f.status, c.answer AS checkin FROM core.checkins c JOIN core.focus f ON f.id=c.focus_id
+    WHERE c.date=$1 AND c.answer IS NOT NULL`, [date]);
+  return rows[0];
+}
 export function parseCheckinCallback(data?: string) {
   const m = /^c:(\d{1,19}):(done|partly|none)$/.exec(data ?? "");
   return m ? { checkinId: m[1], answer: m[2] as CheckinAnswer } : undefined;
@@ -79,7 +87,8 @@ export async function onCheckinCallback(query: TelegramCallbackQuery, now: DateT
   try {
     await client.query("BEGIN");
     const { rows } = await client.query<CheckinRow>(`SELECT * FROM core.checkins
-      WHERE id=$1 AND status='sent' AND expires_at > $2 FOR UPDATE`, [cb.checkinId, now.toJSDate()]);
+      WHERE id=$1 AND status='sent' AND expires_at > $2 AND telegram_message_id=$3 FOR UPDATE`,
+      [cb.checkinId, now.toJSDate(), query.message.message_id]);
     const row = rows[0];
     if (row?.focus_id) {
       const result = await client.query<FocusRow>(`UPDATE core.focus SET checkin=$2, checkin_at=$3,

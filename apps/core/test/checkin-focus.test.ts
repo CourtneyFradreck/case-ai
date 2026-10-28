@@ -38,8 +38,8 @@ beforeEach(() => {
       answer TEXT, answered_at TEXT, reason TEXT, expires_at TEXT);
     CREATE TABLE core.pauses (start_date TEXT, end_date TEXT);
     CREATE TABLE core.activity_logs (id INTEGER PRIMARY KEY, date TEXT, text TEXT, tag TEXT, via TEXT, focus_id INTEGER);`);
-  db.prepare(`INSERT INTO core.checkins (id, date, focus_id, kind, status, sent_at, expires_at)
-    VALUES (3, ?, 7, 'focus', 'sent', ?, ?)`).run(date, now.toISO(), "2026-10-28T10:00:00.000Z");
+  db.prepare(`INSERT INTO core.checkins (id, date, focus_id, kind, status, telegram_message_id, sent_at, expires_at)
+    VALUES (3, ?, 7, 'focus', 'sent', 9, ?, ?)`).run(date, now.toISO(), "2026-10-28T10:00:00.000Z");
   db.prepare(`INSERT INTO core.focus (id, date, item_text, repo, finding_id, created_at, status)
     VALUES (7, ?, ?, 'me/demo', ?, ?, 'active')`).run(date, items[0].text, findingId, now.toISO());
   mocks.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
@@ -115,6 +115,29 @@ it("sends once across duplicate calls", async () => {
   expect(mocks.send).toHaveBeenCalledOnce();
   expect(record()).toMatchObject({ attempts: 1, status: "sent", telegram_message_id: 99 });
   expect(mocks.send.mock.calls[0][1].inline_keyboard[0][0].callback_data).toBe("c:1:done");
+});
+
+it("serializes overlapping sends before reading the daily record", async () => {
+  db.exec("DELETE FROM core.checkins");
+  let tail = Promise.resolve();
+  mocks.connect.mockImplementation(async () => {
+    let unlock: () => void;
+    return { release: mocks.release, query: async (sql: string, params: unknown[]) => {
+      if (sql === "SELECT pg_advisory_lock(778)") {
+        const previous = tail;
+        tail = new Promise<void>((resolve) => { unlock = resolve; });
+        await previous;
+        return { rows: [] };
+      }
+      if (sql === "SELECT pg_advisory_unlock(778)") { unlock!(); return { rows: [] }; }
+      return mocks.query(sql, params);
+    } };
+  });
+  expect(await Promise.all([runCheckin(now), runCheckin(now)])).toEqual([
+    { sent: true }, { sent: false, reason: "sent" },
+  ]);
+  expect(mocks.send).toHaveBeenCalledOnce();
+  expect(record()).toMatchObject({ attempts: 1 });
 });
 
 it("keeps a failed send pending and retries successfully", async () => {
@@ -196,4 +219,12 @@ it("defaults and validates the cutoff", () => {
   expect(checkinCutoff({})).toBe("22:00");
   expect(checkinCutoff({ eveningCheckIn: { cutoff: "21:30" } })).toBe("21:30");
   expect(() => checkinCutoff({ eveningCheckIn: { cutoff: "25:00" } })).toThrow("HH:mm");
+});
+
+it("rejects a button from another message even if its id matches a new record", async () => {
+  expect(await onCheckinCallback({ id: "old", from: { id: 42 },
+    message: { message_id: 8, chat: { id: 42 } }, data: "c:3:done" }, now))
+    .toEqual({ answerText: "That check-in has expired." });
+  expect(record()).toMatchObject({ answer: null });
+  expect(row()).toMatchObject({ checkin: null });
 });

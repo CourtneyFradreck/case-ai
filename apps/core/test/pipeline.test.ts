@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DateTime } from "luxon";
 import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
   startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), previousBriefAt: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), getFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
-  features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false },
+  features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false, eveningCheckIn: false },
+  answeredCheckinFocus: vi.fn(),
   previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(), storeBriefSentText: vi.fn(),
   parked: new Set<string>(),
   logs: [] as { id: string; text: string; tag: string | null; created_at: Date }[],
@@ -13,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/logs.js", () => ({ logsInWindow: async () => mocks.logs }));
-vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set() }));
+vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set(), answeredCheckinFocus: mocks.answeredCheckinFocus }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
@@ -24,7 +26,7 @@ import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";
 import { yesterdayWindow } from "../src/time.js";
 
-beforeEach(() => { mocks.logs = []; });
+beforeEach(() => { mocks.logs = []; mocks.features.eveningCheckIn = false; });
 
 describe("model pipeline", () => {
   beforeEach(() => {
@@ -232,6 +234,25 @@ describe("intent findings in the pipeline", () => {
       expect(result.text).not.toContain("NEXT.md");
     });
     const active = () => mocks.collectAll.mockResolvedValue([snap({ next, branches: [{ name: "main", sha: "abc", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: "https://github.com/me/demo/tree/main" }] })]);
+    it.each(["rules", "all"])("stores self reports and adds Partly after validation in %s mode, on the next brief only", async (mode) => {
+      active();
+      mocks.env.briefMode = mode;
+      mocks.features.eveningCheckIn = true;
+      mocks.logs = [{ id: "12", text: "Private pitch edits", tag: "sales", created_at: new Date("2026-10-13T12:00:00Z") }];
+      mocks.answeredCheckinFocus.mockResolvedValue({ item_text: "Secret focus label", repo: "me/demo", finding_id: "next_abcdef0123", checkin: "partly", created_at: new Date("2026-10-13T06:00:00Z") });
+      mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [{ text: "Ship the parser", reason: "Next step", sources: ["F2"] }] }), model: "test-model" });
+      const first = await runBrief("schedule");
+      expect(first.text).toContain("Ship the parser (partly done yesterday)");
+      expect(first.text).toContain("Secret focus label, partly done.");
+      expect(mocks.storeFindings.mock.calls[0][1]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ rule: "self_log", summary: "Private pitch edits", sources: [{ label: "you", kind: "self_reported" }] }),
+        expect.objectContaining({ rule: "self_checkin", severity: "info" }),
+      ]));
+      expect(JSON.stringify(mocks.generate.mock.calls)).not.toMatch(/Private pitch|Secret focus|partly done yesterday/);
+      mocks.previousBriefAt.mockResolvedValue(new Date("2026-10-14T05:00:00Z"));
+      const second = await runBrief("command", DateTime.fromISO("2026-10-14T06:00:00Z"));
+      expect(second.text).not.toContain("(partly done yesterday)");
+    });
     it("adds rule-picked suggestions to the rule-only brief and stores them", async () => {
       active();
       mocks.storeBrief.mockResolvedValue(70);

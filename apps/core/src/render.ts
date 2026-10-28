@@ -13,7 +13,7 @@ export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const link = (s: Source) =>
-  `<a href="${esc(s.url).replace(/"/g, "&quot;")}">${esc(s.label)}</a>`;
+  s.kind === "self_reported" ? esc(s.label) : `<a href="${esc(s.url).replace(/"/g, "&quot;")}">${esc(s.label)}</a>`;
 
 const icon = { high: "🔴", medium: "🟡", low: "⚪", info: "•" } as const;
 const rank = { high: 0, medium: 1, low: 2, info: 3 } as const;
@@ -50,7 +50,7 @@ const MAX_COLLAPSED_NAMES = 5;
 
 function collapsedLine(findings: Finding[] = []): string[] {
   if (!findings.length) return [];
-  const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => f.sources[0] ? link({ label: shortLabel(f), url: f.sources[0].url }) : esc(shortLabel(f)));
+  const names = findings.slice(0, MAX_COLLAPSED_NAMES).map((f) => f.sources[0] ? link({ ...f.sources[0], label: shortLabel(f) }) : esc(shortLabel(f)));
   const more = findings.length - names.length;
   return [`⚪ Still open, unchanged: ${plural(findings.length, "item")} (${names.join(", ")}${more ? `, and ${more} more` : ""})`];
 }
@@ -63,7 +63,7 @@ function leftOpenLine(findings: Finding[] = []): string[] {
     if (f.rule === "old_branches") return line(f)[0].replace(/^\S+ /, "");
     // shortLabel already names the repo: "idle PR #4 in demo".
     const label = f.target ? `${f.target} in ${f.repo.split("/").pop()}` : shortLabel(f);
-    const what = f.sources[0] ? link({ label, url: f.sources[0].url }) : esc(label);
+    const what = f.sources[0] ? link({ ...f.sources[0], label }) : esc(label);
     return `${what}${f.ageDays === undefined ? "" : ` (${f.rule === "idle_pr" ? "quiet" : "idle"} ${plural(f.ageDays, "day")})`}`;
   });
   const more = findings.length - names.length;
@@ -153,7 +153,10 @@ const doneLines = (findings: Finding[] = []) =>
   findings.map((f) => `☑️ ${esc(f.summary)} [${f.sources.map(link).join(", ")}]`);
 
 const leadLines = (findings: Finding[] = []) =>
-  findings.map((f) => `• ${esc(f.summary)}.${f.sources.length ? ` [${f.sources.map(link).join(", ")}]` : ""}`);
+  findings.map((f) => {
+    const links = f.sources.filter((s) => s.kind !== "self_reported");
+    return `• ${esc(f.summary)}.${links.length ? ` [${links.map(link).join(", ")}]` : ""}`;
+  });
 
 function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer?: string): string {
   const failed = snaps.filter((s) => s.error);
@@ -174,7 +177,12 @@ export const codeFilenames = (html: string) =>
 
 // Numbered to match the focus buttons. Reasons are kept with the brief, not shown.
 const focusLines = (items: ValidFocus[], days?: Map<string, number>) =>
-  items.map((i, n) => `${n + 1}. ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, days)} ${modelLinks(i)}`);
+  items.map((i, n) => {
+    const note = " (partly done yesterday)";
+    const partly = i.text.endsWith(note);
+    const text = withoutRepeatedAside(bulletText(partly ? i.text.slice(0, -note.length) : i.text));
+    return `${n + 1}. ${esc(text + (partly ? note : ""))}${dayTag(i.sources, days)} ${modelLinks(i)}`;
+  });
 
 // A finding a suggestion is built on appears there instead of in attention.
 export const suggested = (focus: ValidFocus[]) => new Set(focus.flatMap((i) => i.sources.map((f) => f.id)));
@@ -214,7 +222,8 @@ function truncate(parts: string[], maxChars: number): string {
 function modelLinks(item: ValidItem): string {
   const sources = new Map<string, Source>();
   for (const f of item.sources) for (const s of f.sources) {
-    if (!sources.has(s.url)) sources.set(s.url, s);
+    const key = s.url ?? s.kind;
+    if (!sources.has(key)) sources.set(key, s);
   }
   return `[${[...sources.values()].slice(0, 3).map(link).join(", ")}]`;
 }

@@ -1,6 +1,7 @@
 export type Severity = "high" | "medium" | "low" | "info";
 
-export interface Source { label: string; url: string }
+export type Source = { label: string; url: string; kind?: never }
+  | { label: string; kind: "self_reported"; url?: never };
 
 export type Activity =
   | { kind: "commits"; count: number; branch: string; messages: string[]; branchTotal?: number }

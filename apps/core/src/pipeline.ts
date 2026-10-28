@@ -3,7 +3,8 @@ import path from "node:path";
 import { DateTime } from "luxon";
 import { env } from "./env.js";
 import { logsInWindow } from "./logs.js";
-import { completedFocusIds } from "./checkin.js";
+import { completedFocusIds, answeredCheckinFocus } from "./checkin.js";
+import { logFindings, partlyForNextBrief, withPartlyNote } from "./self-reports.js";
 import { inWindow } from "./time.js";
 import { features } from "./features.js";
 import { pool } from "./db.js";
@@ -55,7 +56,9 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const findings = runRules(snapshots, now.toJSDate(), config, w);
     const completed = features.focusButtons ? await completedFocusIds() : new Set<string>();
     const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported, completed);
-    const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
+    const focusDate = now.setZone(ZONE).minus({ days: 1 }).toISODate()!;
+    const answered = features.eveningCheckIn ? await answeredCheckinFocus(focusDate) : undefined;
+    const focusRow = answered ?? (features.focusButtons || quietCheck ? await getFocus(focusDate) : undefined);
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
     // Overdue items go last, for the model as for the rule-picked suggestions.
     // A snoozed focus keeps its finding out of suggestions for a few days. An item that waits on an open one above it is left out.
@@ -63,9 +66,11 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const next = features.focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item" && ready(f) && !parked.has(f.id) && !completed.has(f.id)), snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
     // Items a merged PR likely finished get a tick-off line, written by code, instead of a suggestion.
     const done = features.focusButtons ? intent.filter((f) => f.rule === "next_likely_done") : [];
-    const period = features.focusButtons && focusRow ? focusPeriod(await previousBriefAt(runId), w, now.toJSDate()) : undefined;
-    const previousFocus = period ? yesterdayFocus(focusRow, snaps, period) : [];
-    await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
+    const lastBrief = (features.focusButtons || answered) && focusRow ? await previousBriefAt(runId) : undefined;
+    const period = (features.focusButtons || answered) && focusRow ? focusPeriod(lastBrief, w, now.toJSDate()) : undefined;
+    const previousFocus = period ? yesterdayFocus(focusRow, snaps, period, focusDate) : [];
+    const partly = partlyForNextBrief(focusRow, focusDate, now, lastBrief);
+    await storeFindings(runId, [...findings, ...intent, ...previousFocus, ...logFindings(logs)]);
     // An active repo with no NEXT.md takes the last suggestion slot, added in code after the rules or the model pick the rest.
     const missing = features.focusButtons ? intent.filter((f) => f.rule === "next_missing" && !parked.has(f.id) && !completed.has(f.id)) : [];
     // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.
@@ -85,7 +90,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       ? collapseRepeats(visible.filter((f) => !leftOpen(f)), countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible.filter((f) => !leftOpen(f)), collapsed: [], days: new Map<string, number>() };
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? withMissingNext(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), missing) : [];
+    const rulesFocus = features.focusButtons ? withPartlyNote(withMissingNext(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), missing), partly) : [];
     const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
@@ -96,7 +101,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing }, provider, now);
+        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, partly, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;
