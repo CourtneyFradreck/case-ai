@@ -208,12 +208,14 @@ export async function getFocus(date: string) {
 }
 
 // Marks the day's latest choice done or snoozed, and returns it.
-export async function setFocusStatus(date: string, status: "done" | "snoozed", until: Date | null = null) {
+export async function setFocusStatus(date: string, status: "done" | "snoozed", until: Date | null = null, now: Date = new Date()) {
   const { rows } = await pool.query<FocusRow>(
-    `UPDATE core.focus SET status=$2, status_until=$3
+    `UPDATE core.focus SET status=$2, status_until=$3,
+     checkin=CASE WHEN $2='done' AND checkin IS NOT NULL THEN 'done' ELSE checkin END,
+     checkin_at=CASE WHEN $2='done' AND checkin IS NOT NULL THEN $4 ELSE checkin_at END
      WHERE id = (SELECT id FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1)
      RETURNING item_text, short_label, repo, finding_id, created_at, status`,
-    [date, status, until],
+    [date, status, until, now],
   );
   return rows[0];
 }

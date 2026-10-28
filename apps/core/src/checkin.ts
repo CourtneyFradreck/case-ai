@@ -14,7 +14,7 @@ export const checkinAnswer = { done: "done", partly: "partly done", none: "didn'
 
 export async function completedFocusIds(): Promise<Set<string>> {
   const { rows } = await pool.query<{ finding_id: string }>(
-    "SELECT DISTINCT finding_id FROM core.focus WHERE (checkin='done' OR status='done') AND finding_id IS NOT NULL");
+    "SELECT DISTINCT finding_id FROM core.focus WHERE COALESCE(checkin, status) = 'done' AND finding_id IS NOT NULL");
   return new Set(rows.map((row) => row.finding_id));
 }
 export function parseCheckinCallback(data?: string) {
@@ -46,7 +46,7 @@ export async function onCheckinCallback(query: TelegramCallbackQuery, now: DateT
   const cb = parseCheckinCallback(query.data);
   if (!cb || !query.message) return;
   const { rows } = await pool.query<FocusRow>(`UPDATE core.focus SET checkin=$2, checkin_at=$3,
-    status=CASE WHEN $2='done' THEN 'done' ELSE status END
+    status=CASE WHEN $2='done' THEN 'done' WHEN status='done' THEN 'active' ELSE status END
     WHERE id=$1 AND date=$4 AND status IN ('active','done') RETURNING item_text, short_label`,
     [cb.focusId, cb.answer, now.toJSDate(), today(now)]);
   if (!rows[0]) return { answerText: "That check-in has expired." };

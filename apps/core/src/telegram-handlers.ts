@@ -71,7 +71,7 @@ export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTim
       return { answerText: notice(`Focus: ${label}`) };
     }
     if (callback.choice === "done") {
-      await setFocusStatus(today(now), "done");
+      await setFocusStatus(today(now), "done", null, now.toJSDate());
       await setButtons(doneKeyboard(callback.briefId, label));
       return { answerText: "Marked done" };
     }

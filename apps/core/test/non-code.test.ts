@@ -107,7 +107,7 @@ it.each(["done", "partly", "none"])("records %s and opens replies until midnight
   m.query.mockResolvedValueOnce({ rows: [{ item_text: "Pitch" }] });
   await onCallbackQuery(tap(answer), now);
   expect(m.query.mock.calls[0][1]).toEqual(["7", answer, now.toJSDate(), "2026-10-27"]);
-  expect(m.query.mock.calls[0][0]).toContain("WHEN $2='done' THEN 'done' ELSE status END");
+  expect(m.query.mock.calls[0][0]).toContain("WHEN $2='done' THEN 'done' WHEN status='done' THEN 'active' ELSE status END");
   expect(m.query.mock.calls[1][1]).toEqual(["42", new Date("2026-10-27T22:00:00Z")]);
   expect(m.edit).toHaveBeenCalledWith(9, expect.stringContaining("Anything else from today? Just reply."));
 });

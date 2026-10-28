@@ -70,7 +70,7 @@ describe("focus button taps", () => {
   it("marks today's focus done", async () => {
     mocks.getFocus.mockResolvedValue(current);
     expect(await onCallbackQuery(tap("f:70:d"), NOW)).toEqual({ answerText: "Marked done" });
-    expect(mocks.setFocusStatus).toHaveBeenCalledWith("2026-10-14", "done");
+    expect(mocks.setFocusStatus).toHaveBeenCalledWith("2026-10-14", "done", null, NOW.toJSDate());
     expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[{ text: "☑️ Done: taga product section branch", callback_data: "f:70:ok" }]] });
   });
   it("snoozes today's focus for three days and offers the suggestions again", async () => {
