@@ -11,10 +11,11 @@ import { pool } from "./db.js";
 import { pastWeekWindow } from "./time.js";
 import { activityTimes, selectRecap } from "./recap.js";
 import { isQuietMorning, quietText } from "./quiet.js";
-import { collectAll } from "./github/collect.js";
+import { collectAll, failedSnapshot } from "./github/collect.js";
+import { markAnnounced, resolveRepos, unannouncedRepos } from "./repos.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
-import { render } from "./render.js";
+import { newRepoText, render } from "./render.js";
 import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, previousBriefAt, snoozedFocusIds, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable, storeBriefSentText } from "./store.js";
 import { snoozable, snoozeButtonRow, withoutSnoozed } from "./snooze.js";
 import type { InlineKeyboardButton } from "./telegram.js";
@@ -46,8 +47,13 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   // Quiet mornings compare with the previous scheduled brief, so only scheduled briefs can be quiet.
   const quietCheck = features.quietMornings && source === "schedule";
   try {
-    const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
+    const { repos, error: listError } = await resolveRepos(now.toJSDate());
+    const snaps = await collectAll(repos, history, config.ignoreAuthors);
+    if (listError) snaps.push(failedSnapshot("GitHub", listError));
     await storeSnapshots(runId, snaps);
+    // A repo read for the first time gets a line in the brief, until a brief showing it is sent.
+    const newRepos = (await unannouncedRepos(snaps.filter((s) => !s.error).map((s) => s.repo)))
+      .map((repo) => ({ repo, hasNext: snaps.find((s) => s.repo === repo)?.next.status !== "missing" }));
     const { history: intentHistory, missingReported } = await storeNextItems(runId, snaps, now.toJSDate());
     const weekLogs = await logsInWindow(history);
     const logTimes = weekLogs.map((log) => log.created_at.toISOString());
@@ -91,7 +97,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       : { kept: visible.filter((f) => !leftOpen(f)), collapsed: [], days: new Map<string, number>() };
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
     const rulesFocus = features.focusButtons ? withPartlyNote(withMissingNext(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), missing), partly) : [];
-    const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering };
+    const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering, newRepos };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;
@@ -101,7 +107,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, partly, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing }, provider, now);
+        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, partly, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing, newRepos }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;
@@ -123,6 +129,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     // Only a suggestion actually shown starts the week before the repo is suggested again.
     if (!quiet) await markMissingReported([...new Set(focus.flatMap((i) => i.sources).filter((f) => f.rule === "next_missing").map((f) => f.repo))]);
     if (snoozeItems.length) await storeBriefSnoozable(briefId, snoozeItems);
+    // Only a line actually sent counts: a quiet morning or a truncated brief announces it next time.
+    if (!quiet) await markAnnounced(newRepos.filter((r) => sent.includes(newRepoText(r.repo))).map((r) => r.repo));
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     if (env.delivery === "core") {
       // A failed send returns delivered: false, so n8n sends the text instead and the brief still arrives.

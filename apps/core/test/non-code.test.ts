@@ -4,6 +4,7 @@ import { DateTime } from "luxon";
 const m = vi.hoisted(() => ({ query: vi.fn(), send: vi.fn(), edit: vi.fn(), pendingFocus: vi.fn(), insertFocus: vi.fn(),
   features: { focusButtons: false, eveningCheckIn: true },
 }));
+vi.mock("../src/repos.js", () => ({ knownRepos: async () => ["me/Case-AI"] }));
 vi.mock("../src/db.js", () => ({ pool: { query: m.query, connect: async () => ({ query: m.query, release: vi.fn() }) } }));
 vi.mock("../src/checkin-config.js", () => ({ cutoff: "23:59" }));
 vi.mock("../src/env.js", () => ({ env: { repos: ["me/Case-AI"], telegramChatId: "42", apiKey: "k" } }));

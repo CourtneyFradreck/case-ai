@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   storeFindings: vi.fn(), storeBriefFocus: vi.fn(), previousRuns: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", repos: [] as string[] },
 }));
+vi.mock("../src/repos.js", () => ({ resolveRepos: async () => ({ repos: ["me/demo"] }), unannouncedRepos: async () => [], markAnnounced: async () => {} }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 // As shipped on 22 Oct, whatever config.json holds now.
 vi.mock("../src/features.js", async (importOriginal) => ({

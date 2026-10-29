@@ -11,13 +11,20 @@ const mocks = vi.hoisted(() => ({
   previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(), storeBriefSentText: vi.fn(),
   parked: new Set<string>(),
   logs: [] as { id: string; text: string; tag: string | null; created_at: Date }[],
+  // Plain functions over shared state, so vi.resetAllMocks leaves them working.
+  repos: { list: ["me/demo"], error: undefined as string | undefined, unannounced: new Set<string>(), announced: [] as string[][] },
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
+vi.mock("../src/repos.js", () => ({
+  resolveRepos: async () => ({ repos: mocks.repos.list, error: mocks.repos.error }),
+  unannouncedRepos: async (repos: string[]) => repos.filter((r) => mocks.repos.unannounced.has(r)),
+  markAnnounced: async (repos: string[]) => { mocks.repos.announced.push(repos); for (const r of repos) mocks.repos.unannounced.delete(r); },
+}));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/logs.js", () => ({ logsInWindow: async () => mocks.logs }));
 vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set(), answeredCheckinFocus: mocks.answeredCheckinFocus }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
-vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
+vi.mock("../src/github/collect.js", async (actual) => ({ collectAll: mocks.collectAll, failedSnapshot: (await actual<typeof import("../src/github/collect.js")>()).failedSnapshot }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
 vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, previousBriefAt: mocks.previousBriefAt, snoozedFocusIds: async () => mocks.parked, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable, storeBriefSentText: mocks.storeBriefSentText }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
@@ -26,7 +33,10 @@ import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";
 import { yesterdayWindow } from "../src/time.js";
 
-beforeEach(() => { mocks.logs = []; mocks.features.eveningCheckIn = false; });
+beforeEach(() => {
+  mocks.logs = []; mocks.features.eveningCheckIn = false;
+  mocks.repos = { list: ["me/demo"], error: undefined, unannounced: new Set(), announced: [] };
+});
 
 describe("model pipeline", () => {
   beforeEach(() => {
@@ -626,5 +636,63 @@ describe("quiet mornings in the pipeline", () => {
     expect((await runBrief("schedule")).text).toContain("Needs attention");
     expect(mocks.previousRuns).not.toHaveBeenCalled();
     expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
+  });
+});
+
+describe("discovered repos", () => {
+  const demo = snap({ commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.env.briefMode = "rules";
+    mocks.env.delivery = "n8n";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.runRules.mockReturnValue([finding()]);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("collects the resolved repos", async () => {
+    mocks.repos.list = ["me/demo", "me/1710"];
+    mocks.collectAll.mockResolvedValue([demo, snap({ repo: "me/1710" })]);
+    await runBrief("schedule");
+    expect(mocks.collectAll).toHaveBeenCalledWith(["me/demo", "me/1710"], expect.anything(), expect.anything());
+  });
+  it("says a first-seen repo was picked up exactly once, noting a missing NEXT.md", async () => {
+    mocks.repos.list = ["me/demo", "me/1710"];
+    mocks.repos.unannounced = new Set(["me/1710"]);
+    mocks.collectAll.mockResolvedValue([demo, snap({ repo: "me/1710", next: { status: "missing" } })]);
+    const first = await runBrief("schedule");
+    expect(first.text).toContain("New repo picked up: 1710\n1710 has no <code>NEXT.md</code> yet");
+    expect(first.text).not.toContain("New repo picked up: demo");
+    expect(mocks.repos.announced).toEqual([["me/1710"]]);
+    const second = await runBrief("schedule");
+    expect(second.text).not.toContain("New repo picked up");
+  });
+  it("leaves out the NEXT.md line when the new repo has one", async () => {
+    mocks.repos.unannounced = new Set(["me/demo"]);
+    mocks.collectAll.mockResolvedValue([{ ...demo, next: { status: "ok", sha: "n", url: "https://github.com/me/demo/blob/main/NEXT.md", lastChangedAt: null, items: [] } }]);
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("New repo picked up: demo");
+    expect(text).not.toContain("has no");
+  });
+  it("doesn't announce a new repo that couldn't be read", async () => {
+    mocks.repos.list = ["me/demo", "me/1710"];
+    mocks.repos.unannounced = new Set(["me/1710"]);
+    mocks.collectAll.mockResolvedValue([demo, snap({ repo: "me/1710", error: "Couldn't read branches in 1710 (500)" })]);
+    const { text } = await runBrief("schedule");
+    expect(text).not.toContain("New repo picked up");
+    expect(mocks.repos.unannounced.has("me/1710")).toBe(true);
+  });
+  it("shows a failed repo listing as an error line and marks the run partial", async () => {
+    mocks.repos.error = "Couldn't list your repos (401: check the token), so only CASE_REPOS and recently active repos were read";
+    mocks.collectAll.mockResolvedValue([demo]);
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("<i>Couldn't list your repos (401: check the token), so only CASE_REPOS and recently active repos were read</i>");
+    expect(mocks.finishRun).toHaveBeenCalledWith(7, "partial");
   });
 });

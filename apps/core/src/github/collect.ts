@@ -1,10 +1,8 @@
-import { Octokit } from "@octokit/rest";
 import { env } from "../env.js";
+import { gh } from "./client.js";
 import { inWindow, type Window } from "../time.js";
 import { parseNext } from "../intent/parse.js";
 import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment, NextFile } from "../types.js";
-
-const gh = new Octokit({ auth: env.githubToken, userAgent: "case-ai" });
 
 const COMPARE = "GET /repos/{owner}/{repo}/compare/{basehead}";
 const GET_COMMIT = "GET /repos/{owner}/{repo}/commits/{ref}";
@@ -23,10 +21,10 @@ export function matchesGlob(name: string, glob: string): boolean {
   return new RegExp(`^${re}$`).test(name);
 }
 
-const statusOf = (e: any): number | undefined => typeof e?.status === "number" ? e.status : undefined;
+export const statusOf = (e: any): number | undefined => typeof e?.status === "number" ? e.status : undefined;
 
 // Why a call failed, for the brief: the status with a hint for auth failures, else the error message.
-function reason(e: any): string {
+export function reason(e: any): string {
   const status = statusOf(e);
   if (status === 401) return "401: check the token";
   if (status === 403) return "403: check the token's access or rate limit";
@@ -34,7 +32,7 @@ function reason(e: any): string {
 }
 
 // Every GitHub failure is logged with its endpoint and status, whether or not the brief mentions it.
-function logFailure(repo: string, endpoint: string, e: any, extra: Record<string, unknown> = {}) {
+export function logFailure(repo: string, endpoint: string, e: any, extra: Record<string, unknown> = {}) {
   const url = e?.request?.url ? `${e.request.method ?? "GET"} ${String(e.request.url).replace(/^https:\/\/api\.github\.com/, "")}` : undefined;
   console.warn(JSON.stringify({ event: "github_error", repo, endpoint: url ?? endpoint, status: statusOf(e) ?? null,
     ...extra, message: String(e?.message ?? e).slice(0, 200) }));
@@ -76,12 +74,6 @@ export async function collectAll(repos: string[], w: Window, ignoreAuthors: stri
 
 async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
   const [owner, repo] = fullName.split("/");
-  const empty: RepoSnapshot = {
-    repo: fullName, private: false, defaultBranch: "main", createdAt: "",
-    commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
-    closedIssues: [], comments: [], openIssueCount: 0,
-    next: { status: "error", error: "not collected" },
-  };
   const short = shortName(fullName);
   // Branches skipped for an unexpected reason: one short line at the end of the brief.
   const warnings: string[] = [];
@@ -285,11 +277,20 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       ...(warnings.length ? { warnings } : {}),
     };
   } catch (e: any) {
-    if (e instanceof RepoError) return { ...empty, error: e.message };
+    if (e instanceof RepoError) return failedSnapshot(fullName, e.message);
     console.warn(JSON.stringify({ event: "collect_error", repo: fullName, message: String(e?.message ?? e).slice(0, 200) }));
-    return { ...empty, error: `Couldn't read ${fullName} (${reason(e)})` };
+    return failedSnapshot(fullName, `Couldn't read ${fullName} (${reason(e)})`);
   }
 }
+
+// A repo that couldn't be read: safe empty data, and the sentence the brief shows.
+export const failedSnapshot = (repo: string, error: string): RepoSnapshot => ({
+  repo, private: false, defaultBranch: "main", createdAt: "",
+  commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
+  closedIssues: [], comments: [], openIssueCount: 0,
+  next: { status: "error", error: "not collected" },
+  error,
+});
 
 // NEXT.md is optional: a failure here never marks the whole repo as unreadable.
 async function collectNext(owner: string, repo: string, fullName: string, base: string): Promise<NextFile> {

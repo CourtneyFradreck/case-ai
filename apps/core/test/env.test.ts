@@ -32,7 +32,7 @@ describe("model environment", () => {
     expect((await import("../src/env.js")).env.briefMode).toBe("command");
     expect(console.warn).not.toHaveBeenCalled();
   });
-  it.each(["DATABASE_URL", "CASE_API_KEY", "GITHUB_TOKEN", "CASE_REPOS"])("still requires %s", async (key) => {
+  it.each(["DATABASE_URL", "CASE_API_KEY", "GITHUB_TOKEN"])("still requires %s", async (key) => {
     vi.stubEnv(key, undefined);
     await expect(import("../src/env.js")).rejects.toThrow(`Missing env var ${key}`);
   });
@@ -82,7 +82,7 @@ describe("repo and branch lists", () => {
   beforeEach(() => {
     vi.resetModules();
     for (const key of ["DATABASE_URL", "CASE_API_KEY", "GITHUB_TOKEN"]) vi.stubEnv(key, "test");
-    vi.stubEnv("CASE_BRANCH_EXCLUDE", undefined);
+    for (const key of ["CASE_BRANCH_EXCLUDE", "CASE_REPO_EXCLUDE", "CASE_REPO_ACTIVE_DAYS"]) vi.stubEnv(key, undefined);
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
@@ -96,6 +96,24 @@ describe("repo and branch lists", () => {
     expect((await import("../src/env.js")).env.repos).toEqual(["me/demo"]);
     expect(console.warn).toHaveBeenCalledTimes(3);
     expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/CASE_REPOS entry "1710".*owner\/repo/));
+  });
+  it("starts without CASE_REPOS, leaving discovery to pick the repos", async () => {
+    vi.stubEnv("CASE_REPOS", undefined);
+    expect((await import("../src/env.js")).env).toMatchObject({ repos: [], repoExclude: [], repoActiveDays: 14 });
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+  it("reads trimmed repo exclude globs and the active days", async () => {
+    vi.stubEnv("CASE_REPOS", "");
+    vi.stubEnv("CASE_REPO_EXCLUDE", " old-* , me/scratch ,");
+    vi.stubEnv("CASE_REPO_ACTIVE_DAYS", " 30 ");
+    expect((await import("../src/env.js")).env).toMatchObject({ repoExclude: ["old-*", "me/scratch"], repoActiveDays: 30 });
+  });
+  it.each(["0", "-3", "two weeks", "1.5"])("uses 14 active days with one warning for %s", async (days) => {
+    vi.stubEnv("CASE_REPOS", "");
+    vi.stubEnv("CASE_REPO_ACTIVE_DAYS", days);
+    expect((await import("../src/env.js")).env.repoActiveDays).toBe(14);
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/CASE_REPO_ACTIVE_DAYS.*14/));
   });
   it("excludes pr-assets branches by default", async () => {
     vi.stubEnv("CASE_REPOS", "me/demo");

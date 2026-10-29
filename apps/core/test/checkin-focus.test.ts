@@ -3,6 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { DateTime } from "luxon";
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), edit: vi.fn(), send: vi.fn(), connect: vi.fn(), release: vi.fn() }));
+vi.mock("../src/repos.js", () => ({ knownRepos: async () => ["me/demo"] }));
 vi.mock("../src/db.js", () => ({ pool: { query: mocks.query, connect: mocks.connect } }));
 vi.mock("../src/env.js", () => ({ env: { repos: ["me/demo"], telegramChatId: "42" } }));
 vi.mock("../src/features.js", () => ({ features: { eveningCheckIn: true } }));

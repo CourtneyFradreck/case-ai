@@ -3,6 +3,7 @@ import { pool } from "./db.js";
 import { env } from "./env.js";
 import { esc } from "./render.js";
 import { sendMessage } from "./telegram.js";
+import { knownRepos } from "./repos.js";
 import { today, type Window } from "./time.js";
 
 export interface ActivityLog { id: string; text: string; tag: string | null; created_at: Date }
@@ -19,7 +20,7 @@ export function parseLog(input: string, repos: string[] = env.repos) {
 
 export async function logText(input: string, via: "command" | "checkin", now: DateTime, focusId: string | null = null) {
   if (input.trim().length >= 500) { await sendMessage("Keep logs under 500 characters."); return; }
-  const entry = parseLog(input);
+  const entry = parseLog(input, await knownRepos());
   if (!entry.text) { await sendMessage("Use /log <text> [#tag]."); return; }
   await pool.query(`INSERT INTO core.activity_logs(date, text, tag, via, focus_id) VALUES ($1,$2,$3,$4,
     COALESCE($5, (SELECT focus_id FROM core.checkins WHERE date=$1 AND sent_at IS NOT NULL)))`, [today(now), entry.text, entry.tag, via, focusId]);

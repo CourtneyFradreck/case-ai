@@ -39,6 +39,16 @@ export interface GreetingOptions {
   logs?: ActivityLog[];
   userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[];
+  newRepos?: NewRepo[];
+}
+
+// A repo read for the first time, announced once at the end of the brief.
+export interface NewRepo { repo: string; hasNext: boolean }
+export const newRepoText = (repo: string) => `New repo picked up: ${esc(repo.split("/").pop()!)}`;
+
+function newRepoLines(repos: NewRepo[] = []): string[] {
+  if (!repos.length) return [];
+  return ["", ...repos.flatMap((r) => [newRepoText(r.repo), ...(r.hasNext ? [] : [`${esc(r.repo.split("/").pop()!)} has no NEXT.md yet`])])];
 }
 
 const dayTag = (findings: Finding[], days?: Map<string, number>) => {
@@ -196,7 +206,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
+  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen), ...newRepoLines(greeting.newRepos)];
 
   return finish(parts, snaps, maxChars, footer);
 }
@@ -236,7 +246,7 @@ export function renderModelBrief(brief: ValidBrief, snaps: RepoSnapshot[], w: Wi
     const severity = [...i.sources].sort((a, b) => rank[a.severity] - rank[b.severity])[0].severity;
     return `${icon[severity]} ${esc(withoutRepeatedAside(bulletText(i.text)))}${dayTag(i.sources, greeting.days)} ${modelLinks(i)}`;
   };
-  const parts = [...header(greeting, brief.yesterday.flatMap((i) => i.sources), w), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true, greeting.logs), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen)];
+  const parts = [...header(greeting, brief.yesterday.flatMap((i) => i.sources), w), ...sections([...brief.attention.map(modelLine), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(brief.yesterday, true, greeting.logs), w, focusLines(brief.focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen), ...newRepoLines(greeting.newRepos)];
   const note = closingLine(brief.note, brief.noteSources);
   if (note) parts.push("", `<i>${esc(note)}</i>`);
   return finish(parts, snaps, maxChars);

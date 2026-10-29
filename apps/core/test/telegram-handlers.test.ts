@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getBriefFocus: vi.fn(), getFocus: vi.fn(), insertFocus: vi.fn(), setFocusStatus: vi.fn(), openNextItems: vi.fn(), setPendingFocus: vi.fn(), takePendingFocus: vi.fn(),
   getBriefSnoozable: vi.fn(), upsertSnooze: vi.fn(), listSnoozes: vi.fn(), deleteSnooze: vi.fn(),
 }));
+vi.mock("../src/repos.js", () => ({ knownRepos: async () => mocks.env.repos }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage, editMessageReplyMarkup: mocks.editMessageReplyMarkup, editMessageText: mocks.editMessageText }));

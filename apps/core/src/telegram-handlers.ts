@@ -8,6 +8,7 @@ import { esc } from "./render.js";
 import { editMessageReplyMarkup, editMessageText, sendMessage, type InlineKeyboardMarkup } from "./telegram.js";
 import { chosenKeyboard, cleanFocusText, doneKeyboard, FOCUS_SNOOZE_DAYS, focusAck, focusKeyboard, focusMenu, nextItemsText, parseCommand, parseFocusCallback, storedLabel } from "./focus.js";
 import { clip } from "./labels.js";
+import { knownRepos } from "./repos.js";
 import type { FocusRow } from "./store.js";
 import { parseSnoozeCallback, snoozedText, snoozeList, snoozeUntil, untilText } from "./snooze.js";
 import {
@@ -157,7 +158,7 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
     return;
   }
   if (features.focusButtons && command?.name === "next") {
-    await sendMessage(nextItemsText(await openNextItems(), env.repos, command.arg || undefined));
+    await sendMessage(nextItemsText(await openNextItems(), await knownRepos(), command.arg || undefined));
     return;
   }
   // Other commands, such as /brief, are n8n's, and leave a pending focus waiting.

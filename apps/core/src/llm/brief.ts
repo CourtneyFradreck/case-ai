@@ -2,7 +2,7 @@ import type { ActivityLog } from "../logs.js";
 import type { Finding, RepoSnapshot } from "../types.js";
 import type { Window } from "../time.js";
 import { DateTime } from "luxon";
-import { renderModelBrief } from "../render.js";
+import { renderModelBrief, type NewRepo } from "../render.js";
 import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
@@ -20,6 +20,7 @@ export interface ModelBriefConfig extends InputConfig {
   partly?: Set<string>;
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>; missing?: Finding[];
+  newRepos?: NewRepo[];
 }
 export interface BriefAudit {
   brief: AliasBrief | null;
@@ -74,7 +75,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
     result.brief.focus = withPartlyNote(result.brief.focus, cfg.partly);
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { logs: cfg.logs, userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen }), focus: result.brief.focus };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { logs: cfg.logs, userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen, newRepos: cfg.newRepos }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus, cfg.parked);
