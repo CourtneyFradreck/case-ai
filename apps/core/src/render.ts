@@ -106,34 +106,49 @@ const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const count = (n: number, noun: string) => n === 1 ? `one ${noun}` : `${n} ${noun}s`;
 
-// One sentence on the recap period, the way a person would put it, built from recap findings and the log count:
-// "Big case-ai day yesterday: 12 commits on feat/m3-intent." It names the busiest repo and the period's
-// size, merged PRs and logs. Nothing when the period had no activity.
+const prs = (n: number) => n === 1 ? "a PR" : `${n} PRs`;
+
+// Commits and merged PRs per repo in the recap. Commits that came in through a PR merged in the
+// collected window are left out by the collector, so a merge is never also counted as its commits.
+export function repoStats(recap: Finding[]) {
+  const stats = new Map<string, { commits: Finding[]; merged: number }>();
+  const of = (repo: string) => stats.get(repo) ?? stats.set(repo, { commits: [], merged: 0 }).get(repo)!;
+  for (const f of recap) {
+    if (recapKind(f) === 0) of(f.repo).commits.push(f);
+    else if (f.activity?.kind === "pr" && f.activity.action === "Merged") of(f.repo).merged++;
+  }
+  return [...stats].map(([repo, s]) => ({ repo, commitFindings: s.commits, commits: s.commits.reduce((n, f) => n + activityAmount(f), 0), merged: s.merged }))
+    .sort((a, b) => b.commits + b.merged - (a.commits + a.merged) || a.repo.localeCompare(b.repo));
+}
+
+// One sentence on the recap period, built from per-repo stats and the log count, naming the repo of each
+// count: "Steady day yesterday: 7 PRs merged in 1710, 5 commits in case-ai, and 3 things logged."
+// The two busiest repos are named; the rest are summed up. "Big" when the busiest repo had 10 commits or more.
+// Nothing when the period had no activity.
 export function opening(recap: Finding[], w: Window, logs = 0): string | undefined {
   if (!w.label || (!recap.length && !logs)) return;
-  const commits = recap.filter((f) => recapKind(f) === 0);
-  const byRepo = new Map<string, Finding[]>();
-  for (const f of commits) byRepo.set(f.repo, [...(byRepo.get(f.repo) ?? []), f]);
-  const total = (fs: Finding[]) => fs.reduce((n, f) => n + activityAmount(f), 0);
-  const [top] = [...byRepo].sort(([a, x], [b, y]) => total(y) - total(x) || a.localeCompare(b));
-  const merged = recap.filter((f) => f.activity?.kind === "pr" && f.activity.action === "Merged").length;
-  const extras = [merged ? `${merged === 1 ? "a PR" : `${merged} PRs`} merged` : "", logs ? `${logs} ${logs === 1 ? "thing" : "things"} logged` : ""].filter(Boolean).join(" and ");
-  const and = extras ? `, and ${extras}` : "";
+  const repos = repoStats(recap);
+  const logged = logs ? [`${logs} ${logs === 1 ? "thing" : "things"} logged`] : [];
   // "day yesterday", "weekend", "Friday".
   const when = w.label === "yesterday" ? "day yesterday" : w.label.replace(/^on |^over the /, "");
-  if (!top) return extras ? `No commits ${w.label}, but ${extras}.` : `No commits ${w.label}, just PR and issue updates.`;
-  const [repo, found] = top;
-  const name = repo.split("/").pop()!;
-  const n = total(found);
-  const elsewhere = total(commits) - n;
-  if (n >= 10) {
+  if (!repos.length) return logs ? `No commits ${w.label}, but ${logged[0]}.` : `No commits ${w.label}, just PR and issue updates.`;
+  const [top, second, ...rest] = repos;
+  const part = (s: (typeof repos)[number], counts = count(s.commits, "commit")) =>
+    [s.commits ? counts : "", s.merged ? `${prs(s.merged)} merged` : ""].filter(Boolean).join(" plus ");
+  const others = [...(second ? [`${part(second)} in ${second.repo.split("/").pop()}`] : []),
+    ...(rest.length ? [`activity in ${count(rest.length, "other repo")}`] : []), ...logged];
+  if (top.commits >= 10) {
     // The busiest branch: "12 commits on feat/m3-intent", or "16 commits, most on feat/m2-model-brief" when others had some.
-    const branch = [...found].sort((a, b) => activityAmount(b) - activityAmount(a))[0].activity;
-    const on = branch?.kind !== "commits" ? "" : found.length === 1 ? ` on ${branch.branch}` : `, most on ${branch.branch}`;
-    return `Big ${name} ${when}: ${count(n, "commit")}${on}${elsewhere ? `, and ${elsewhere} elsewhere` : ""}${and}.`;
+    const branch = [...top.commitFindings].sort((a, b) => activityAmount(b) - activityAmount(a))[0].activity;
+    const on = branch?.kind !== "commits" ? "" : top.commitFindings.length === 1 ? ` on ${branch.branch}` : `, most on ${branch.branch}`;
+    return `Big ${top.repo.split("/").pop()} ${when}: ${list([part(top, `${count(top.commits, "commit")}${on}`), ...others])}.`;
   }
-  return `${total(commits) + merged + logs >= 3 ? "Steady" : "Quiet"} ${when}: ${count(n, "commit")} in ${name}${elsewhere ? ` and ${elsewhere} elsewhere` : ""}${and}.`;
+  const size = repos.reduce((n, s) => n + s.commits + s.merged, 0) + logs;
+  return `${size >= 3 ? "Steady" : "Quiet"} ${when}: ${list([`${part(top)} in ${top.repo.split("/").pop()}`, ...others])}.`;
 }
+
+// "a", "a and b", "a, b, and c".
+const list = (items: string[]) => items.length < 3 ? items.join(" and ") : `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 
 function header(options: GreetingOptions, recap: Finding[] = [], w?: Window): string[] {
   const today = (options.now ?? DateTime.now()).setZone(ZONE).setLocale("en");

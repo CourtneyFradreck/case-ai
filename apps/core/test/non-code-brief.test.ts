@@ -16,9 +16,9 @@ const commit = (count: number) => finding({ activity: { kind: "commits", branch:
 const prs = Array.from({ length: 4 }, (_, n) => finding({ id: `p${n}`, rule: "merged_pr", activity: { kind: "pr", action: "Merged", number: n, title: "Work" } }));
 
 it("counts commits, merges and logs for Steady, but only commits for Big", () => {
-  expect(opening([commit(1), ...prs], w)).toBe("Steady day yesterday: one commit in demo, and 4 PRs merged.");
-  expect(opening([commit(1)], w, 2)).toBe("Steady day yesterday: one commit in demo, and 2 things logged.");
-  expect(opening(prs, w, 2)).toBe("No commits yesterday, but 4 PRs merged and 2 things logged.");
+  expect(opening([commit(1), ...prs], w)).toBe("Steady day yesterday: one commit plus 4 PRs merged in demo.");
+  expect(opening([commit(1)], w, 2)).toBe("Steady day yesterday: one commit in demo and 2 things logged.");
+  expect(opening(prs, w, 2)).toBe("Steady day yesterday: 4 PRs merged in demo and 2 things logged.");
   expect(opening([], w, 1)).toBe("No commits yesterday, but 1 thing logged.");
   expect(opening([commit(1)], w, 20)).toMatch(/^Steady/);
   expect(opening([commit(10)], w, 2)).toMatch(/^Big demo/);

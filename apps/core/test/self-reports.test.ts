@@ -52,7 +52,7 @@ it("excludes self reports from model input even with private repos enabled", asy
     } }, now);
   expect(result).toHaveProperty("text", expect.stringContaining("Private pitch edits"));
   expect(result).toHaveProperty("text", expect.stringContaining("Secret focus, partly done."));
-  expect(result).toHaveProperty("text", expect.stringContaining("one commit in demo, and 1 thing logged."));
+  expect(result).toHaveProperty("text", expect.stringContaining("one commit in demo and 1 thing logged."));
 });
 
 it("annotates only the next day's first brief and only the partly finding", () => {

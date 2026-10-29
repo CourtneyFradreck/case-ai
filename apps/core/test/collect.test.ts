@@ -101,6 +101,8 @@ describe("15 Oct commit attribution regression", () => {
       expect(text).toContain('Merged PR #2 "GitHub morning brief pipeline and activity rules".');
       expect(text).not.toContain("15 commits");
       expect(text).not.toContain("Merge pull request");
+      // The PR's own commits count once, as the merge: 9 unique feature commits and 1 on main, plus the PR.
+      expect(text).toContain("Big case-ai day yesterday: 10 commits, most on feat/m2-model-brief plus a PR merged.");
     }
     expect(model).toBe(template);
   });
