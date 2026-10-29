@@ -14,8 +14,8 @@ const gh = vi.hoisted(() => ({
   actions: { listRepoWorkflows: vi.fn(), listWorkflowRunsForRepo: vi.fn() },
 }));
 vi.mock("@octokit/rest", () => ({ Octokit: class { constructor() { return gh; } } }));
-vi.mock("../src/env.js", () => ({ env: { githubToken: "test" } }));
-import { collectAll } from "../src/github/collect.js";
+vi.mock("../src/env.js", () => ({ env: { githubToken: "test", branchExclude: ["pr-assets/*"] } }));
+import { collectAll, forgetNoCommonHistory, matchesGlob } from "../src/github/collect.js";
 
 describe("workflow collection", () => {
   const states = ["active", "disabled_manually", "disabled_inactivity", "disabled_fork", "deleted"];
@@ -231,7 +231,7 @@ describe("issue activity collection", () => {
   });
   it("keeps safe defaults for a failed repo", async () => {
     gh.repos.get.mockRejectedValue(new Error("unavailable"));
-    expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "unavailable" });
+    expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "Couldn't access me/demo (unavailable)" });
   });
 });
 
@@ -286,7 +286,7 @@ describe("NEXT.md collection", () => {
       ? Array.from({ length: 4 }, (_, n) => ({ number: n, user: { login: "tendai" } })) : []);
     const s = await collect();
     expect(s.error).toBeUndefined();
-    expect(s.next).toEqual({ status: "error", error: "GitHub 500" });
+    expect(s.next).toEqual({ status: "error", error: "Couldn't read NEXT.md in demo (500)" });
     expect(s).toMatchObject({ private: true, defaultBranch: "trunk", openIssueCount: 4 });
     expect(gh.actions.listWorkflowRunsForRepo).toHaveBeenCalled();
   });
@@ -302,5 +302,138 @@ describe("NEXT.md collection", () => {
   it("records an error when NEXT.md is a directory", async () => {
     gh.repos.getContent.mockResolvedValue({ data: [] });
     expect((await collect()).next).toEqual({ status: "error", error: "NEXT.md is not a file" });
+  });
+});
+
+describe("branch globs", () => {
+  it.each([
+    ["pr-assets/phase-1-ios-shell", "pr-assets/*", true],
+    ["pr-assets/a/b", "pr-assets/*", false],
+    ["pr-assets/a/b", "pr-assets/**", true],
+    ["gh-pages", "gh-pages", true],
+    ["gh-pages-old", "gh-pages", false],
+    ["feat.x", "feat?x", true],
+    ["featyx", "feat.x", false],
+  ])("matches %s against %s: %s", (name, glob, expected) => {
+    expect(matchesGlob(name, glob)).toBe(expected);
+  });
+});
+
+describe("per-branch isolation", () => {
+  const httpError = (status: number, url?: string) => Object.assign(new Error(`HTTP ${status}`), { status, ...(url ? { request: { method: "GET", url } } : {}) });
+  const head = (name: string, sha = `${name}-sha`) => ({ name, commit: { sha } });
+  let branches: ReturnType<typeof head>[];
+  let compare: Record<string, number | Error>;
+  const w = { start: new Date(daysAgo(2)), end: new Date(NOW.getTime() + 1000), label: "test" };
+  const collect = async () => (await collectAll(["CourtneyFradreck/1710"], w, []))[0];
+  const logged = (spy: unknown) => (spy as { mock: { calls: unknown[][] } }).mock.calls.map(([line]) => JSON.parse(String(line)));
+  beforeEach(() => {
+    vi.resetAllMocks();
+    forgetNoCommonHistory();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    branches = [head("main"), head("feature"), head("orphan"), head("pr-assets/phase-1-ios-shell")];
+    compare = { feature: 2, orphan: httpError(404, "https://api.github.com/repos/CourtneyFradreck/1710/compare/main...orphan?per_page=1") };
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "me" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, created_at: daysAgo(30) } });
+    gh.repos.getContent.mockResolvedValue({ data: { type: "file", sha: "n", content: Buffer.from("- [ ] Ship\n").toString("base64") } });
+    gh.repos.listCommits.mockResolvedValue({ data: [] });
+    gh.repos.getCommit.mockResolvedValue({ data: { commit: { committer: { date: daysAgo(1) } } } });
+    gh.repos.compareCommitsWithBasehead.mockImplementation(async ({ basehead }) => {
+      const result = compare[basehead.split("...")[1]];
+      if (result instanceof Error) throw result;
+      return { data: { ahead_by: result } };
+    });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockImplementation(async (endpoint, params) => {
+      if (endpoint === gh.repos.listBranches) return branches;
+      if (endpoint === gh.repos.listCommits) return [{ sha: `${params.sha}-c`, html_url: "u", author: { login: "me" }, parents: [{ sha: "p" }],
+        commit: { message: `Work on ${params.sha}`, committer: { date: NOW.toISOString() } } }];
+      return [];
+    });
+  });
+
+  it("keeps the repo when one branch's compare returns 404, skipping only that branch", async () => {
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["main", 0], ["feature", 2]]);
+    expect(s.warnings).toEqual(["Skipped branch orphan in 1710 (no common history with main)"]);
+    expect(s.next).toMatchObject({ status: "ok" });
+    expect(s.commits.map((c) => c.branch)).toEqual(["main", "feature"]);
+    expect(logged(console.warn)).toContainEqual(expect.objectContaining({
+      event: "github_error", repo: "CourtneyFradreck/1710", branch: "orphan", status: 404,
+      endpoint: "GET /repos/CourtneyFradreck/1710/compare/main...orphan?per_page=1",
+    }));
+  });
+  it("skips a branch with no common history quietly until its head changes", async () => {
+    await collect();
+    gh.repos.compareCommitsWithBasehead.mockClear();
+    const again = await collect();
+    expect(again.warnings).toBeUndefined();
+    expect(gh.repos.compareCommitsWithBasehead.mock.calls.map(([p]) => p.basehead)).toEqual(["main...feature"]);
+    expect(logged(console.info)).toContainEqual({ event: "github_branch_skipped", repo: "CourtneyFradreck/1710", branch: "orphan", reason: "no common history with main" });
+    branches[2] = head("orphan", "new-sha");
+    expect((await collect()).warnings).toEqual(["Skipped branch orphan in 1710 (no common history with main)"]);
+  });
+  it("never reads excluded branches and leaves them out of the brief", async () => {
+    const s = await collect();
+    expect(gh.repos.getCommit).not.toHaveBeenCalledWith(expect.objectContaining({ ref: "pr-assets/phase-1-ios-shell-sha" }));
+    expect(gh.repos.compareCommitsWithBasehead).not.toHaveBeenCalledWith(expect.objectContaining({ basehead: "main...pr-assets/phase-1-ios-shell" }));
+    expect(s.branches.map((b) => b.name)).not.toContain("pr-assets/phase-1-ios-shell");
+    expect(s.warnings?.join()).not.toContain("pr-assets");
+    expect(logged(console.info)).toContainEqual({ event: "github_branch_skipped", repo: "CourtneyFradreck/1710", branch: "pr-assets/phase-1-ios-shell", reason: "excluded by pr-assets/*" });
+  });
+  it("compares with the repo's default branch when it isn't main", async () => {
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: false, created_at: daysAgo(30) } });
+    branches = [head("trunk"), head("feature"), head("orphan")];
+    const s = await collect();
+    expect(gh.repos.compareCommitsWithBasehead.mock.calls.map(([p]) => p.basehead)).toEqual(["trunk...feature", "trunk...orphan"]);
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["trunk", 0], ["feature", 2]]);
+    expect(s.warnings).toEqual(["Skipped branch orphan in 1710 (no common history with trunk)"]);
+    expect(gh.repos.getContent).toHaveBeenCalledWith(expect.objectContaining({ ref: "trunk" }));
+  });
+  it("skips a branch on a 422 or other unexpected failure without caching it", async () => {
+    compare = { feature: httpError(422), orphan: 1 };
+    gh.repos.getCommit.mockImplementation(async ({ ref }) => {
+      if (ref === "orphan-sha") throw httpError(500);
+      return { data: { commit: { committer: { date: daysAgo(1) } } } };
+    });
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.branches.map((b) => b.name)).toEqual(["main"]);
+    expect(s.warnings).toEqual(["Skipped branch feature in 1710 (422)", "Skipped branch orphan in 1710 (500)"]);
+    expect((await collect()).warnings).toHaveLength(2);
+  });
+  it("skips commits on a branch whose commit list fails, keeping the others", async () => {
+    const paginate = gh.paginate.getMockImplementation()!;
+    gh.paginate.mockImplementation(async (endpoint, params) => {
+      if (endpoint === gh.repos.listCommits && params.sha === "feature") throw httpError(502);
+      return paginate(endpoint, params);
+    });
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.commits.map((c) => c.branch)).toEqual(["main"]);
+    expect(s.warnings).toContain("Skipped commits on feature in 1710 (502)");
+  });
+  it("reports a repo-level 401 as a repo failure naming the token", async () => {
+    gh.repos.get.mockRejectedValue(httpError(401, "https://api.github.com/repos/CourtneyFradreck/1710"));
+    const s = await collect();
+    expect(s.error).toBe("Couldn't access CourtneyFradreck/1710 (401: check the token)");
+    expect(s.branches).toEqual([]);
+    expect(logged(console.warn)).toContainEqual(expect.objectContaining({ event: "github_error", endpoint: "GET /repos/CourtneyFradreck/1710", status: 401 }));
+  });
+  it("reports a repo-level 404 as not found or not visible", async () => {
+    gh.repos.get.mockRejectedValue(httpError(404));
+    expect((await collect()).error).toBe("Couldn't access CourtneyFradreck/1710 (404: not found, or the token can't see it)");
+  });
+  it("names the repo-level call that failed after the repo was found", async () => {
+    gh.paginate.mockImplementation(async (endpoint) => {
+      if (endpoint === gh.repos.listBranches) throw httpError(500);
+      return [];
+    });
+    const s = await collect();
+    expect(s.error).toBe("Couldn't read branches in 1710 (500)");
+    expect(logged(console.warn)).toContainEqual(expect.objectContaining({ endpoint: "GET /repos/{owner}/{repo}/branches", status: 500 }));
   });
 });

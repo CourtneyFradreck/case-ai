@@ -59,5 +59,6 @@ export interface RepoSnapshot {
   branches: Branch[];
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
   next: NextFile;         // NEXT.md on the default branch
-  error?: string;         // set if this repo couldn't be read
+  error?: string;         // set if this repo couldn't be read: a sentence naming what failed
+  warnings?: string[];    // branches skipped for an unexpected reason; the rest of the repo was read
 }
