@@ -94,8 +94,10 @@ Then open n8n at your domain and add two credentials: a Telegram credential with
 | `CASE_API_KEY`       | Shared secret between n8n and case-core |
 | `N8N_ENCRYPTION_KEY` | Encrypts n8n credentials. Back it up.   |
 | `N8N_HOST`           | Public domain for n8n                   |
-| `GITHUB_TOKEN`       | Read-only GitHub token for the tracked repos |
-| `CASE_REPOS`         | Comma-separated `owner/repo` names. Spaces and quotes around entries are ignored; an entry that isn't `owner/repo` is skipped with a startup warning. |
+| `GITHUB_TOKEN`       | Read-only fine-grained GitHub token with access to **All repositories** and the **Contents** and **Metadata** permissions, so CASE can discover your repos |
+| `CASE_REPOS`         | Optional. Comma-separated `owner/repo` names that are always read, even when quiet or not yours (e.g. repos you collaborate on). Leave it empty to rely on discovery alone. Spaces and quotes around entries are ignored; an entry that isn't `owner/repo` is skipped with a startup warning. |
+| `CASE_REPO_EXCLUDE`  | Optional. Comma-separated globs for owned repos never read, matched against `owner/repo` and the bare repo name, e.g. `sandbox-*,me/old-site`. Empty by default. |
+| `CASE_REPO_ACTIVE_DAYS` | Discovered repos are read only if pushed to within this many days. Defaults to `14`; an invalid value uses `14` with a startup warning. |
 | `CASE_BRANCH_EXCLUDE` | Comma-separated branch globs never read, e.g. asset branches with no common history with the default branch. `*` matches within one path segment, `**` across segments. Defaults to `pr-assets/*`; set it empty to read every branch. |
 | `CASE_BRIEF_MODE`    | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`. |
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather, used when case-core sends messages itself |
@@ -156,6 +158,8 @@ rclone has no config file here. The `r2` remote is defined by `RCLONE_CONFIG_R2_
 rclone refreshes the access token in memory but can't save it back without a config file. That's fine while the refresh token stays valid. If Drive uploads start failing with auth errors, run step 1 again and update `GDRIVE_TOKEN`.
 
 ## NEXT.md
+
+**Which repos are read.** Each brief lists the repos the token's user owns (`GET /user/repos?affiliation=owner`), drops forks, archived repos and `CASE_REPO_EXCLUDE` matches, and reads those pushed to within `CASE_REPO_ACTIVE_DAYS`. Quiet repos get no API calls beyond that listing, so they add no findings. `CASE_REPOS` entries are always read. Every discovered repo is stored in the `repos` table with `first_seen_at`, `last_pushed_at` and `source` (`discovered` or `manual`). The first brief sent after a repo is first read says "New repo picked up: <name>", and "<name> has no NEXT.md yet" when it has none. A repo's branches are read again only when it has been pushed to since the last read. If the listing fails, CASE reads `CASE_REPOS` and the repos discovered earlier that were active, and the brief says so.
 
 CASE reads a `NEXT.md` file at the root of each tracked repo to learn what you plan to do next. Only that exact path on the default branch is read.
 
@@ -330,7 +334,7 @@ Deploy this hardening:
 
 ## Security notes
 
-- GitHub access uses a fine-grained, read-only token limited to chosen repos.
+- GitHub access uses a fine-grained, read-only token (Contents and Metadata only).
 - The bot only responds to one Telegram chat ID.
 - case-core and Postgres are never exposed publicly.
 - Issue and PR text is treated as untrusted data; the model has no tools and no write access.
