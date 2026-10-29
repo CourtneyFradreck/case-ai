@@ -95,7 +95,8 @@ Then open n8n at your domain and add two credentials: a Telegram credential with
 | `N8N_ENCRYPTION_KEY` | Encrypts n8n credentials. Back it up.   |
 | `N8N_HOST`           | Public domain for n8n                   |
 | `GITHUB_TOKEN`       | Read-only GitHub token for the tracked repos |
-| `CASE_REPOS`         | Comma-separated `owner/repo` names |
+| `CASE_REPOS`         | Comma-separated `owner/repo` names. Spaces and quotes around entries are ignored; an entry that isn't `owner/repo` is skipped with a startup warning. |
+| `CASE_BRANCH_EXCLUDE` | Comma-separated branch globs never read, e.g. asset branches with no common history with the default branch. `*` matches within one path segment, `**` across segments. Defaults to `pr-assets/*`; set it empty to read every branch. |
 | `CASE_BRIEF_MODE`    | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`. |
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather, used when case-core sends messages itself |
 | `TELEGRAM_CHAT_ID`   | Your Telegram chat ID. The only chat case-core accepts updates from; the `/brief` command does nothing until it is set. |

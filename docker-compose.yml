@@ -23,6 +23,7 @@ services:
       CASE_API_KEY: ${CASE_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       CASE_REPOS: ${CASE_REPOS}
+      CASE_BRANCH_EXCLUDE: ${CASE_BRANCH_EXCLUDE:-pr-assets/*}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       CASE_BRIEF_MODE: ${CASE_BRIEF_MODE:-rules}
