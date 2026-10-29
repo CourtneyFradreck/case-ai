@@ -85,15 +85,25 @@ describe("render", () => {
     expect(out.indexOf("INFO-ITEM")).toBeGreaterThan(yesterday);
   });
 
-  it("adds a footer naming repos that couldn't be read, even when there are findings", () => {
+  it("adds a footer line per repo that couldn't be read, even when there are findings", () => {
     const out = render(
       [finding({ severity: "high", summary: "CI failing" })],
-      [snap(), snap({ repo: "me/broken", error: "GitHub 404" })],
+      [snap(), snap({ repo: "me/broken", error: "Couldn't access me/broken (401: check the token)" }), snap({ repo: "me/other", error: "Couldn't read branches in other (500)" })],
       W,
     );
-    const footer = out.split("\n").find((l) => l.includes("Couldn't read"));
-    expect(footer).toBeDefined();
-    expect(footer).toContain("me/broken");
+    const lines = out.split("\n");
+    expect(lines).toContain("<i>Couldn't access me/broken (401: check the token)</i>");
+    expect(lines).toContain("<i>Couldn't read branches in other (500)</i>");
+    expect(out).not.toContain("Couldn't read:");
+  });
+
+  it("puts skipped branches of readable repos on one short line at the end", () => {
+    const out = render([], [
+      snap({ warnings: ["Skipped branch orphan in 1710 (no common history with main)"] }),
+      snap({ repo: "me/other", warnings: ["Skipped branch feature in other (500)"] }),
+    ], W);
+    expect(out.split("\n").at(-1)).toBe("<i>Skipped branch orphan in 1710 (no common history with main); Skipped branch feature in other (500)</i>");
+    expect(render([], [snap()], W)).not.toContain("Skipped");
   });
 
   it("truncates long briefs to maxChars and says how many lines were cut", () => {

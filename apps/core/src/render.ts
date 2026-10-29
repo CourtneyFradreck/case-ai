@@ -159,10 +159,11 @@ const leadLines = (findings: Finding[] = []) =>
   });
 
 function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer?: string): string {
+  // Each error names what failed; branches skipped in readable repos share one short line.
   const failed = snaps.filter((s) => s.error);
-  if (failed.length) {
-    parts.push("", `<i>Couldn't read: ${failed.map((s) => `${esc(s.repo)} (${esc(s.error!)})`).join(", ")}</i>`);
-  }
+  if (failed.length) parts.push("", ...failed.map((s) => `<i>${esc(s.error!)}</i>`));
+  const skipped = snaps.filter((s) => !s.error).flatMap((s) => s.warnings ?? []);
+  if (skipped.length) parts.push("", `<i>${skipped.map(esc).join("; ")}</i>`);
   if (footer) parts.push("", `<i>${esc(footer)}</i>`);
   return truncate(parts.map(codeFilenames), maxChars);
 }
