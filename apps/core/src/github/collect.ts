@@ -112,10 +112,12 @@ async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[
       () => gh.pulls.list({ owner, repo, state: "closed", sort: "updated", direction: "desc", per_page: 50 }));
     const merged = closed.filter((p) => inWindow(p.merged_at, w));
     const mergedShas = new Set<string>();
+    const prCommits = new Map<number, number>();
     for (const p of merged) {
       const commits = await repoCall(fullName, `commits of PR #${p.number}`, "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits",
         () => gh.paginate(gh.pulls.listCommits, { owner, repo, pull_number: p.number, per_page: 100 }));
       for (const c of commits) mergedShas.add(c.sha);
+      prCommits.set(p.number, commits.length);
     }
 
     // 3. Walk the default branch first so shared SHAs belong to it, then
@@ -231,7 +233,7 @@ async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[
       })),
       mergedPrs: merged.map((p) => ({
         number: p.number, title: p.title, url: p.html_url,
-        draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
+        draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at, commits: prCommits.get(p.number),
       })),
       recentlyMerged: closed.filter((p) => p.merged_at).map((p) => ({
         number: p.number, title: p.title, url: p.html_url,

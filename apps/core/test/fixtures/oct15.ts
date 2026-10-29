@@ -55,7 +55,7 @@ export function oct15Fixture() {
     repo, private: false, defaultBranch: "main", createdAt,
     commits: [collectedCommit(direct, "main"), ...[...featureCommits].reverse().map((c) => collectedCommit(c, feature))],
     openPrs: [], openedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, createdAt: at, updatedAt: at }],
-    mergedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
+    mergedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at, commits: prCommits.length }],
     recentlyMerged: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
     newIssues: [{ number: 1, title: issue.title, url: issue.html_url, createdAt: at, state: "open", mine: true }],
     // Issue #1 is your own trial checklist, so it isn't counted as an open issue needing attention.

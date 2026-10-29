@@ -147,7 +147,7 @@ export function mergedPrs(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Merged PR #${p.number} "${p.title}" in ${s.repo}`,
-    activity: { kind: "pr" as const, action: "Merged" as const, number: p.number, title: p.title },
+    activity: { kind: "pr" as const, action: "Merged" as const, number: p.number, title: p.title, ...(p.commits ? { commits: p.commits } : {}) },
     sources: [{ label: "PR", url: p.url }],
   }));
 }

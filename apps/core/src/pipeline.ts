@@ -100,7 +100,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const picked = features.focusButtons ? pickedRepo(focusRow, snaps.filter((s) => !s.error).map((s) => s.repo)) : undefined;
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
     const rulesFocus = features.focusButtons ? withPartlyNote(withMissingNext(withPickedRepo(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), next, picked, focusRow?.finding_id), missing), partly) : [];
-    const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering, newRepos };
+    // Busy repos' merged PRs share one line, except when the model writes every brief.
+    const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering, newRepos, collapsePrs: env.briefMode !== "all" };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;

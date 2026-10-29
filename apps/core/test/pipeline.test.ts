@@ -768,3 +768,36 @@ describe("NEXT.md items from a newly discovered repo", () => {
     expect(reasons()?.[0]).toEqual({ findingId: "next_p1", reason: "Repo you picked yesterday" });
   });
 });
+
+describe("busy repos' merged PRs in the pipeline", () => {
+  const merges = [2, 3, 4, 5].map((n) => finding({ id: `pr-${n}`, rule: "merged_pr", severity: "info", summary: `Merged PR #${n} "Phase ${n}" in me/demo`,
+    activity: { kind: "pr", action: "Merged", number: n, title: `Phase ${n}` }, sources: [{ label: "PR", url: `https://github.com/me/demo/pull/${n}` }] }));
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.env.delivery = "n8n";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.collectAll.mockResolvedValue([snap()]);
+    mocks.runRules.mockReturnValue(merges);
+    mocks.generate.mockRejectedValue(new Error("down"));
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  it.each(["rules", "command"])("collapses them in %s mode", async (mode) => {
+    mocks.env.briefMode = mode;
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("4 PRs merged (#2–#5), covering Phases 2–5.");
+    expect(text).not.toContain("Merged PR #2");
+  });
+  it("lists them in all mode, even on the rule-only fallback", async () => {
+    mocks.env.briefMode = "all";
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("Rule-only brief: model unavailable");
+    expect(text).toContain('Merged PR #2 "Phase 2"');
+    expect(text).not.toContain("PRs merged (");
+  });
+});

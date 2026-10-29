@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "../src/render.js";
+import { prSteps, render } from "../src/render.js";
 import type { Window } from "../src/time.js";
 import type { Finding } from "../src/types.js";
 import { snap } from "./fixtures.js";
@@ -122,5 +122,50 @@ describe("render", () => {
   it("never truncates a short brief", () => {
     const out = render([finding(), finding(), finding()], [snap()], W);
     expect(out).not.toContain("more line(s)");
+  });
+});
+
+describe("merged PR lines", () => {
+  const W: Window = { start: new Date("2026-10-28T22:00:00Z"), end: new Date("2026-10-29T22:00:00Z"), label: "yesterday" };
+  const merge = (repo: string, number: number, title: string, commits?: number) => finding({
+    id: `${repo}-pr-${number}`, repo, rule: "merged_pr", severity: "info", summary: `Merged PR #${number} "${title}" in ${repo}`,
+    activity: { kind: "pr", action: "Merged", number, title, ...(commits ? { commits } : {}) },
+    sources: [{ label: "PR", url: `https://github.com/${repo}/pull/${number}` }],
+  });
+  const phases = [2, 3, 4, 5, 6, 7, 8].map((n) => merge("me/1710", n, `Phase ${n - 4 < 0 ? 0 : n - 4}: build step ${n}`, n));
+  const lines = (out: string) => out.split("\n").filter((l) => l.startsWith("• "));
+
+  it("gives each merged PR its commit count", () => {
+    const out = render([merge("me/1710", 8, "Phase 4 shell", 6), merge("me/1710", 9, "Fix typo", 1)], [snap()], W, 3800, undefined, { collapsePrs: true });
+    expect(lines(out)).toEqual([
+      '• Merged PR #8 "Phase 4 shell" (6 commits). [<a href="https://github.com/me/1710/pull/8">PR</a>]',
+      '• Merged PR #9 "Fix typo" (1 commit). [<a href="https://github.com/me/1710/pull/9">PR</a>]',
+    ]);
+  });
+  it("keeps three merged PRs as separate lines", () => {
+    const out = render(phases.slice(0, 3), [snap()], W, 3800, undefined, { collapsePrs: true });
+    expect(lines(out)).toHaveLength(3);
+    expect(out).not.toContain("PRs merged (");
+  });
+  it("sums up more than three merged PRs in a repo on one line linking to the merged PR list", () => {
+    const commit = finding({ id: "c", repo: "me/1710", rule: "commits", severity: "info", summary: "A commit on main in me/1710",
+      activity: { kind: "commits", count: 1, branch: "main", messages: ["Tidy"] }, sources: [{ label: "commit", url: "https://github.com/me/1710/commit/c" }] });
+    const other = merge("me/case-ai", 20, "Header attribution", 3);
+    const out = render([...phases, commit, other], [snap()], W, 3800, undefined, { collapsePrs: true });
+    expect(lines(out)).toEqual([
+      '• A commit on main: Tidy. [<a href="https://github.com/me/1710/commit/c">commit</a>]',
+      '• 7 PRs merged (#2–#8), covering Phases 0–4. [<a href="https://github.com/me/1710/pulls?q=is%3Apr+is%3Amerged">PRs</a>]',
+      '• Merged PR #20 "Header attribution" (3 commits). [<a href="https://github.com/me/case-ai/pull/20">PR</a>]',
+    ]);
+  });
+  it("lists every merged PR when collapsing is off (CASE_BRIEF_MODE=all)", () => {
+    expect(lines(render(phases, [snap()], W, 3800, undefined, { collapsePrs: false }))).toHaveLength(7);
+    expect(lines(render(phases, [snap()], W))).toHaveLength(7);
+  });
+  it("names numbered steps from PR titles", () => {
+    expect(prSteps(["Phase 0: shell", "phase 1 assets", "Phase 2", "Phase 3 and polish"])).toBe("Phases 0–3");
+    expect(prSteps(["Milestone 1", "Milestone 3", "Milestone 5"])).toBe("Milestones 1, 3 and 5");
+    expect(prSteps(["Phase 1", "Phase 1 fixes"])).toBeUndefined();
+    expect(prSteps(["Add login", "Fix 2 bugs"])).toBeUndefined();
   });
 });

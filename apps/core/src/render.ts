@@ -40,6 +40,7 @@ export interface GreetingOptions {
   userName?: string; now?: DateTime; focus?: boolean; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[];
   newRepos?: NewRepo[];
+  collapsePrs?: boolean;  // a repo with more than MAX_PR_LINES merged PRs gets one summary line (rule-built recap only)
 }
 
 // A repo read for the first time, announced once at the end of the brief.
@@ -80,7 +81,32 @@ function leftOpenLine(findings: Finding[] = []): string[] {
   return ["", `${icon.low} Left open: ${names.join("; ")}${more ? `; and ${more} more` : ""}`];
 }
 
-function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = []): string[] {
+export const MAX_PR_LINES = 3;
+const isMerge = (f: Finding) => f.activity?.kind === "pr" && f.activity.action === "Merged";
+
+// "Phases 0–4" or "Phases 1, 3 and 5" when PR titles number their steps; nothing otherwise.
+// Only the step word most titles use counts: "Phase 2: build step 7" is phase 2.
+export function prSteps(titles: string[]): string | undefined {
+  const found = titles.flatMap((t) => [...t.matchAll(/\b(phase|stage|step|part|milestone)s?\s*#?(\d+)\b/gi)]
+    .map((m) => ({ word: m[1].toLowerCase(), title: t, n: Number(m[2]) })));
+  const titlesWith = (word: string) => new Set(found.filter((f) => f.word === word).map((f) => f.title)).size;
+  const [top] = [...new Set(found.map((f) => f.word))].sort((a, b) => titlesWith(b) - titlesWith(a));
+  const nums = [...new Set(found.filter((f) => f.word === top).map((f) => f.n))].sort((a, b) => a - b);
+  if (nums.length < 2) return;
+  const word = top.charAt(0).toUpperCase() + top.slice(1);
+  const contiguous = nums.every((n, i) => !i || n === nums[i - 1] + 1);
+  return `${word}s ${contiguous ? `${nums[0]}–${nums.at(-1)}` : `${nums.slice(0, -1).join(", ")} and ${nums.at(-1)}`}`;
+}
+
+// One line for a busy repo's merged PRs, linking to its merged PR list: "7 PRs merged (#2–#8), covering Phases 0–4."
+function prSummary(repo: string, merges: Finding[]): string {
+  const nums = merges.map((f) => f.activity?.kind === "pr" ? f.activity.number : 0).sort((a, b) => a - b);
+  const steps = prSteps(merges.map((f) => f.activity?.kind === "pr" ? f.activity.title : ""));
+  const text = `${nums.length} PRs merged (#${nums[0]}–#${nums.at(-1)})${steps ? `, covering ${steps}` : ""}.`;
+  return `• ${esc(text)} [${link({ label: "PRs", url: `https://github.com/${repo}/pulls?q=is%3Apr+is%3Amerged` })}]`;
+}
+
+function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = [], collapsePrs = false): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
   for (const item of items) {
     const f = item.sources[0];
@@ -96,10 +122,14 @@ function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = [])
     if (!groups.has(key)) groups.set(key, { amount: 0, items: [] });
   }
   return [...groups].sort(([repoA, a], [repoB, b]) => b.amount - a.amount || repoA.localeCompare(repoB))
-    .flatMap(([repo, group]) => ["", `<b>${esc(repo.split("/").pop()!)}</b>`,
-      ...group.items.sort((a, b) => recapKind(a.sources[0]) - recapKind(b.sources[0]) || activityAmount(b.sources[0]) - activityAmount(a.sources[0]))
-        .map((item) => `• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`),
-      ...(logGroups.get(repo) ?? []).map((log) => `• ${esc(log.text)}`)]);
+    .flatMap(([repo, group]) => {
+      const merges = group.items.filter((i) => i.sources.length === 1 && isMerge(i.sources[0]));
+      const collapse = collapsePrs && merges.length > MAX_PR_LINES;
+      const lines = group.items.sort((a, b) => recapKind(a.sources[0]) - recapKind(b.sources[0]) || activityAmount(b.sources[0]) - activityAmount(a.sources[0]))
+        .flatMap((item) => !collapse || !merges.includes(item) ? [`• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`]
+          : item === merges[0] ? [prSummary(repo, merges.map((i) => i.sources[0]))] : []);
+      return ["", `<b>${esc(repo.split("/").pop()!)}</b>`, ...lines, ...(logGroups.get(repo) ?? []).map((log) => `• ${esc(log.text)}`)];
+    });
 }
 
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -221,7 +251,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen), ...newRepoLines(greeting.newRepos)];
+  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs, greeting.collapsePrs), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen), ...newRepoLines(greeting.newRepos)];
 
   return finish(parts, snaps, maxChars, footer);
 }
