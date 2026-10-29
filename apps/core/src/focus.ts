@@ -83,6 +83,31 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
   return [...planned, ...attention].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
 }
 
+export const PICKED_REASON = "Repo you picked yesterday";
+
+// The repo yesterday's focus was in: the one stored with it, else a repo the focus text names by its
+// short name ("finish 1710 phase 1 and 3"), longest name first so "case-ai-web" beats "case-ai".
+export function pickedRepo(focus: { item_text: string; repo: string | null } | undefined, repos: string[]): string | undefined {
+  if (!focus) return;
+  if (focus.repo && repos.includes(focus.repo)) return focus.repo;
+  const text = focus.item_text.toLowerCase();
+  return [...repos].sort((a, b) => b.length - a.length).find((r) => {
+    const name = r.split("/").pop()!.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(text);
+  });
+}
+
+// The picked repo keeps at least one suggestion while it has an open NEXT.md item ready to start: yesterday's
+// focus item if still open, else its first. It goes first, written by code, so it is shown even when the model
+// never saw the repo (private repos aren't sent). next is already ranked and free of parked or finished items.
+export function withPickedRepo(focus: ValidFocus[], next: Finding[], repo: string | undefined, focusFindingId?: string | null): ValidFocus[] {
+  if (!repo || focus.some((i) => i.sources.some((f) => f.repo === repo))) return focus;
+  const items = next.filter((f) => f.rule === "next_item" && f.repo === repo && ready(f));
+  const f = items.find((i) => i.id === focusFindingId) ?? items[0];
+  if (!f) return focus;
+  return [{ text: action(f), reason: PICKED_REASON, sources: [f] }, ...focus].slice(0, MAX_FOCUS);
+}
+
 // An active repo with no NEXT.md takes the last suggestion, on the rule and model paths alike, so it is
 // shown rather than left to the model: the most recently active one, one per brief. Written by code.
 export function withMissingNext(focus: ValidFocus[], missing: Finding[]): ValidFocus[] {

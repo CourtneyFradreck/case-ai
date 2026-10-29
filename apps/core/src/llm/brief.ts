@@ -7,7 +7,7 @@ import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
 import { validate, type DropReason, type Shortened } from "./validate.js";
-import { withMissingNext } from "../focus.js";
+import { withMissingNext, withPickedRepo } from "../focus.js";
 import { selfReported, withPartlyNote } from "../self-reports.js";
 
 // previousFocus is rendered at the top of the recap and never sent to the model.
@@ -15,12 +15,14 @@ import { selfReported, withPartlyNote } from "../self-reports.js";
 // done (likely finished NEXT.md items) and leftOpen (branches and PRs left open) are rendered in code and never sent.
 // parked: findings behind a snoozed focus; the model's suggestions built only on them are dropped.
 // missing: active repos with no NEXT.md; one takes the last suggestion, added in code and never sent.
+// picked: the repo of yesterday's focus; one of its open NEXT.md items is added in code when the model left it out.
 export interface ModelBriefConfig extends InputConfig {
   logs?: ActivityLog[];
   partly?: Set<string>;
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>; missing?: Finding[];
   newRepos?: NewRepo[];
+  picked?: { repo: string; findingId: string | null };
 }
 export interface BriefAudit {
   brief: AliasBrief | null;
@@ -72,6 +74,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.dropped = result.dropped;
     meta.json.shortened = result.shortened;
     meta.json.addedBack = result.addedBack;
+    if (cfg.focus && cfg.picked) result.brief.focus = withPickedRepo(result.brief.focus, findings, cfg.picked.repo, cfg.picked.findingId);
     if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
     result.brief.focus = withPartlyNote(result.brief.focus, cfg.partly);
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));

@@ -24,7 +24,7 @@ import { gateOldBranches, oldBranchesDay } from "./old-branches.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, focusPeriod, leftOpen, rankNext, ready, ruleFocus, storedFocus, withMissingNext, yesterdayFocus } from "./focus.js";
+import { focusKeyboard, focusPeriod, leftOpen, pickedRepo, rankNext, ready, ruleFocus, storedFocus, withMissingNext, withPickedRepo, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -96,8 +96,10 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const { kept: active, collapsed, days } = collapsing
       ? collapseRepeats(visible.filter((f) => !leftOpen(f)), countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible.filter((f) => !leftOpen(f)), collapsed: [], days: new Map<string, number>() };
+    // The repo of yesterday's focus keeps a suggestion while it has open NEXT.md items, on both paths.
+    const picked = features.focusButtons ? pickedRepo(focusRow, snaps.filter((s) => !s.error).map((s) => s.repo)) : undefined;
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? withPartlyNote(withMissingNext(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), missing), partly) : [];
+    const rulesFocus = features.focusButtons ? withPartlyNote(withMissingNext(withPickedRepo(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), next, picked, focusRow?.finding_id), missing), partly) : [];
     const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering, newRepos };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
@@ -108,7 +110,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, partly, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing, newRepos }, provider, now);
+        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, partly, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing, newRepos, picked: picked && { repo: picked, findingId: focusRow?.finding_id ?? null } }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;

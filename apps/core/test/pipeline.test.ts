@@ -698,3 +698,73 @@ describe("discovered repos", () => {
     expect(mocks.finishRun).toHaveBeenCalledWith(7, "partial");
   });
 });
+
+// 29 Oct brief: 1710's open NEXT.md items were missing from "Today, I'd suggest" though it was yesterday's focus.
+describe("NEXT.md items from a newly discovered repo", () => {
+  const nextFile = (repo: string, items: [string, string][]) => ({
+    status: "ok" as const, sha: `${repo}-n`, url: `https://github.com/${repo}/blob/main/NEXT.md`, lastChangedAt: "2026-10-12T10:00:00Z",
+    items: items.map(([id, text], n) => ({ id, text, section: "Now", state: "open" as const, line: n + 2 })),
+  });
+  const main = (repo: string) => [{ name: "main", sha: "h", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: `https://github.com/${repo}/tree/main` }];
+  const caseAi = snap({ repo: "me/case-ai", branches: main("me/case-ai"), next: nextFile("me/case-ai", [["c1", "Ship the parser"], ["c2", "Write the docs"]]) });
+  const notes = snap({ repo: "me/CourtNotes", branches: main("me/CourtNotes"), next: nextFile("me/CourtNotes", [["n1", "Tag notes"]]) });
+  const s1710 = (priv: boolean) => snap({ repo: "me/1710", private: priv, branches: main("me/1710"), next: nextFile("me/1710", [["p1", "Finish phase 1"], ["p3", "Finish phase 3"]]) });
+  const reasons = () => vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(String(line))).find((l) => l.event === "brief")?.focusReasons;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.features.focusButtons = true;
+    mocks.env.briefMode = "rules";
+    mocks.env.delivery = "n8n";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.runRules.mockReturnValue([finding()]);
+    mocks.repos.list = ["me/case-ai", "me/CourtNotes", "me/1710"];
+    mocks.repos.unannounced = new Set(["me/1710"]);
+    mocks.getFocus.mockResolvedValue({ item_text: "finish 1710 phase 1 and 3", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });
+  });
+  afterEach(() => { mocks.features.focusButtons = false; vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("makes every open item a candidate on the repo's first run", async () => {
+    mocks.getFocus.mockResolvedValue(undefined);
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(false)]);
+    const { text } = await runBrief("schedule");
+    const stored = mocks.storeFindings.mock.calls[0][1].filter((f: { rule: string }) => f.rule === "next_item").map((f: { id: string }) => f.id);
+    expect(stored).toEqual(expect.arrayContaining(["next_c1", "next_c2", "next_n1", "next_p1", "next_p3"]));
+    expect(text).toContain("New repo picked up: 1710");
+  });
+  it("sends a public new repo's items to the model on its first run", async () => {
+    mocks.env.briefMode = "all";
+    mocks.getFocus.mockResolvedValue(undefined);
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(false)]);
+    mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [], attention: [], focus: [] }), model: "test-model" });
+    await runBrief("schedule");
+    expect(mocks.generate.mock.calls[0][1]).toContain("next_item | me/1710 | Next in me/1710: Finish phase 1");
+  });
+  it("suggests a 1710 item first on the rule path when 1710 was yesterday's focus", async () => {
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(true)]);
+    const { text } = await runBrief("schedule");
+    expect(text).toMatch(/Today, I'd suggest<\/b>\n1\. Finish phase 1 /);
+    expect(reasons()?.[0]).toEqual({ findingId: "next_p1", reason: "Repo you picked yesterday" });
+  });
+  it("adds a 1710 item in code when the model never saw the private repo", async () => {
+    mocks.env.briefMode = "all";
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(true)]);
+    mocks.generate.mockImplementation(async (_system: string, user: string) => {
+      const alias = (text: string) => user.split("\n").find((l) => l.includes(text))!.split(" | ")[0];
+      return { raw: JSON.stringify({ yesterday: [], attention: [], focus: [
+        { text: "Ship the parser", reason: "Open in NEXT.md", sources: [alias("Ship the parser")] },
+        { text: "Write the docs", reason: "Open in NEXT.md", sources: [alias("Write the docs")] },
+        { text: "Tag notes", reason: "Open in NEXT.md", sources: [alias("Tag notes")] },
+      ] }), model: "test-model" };
+    });
+    const { text } = await runBrief("schedule");
+    expect(mocks.generate.mock.calls[0][1]).not.toContain("1710");
+    expect(text).toMatch(/Today, I'd suggest<\/b>\n1\. Finish phase 1 [^\n]*\n2\. Ship the parser [^\n]*\n3\. Write the docs/);
+    expect(reasons()?.[0]).toEqual({ findingId: "next_p1", reason: "Repo you picked yesterday" });
+  });
+});
