@@ -30,6 +30,8 @@ export interface IssueComment {
   author: string; url: string; createdAt: string; mine: boolean;
 }
 export interface Branch { name: string; sha: string; lastCommitAt: string; aheadBy: number; url: string }
+// Branches as read when the repo was last pushed to at pushedAt, with base as the default branch.
+export interface BranchCache { pushedAt: string; base: string; branches: Branch[] }
 export interface CiRun { workflowId: number; workflowName: string; conclusion: string | null; url: string; finishedAt: string }
 
 export interface NextItem {
@@ -60,5 +62,6 @@ export interface RepoSnapshot {
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
   next: NextFile;         // NEXT.md on the default branch
   error?: string;         // set if this repo couldn't be read: a sentence naming what failed
-  warnings?: string[];    // branches skipped for an unexpected reason; the rest of the repo was read
+  warnings?: string[];
+  pushedAt?: string;      // the repo's pushed_at when read    // branches skipped for an unexpected reason; the rest of the repo was read
 }

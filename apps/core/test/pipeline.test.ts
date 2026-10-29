@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/repos.js", () => ({
   resolveRepos: async () => ({ repos: mocks.repos.list, error: mocks.repos.error }),
+  withBranchCaches: async (repos: string[]) => repos,
+  storeBranchCaches: async () => {},
   unannouncedRepos: async (repos: string[]) => repos.filter((r) => mocks.repos.unannounced.has(r)),
   markAnnounced: async (repos: string[]) => { mocks.repos.announced.push(repos); for (const r of repos) mocks.repos.unannounced.delete(r); },
 }));

@@ -2,7 +2,7 @@ import { env } from "../env.js";
 import { gh } from "./client.js";
 import { inWindow, type Window } from "../time.js";
 import { parseNext } from "../intent/parse.js";
-import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment, NextFile } from "../types.js";
+import type { RepoSnapshot, Branch, BranchCache, Commit, CiRun, IssueComment, NextFile } from "../types.js";
 
 const COMPARE = "GET /repos/{owner}/{repo}/compare/{basehead}";
 const GET_COMMIT = "GET /repos/{owner}/{repo}/commits/{ref}";
@@ -55,7 +55,10 @@ async function repoCall<T>(fullName: string, what: string, endpoint: string, cal
   }
 }
 
-export async function collectAll(repos: string[], w: Window, ignoreAuthors: string[]) {
+// A repo to read, with its branches as last read if any.
+export interface RepoTarget { repo: string; branchCache?: BranchCache }
+
+export async function collectAll(repos: (string | RepoTarget)[], w: Window, ignoreAuthors: string[]) {
   let myLogin: string | null = null;
   try {
     const { data } = await gh.users.getAuthenticated();
@@ -66,13 +69,14 @@ export async function collectAll(repos: string[], w: Window, ignoreAuthors: stri
   const out: RepoSnapshot[] = [];
   // 3 repos at a time: fast, and gentle on the API
   for (let i = 0; i < repos.length; i += 3) {
-    const batch = repos.slice(i, i + 3).map((r) => collectRepo(r, w, ignoreAuthors, myLogin));
+    const batch = repos.slice(i, i + 3).map((r) => collectRepo(typeof r === "string" ? { repo: r } : r, w, ignoreAuthors, myLogin));
     out.push(...(await Promise.all(batch)));
   }
   return out;
 }
 
-async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
+async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
+  const fullName = target.repo;
   const [owner, repo] = fullName.split("/");
   const short = shortName(fullName);
   // Branches skipped for an unexpected reason: one short line at the end of the brief.
@@ -92,45 +96,14 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     const until = w.end.toISOString();
     const next = await collectNext(owner, repo, fullName, base);
 
-    // 1. Branches: head date and whether unmerged. A branch that can't be read is skipped,
-    // never the repo; excluded branches are logged only.
-    const branchList = await repoCall(fullName, "branches", "GET /repos/{owner}/{repo}/branches",
-      () => gh.paginate(gh.repos.listBranches, { owner, repo, per_page: 100 }));
-    const branches: Branch[] = [];
-    for (const b of branchList) {
-      const glob = b.name === base ? undefined : (env.branchExclude ?? []).find((g) => matchesGlob(b.name, g));
-      if (glob) { logSkip(fullName, b.name, `excluded by ${glob}`); continue; }
-      const orphanKey = `${fullName}\0${base}\0${b.name}`;
-      if (noCommonHistory.get(orphanKey) === b.commit.sha) { logSkip(fullName, b.name, `no common history with ${base}`); continue; }
-      let endpoint = GET_COMMIT;
-      try {
-        const { data: c } = await gh.repos.getCommit({ owner, repo, ref: b.commit.sha });
-        let aheadBy = 0;
-        if (b.name !== base) {
-          endpoint = COMPARE;
-          const { data: cmp } = await gh.repos.compareCommitsWithBasehead({
-            owner, repo, basehead: `${base}...${b.name}`, per_page: 1,
-          });
-          aheadBy = cmp.ahead_by;
-        }
-        branches.push({
-          name: b.name,
-          sha: b.commit.sha,
-          lastCommitAt: c.commit.committer?.date ?? c.commit.author?.date ?? "",
-          aheadBy,
-          url: `https://github.com/${fullName}/tree/${encodeURI(b.name)}`,
-        });
-      } catch (e) {
-        logFailure(fullName, endpoint, e, { branch: b.name });
-        // GitHub's compare returns 404 when the branch shares no history with the base.
-        if (endpoint === COMPARE && statusOf(e) === 404) {
-          noCommonHistory.set(orphanKey, b.commit.sha);
-          warnings.push(`Skipped branch ${b.name} in ${short} (no common history with ${base})`);
-        } else {
-          warnings.push(`Skipped branch ${b.name} in ${short} (${reason(e)})`);
-        }
-      }
-    }
+    // 1. Branches: head date and whether unmerged. Unchanged until the repo is pushed to, so the
+    // cached read is reused while pushed_at and the default branch are the same.
+    const cache = target.branchCache;
+    const cached = !!cache && !!meta.pushed_at && cache.pushedAt === meta.pushed_at && cache.base === base;
+    if (cached) console.info(JSON.stringify({ event: "github_branches_cached", repo: fullName, pushedAt: meta.pushed_at }));
+    const branches = cached
+      ? cache.branches.filter((b) => !excludedBy(b.name, base))
+      : await readBranches(owner, repo, fullName, base, warnings);
 
     // 2. PRs and the commits already covered by a merge in this window.
     const open = await repoCall(fullName, "open PRs", "GET /repos/{owner}/{repo}/pulls",
@@ -243,6 +216,7 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     return {
       repo: fullName,
       error: undefined,
+      ...(meta.pushed_at ? { pushedAt: meta.pushed_at } : {}),
       private: meta.private,
       defaultBranch: base,
       createdAt: meta.created_at,
@@ -281,6 +255,53 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     console.warn(JSON.stringify({ event: "collect_error", repo: fullName, message: String(e?.message ?? e).slice(0, 200) }));
     return failedSnapshot(fullName, `Couldn't read ${fullName} (${reason(e)})`);
   }
+}
+
+// The CASE_BRANCH_EXCLUDE glob a branch matches; the default branch is never excluded.
+const excludedBy = (name: string, base: string) =>
+  name === base ? undefined : (env.branchExclude ?? []).find((g) => matchesGlob(name, g));
+
+// A branch that can't be read is skipped, never the repo; excluded branches are logged only.
+async function readBranches(owner: string, repo: string, fullName: string, base: string, warnings: string[]): Promise<Branch[]> {
+  const short = shortName(fullName);
+  const branchList = await repoCall(fullName, "branches", "GET /repos/{owner}/{repo}/branches",
+    () => gh.paginate(gh.repos.listBranches, { owner, repo, per_page: 100 }));
+  const branches: Branch[] = [];
+  for (const b of branchList) {
+    const glob = excludedBy(b.name, base);
+    if (glob) { logSkip(fullName, b.name, `excluded by ${glob}`); continue; }
+    const orphanKey = `${fullName}\0${base}\0${b.name}`;
+    if (noCommonHistory.get(orphanKey) === b.commit.sha) { logSkip(fullName, b.name, `no common history with ${base}`); continue; }
+    let endpoint = GET_COMMIT;
+    try {
+      const { data: c } = await gh.repos.getCommit({ owner, repo, ref: b.commit.sha });
+      let aheadBy = 0;
+      if (b.name !== base) {
+        endpoint = COMPARE;
+        const { data: cmp } = await gh.repos.compareCommitsWithBasehead({
+          owner, repo, basehead: `${base}...${b.name}`, per_page: 1,
+        });
+        aheadBy = cmp.ahead_by;
+      }
+      branches.push({
+        name: b.name,
+        sha: b.commit.sha,
+        lastCommitAt: c.commit.committer?.date ?? c.commit.author?.date ?? "",
+        aheadBy,
+        url: `https://github.com/${fullName}/tree/${encodeURI(b.name)}`,
+      });
+    } catch (e) {
+      logFailure(fullName, endpoint, e, { branch: b.name });
+      // GitHub's compare returns 404 when the branch shares no history with the base.
+      if (endpoint === COMPARE && statusOf(e) === 404) {
+        noCommonHistory.set(orphanKey, b.commit.sha);
+        warnings.push(`Skipped branch ${b.name} in ${short} (no common history with ${base})`);
+      } else {
+        warnings.push(`Skipped branch ${b.name} in ${short} (${reason(e)})`);
+      }
+    }
+  }
+  return branches;
 }
 
 // A repo that couldn't be read: safe empty data, and the sentence the brief shows.

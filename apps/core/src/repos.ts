@@ -1,7 +1,8 @@
 import { pool } from "./db.js";
 import { env } from "./env.js";
 import { listOwnedRepos, selectRepos, type OwnedRepo } from "./github/discover.js";
-import { logFailure, reason } from "./github/collect.js";
+import { logFailure, reason, type RepoTarget } from "./github/collect.js";
+import type { BranchCache, RepoSnapshot } from "./types.js";
 
 // The repos to read this run. Discovery runs every time; if listing fails, CASE_REPOS entries and
 // repos discovered earlier that were active then are read instead, and error says so.
@@ -34,6 +35,23 @@ async function storeDiscovered(kept: OwnedRepo[], manual: string[]) {
     [kept.map((r) => r.repo), kept.map((r) => r.defaultBranch), kept.map((r) => r.private), kept.map((r) => r.pushedAt),
       kept.map((r) => manual.includes(r.repo) ? "manual" : "discovered")],
   );
+}
+
+// Each repo with its branches as last read, so unchanged repos skip the branch and compare calls.
+export async function withBranchCaches(repos: string[]): Promise<RepoTarget[]> {
+  const { rows } = repos.length ? await pool.query<{ full_name: string; branch_cache: BranchCache }>(
+    "SELECT full_name, branch_cache FROM repos WHERE full_name = ANY($1) AND branch_cache IS NOT NULL", [repos]) : { rows: [] };
+  const caches = new Map(rows.map((r) => [r.full_name, r.branch_cache]));
+  return repos.map((repo) => caches.has(repo) ? { repo, branchCache: caches.get(repo) } : { repo });
+}
+
+// Caches each fully read repo's branches. A repo with skipped branches is read in full next time.
+export async function storeBranchCaches(snaps: RepoSnapshot[]) {
+  for (const s of snaps) {
+    if (s.error || s.warnings?.length || !s.pushedAt) continue;
+    const cache: BranchCache = { pushedAt: s.pushedAt, base: s.defaultBranch, branches: s.branches };
+    await pool.query("UPDATE repos SET branch_cache = $2, last_pushed_at = $3 WHERE full_name = $1", [s.repo, JSON.stringify(cache), s.pushedAt]);
+  }
 }
 
 // Of the repos read this run, those the brief hasn't announced yet.

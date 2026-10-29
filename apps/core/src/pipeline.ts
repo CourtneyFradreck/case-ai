@@ -12,7 +12,7 @@ import { pastWeekWindow } from "./time.js";
 import { activityTimes, selectRecap } from "./recap.js";
 import { isQuietMorning, quietText } from "./quiet.js";
 import { collectAll, failedSnapshot } from "./github/collect.js";
-import { markAnnounced, resolveRepos, unannouncedRepos } from "./repos.js";
+import { markAnnounced, resolveRepos, storeBranchCaches, unannouncedRepos, withBranchCaches } from "./repos.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
 import { newRepoText, render } from "./render.js";
@@ -48,9 +48,10 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   const quietCheck = features.quietMornings && source === "schedule";
   try {
     const { repos, error: listError } = await resolveRepos(now.toJSDate());
-    const snaps = await collectAll(repos, history, config.ignoreAuthors);
+    const snaps = await collectAll(await withBranchCaches(repos), history, config.ignoreAuthors);
     if (listError) snaps.push(failedSnapshot("GitHub", listError));
     await storeSnapshots(runId, snaps);
+    await storeBranchCaches(snaps);
     // A repo read for the first time gets a line in the brief, until a brief showing it is sent.
     const newRepos = (await unannouncedRepos(snaps.filter((s) => !s.error).map((s) => s.repo)))
       .map((repo) => ({ repo, hasNext: snaps.find((s) => s.repo === repo)?.next.status !== "missing" }));

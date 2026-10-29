@@ -437,3 +437,48 @@ describe("per-branch isolation", () => {
     expect(logged(console.warn)).toContainEqual(expect.objectContaining({ endpoint: "GET /repos/{owner}/{repo}/branches", status: 500 }));
   });
 });
+
+describe("branch cache", () => {
+  const PUSHED = "2026-10-12T09:00:00Z";
+  const cached = (over = {}) => ({ pushedAt: PUSHED, base: "main", branches: [
+    { name: "main", sha: "m", lastCommitAt: daysAgo(1), aheadBy: 0, url: "https://github.com/me/demo/tree/main" },
+    { name: "keep-open", sha: "k", lastCommitAt: daysAgo(90), aheadBy: 4, url: "https://github.com/me/demo/tree/keep-open" },
+    { name: "pr-assets/shots", sha: "a", lastCommitAt: daysAgo(3), aheadBy: 1, url: "https://github.com/me/demo/tree/pr-assets/shots" },
+  ], ...over });
+  const collect = async (branchCache = cached()) => (await collectAll([{ repo: "me/demo", branchCache }], { start: NOW, end: NOW, label: "test" }, []))[0];
+  beforeEach(() => {
+    vi.resetAllMocks();
+    forgetNoCommonHistory();
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "me" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, pushed_at: PUSHED, created_at: daysAgo(30) } });
+    gh.repos.getContent.mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
+    gh.repos.getCommit.mockResolvedValue({ data: { commit: { committer: { date: daysAgo(1) } } } });
+    gh.repos.compareCommitsWithBasehead.mockResolvedValue({ data: { ahead_by: 7 } });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockImplementation(async (endpoint) => endpoint === gh.repos.listBranches
+      ? [{ name: "main", commit: { sha: "m2" } }, { name: "fresh", commit: { sha: "f" } }] : []);
+  });
+
+  it("reuses the cached branches without branch or compare calls when pushed_at is unchanged", async () => {
+    const s = await collect();
+    expect(s.pushedAt).toBe(PUSHED);
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["main", 0], ["keep-open", 4]]);
+    expect(gh.paginate).not.toHaveBeenCalledWith(gh.repos.listBranches, expect.anything());
+    expect(gh.repos.getCommit).not.toHaveBeenCalled();
+    expect(gh.repos.compareCommitsWithBasehead).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["the repo was pushed to since", { pushedAt: "2026-10-11T09:00:00Z" }],
+    ["the default branch changed", { base: "trunk" }],
+  ])("reads the branches again when %s", async (_, over) => {
+    const s = await collect(cached(over));
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["main", 0], ["fresh", 7]]);
+    expect(gh.repos.compareCommitsWithBasehead).toHaveBeenCalledWith(expect.objectContaining({ basehead: "main...fresh" }));
+  });
+  it("reads the branches when there is no cache", async () => {
+    const [s] = await collectAll(["me/demo"], { start: NOW, end: NOW, label: "test" }, []);
+    expect(s.branches.map((b) => b.name)).toEqual(["main", "fresh"]);
+  });
+});
