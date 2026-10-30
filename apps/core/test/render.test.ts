@@ -154,7 +154,7 @@ describe("merged PR lines", () => {
     const out = render([...phases, commit, other], [snap()], W, 3800, undefined, { collapsePrs: true });
     expect(lines(out)).toEqual([
       '• A commit on main: Tidy. [<a href="https://github.com/me/1710/commit/c">commit</a>]',
-      '• 7 PRs merged (#2–#8), covering Phases 0–4. [<a href="https://github.com/me/1710/pulls?q=is%3Apr+is%3Amerged">PRs</a>]',
+      '• 7 PRs merged (#2–#8), covering Phases 0–4. [<a href="https://github.com/me/1710/pulls?q=is%3Apr+is%3Amerged+merged%3A%3E%3D2026-10-28T22%3A00%3A00.000Z+merged%3A%3C2026-10-29T22%3A00%3A00.000Z">PRs</a>]',
       '• Merged PR #20 "Header attribution" (3 commits). [<a href="https://github.com/me/case-ai/pull/20">PR</a>]',
     ]);
   });

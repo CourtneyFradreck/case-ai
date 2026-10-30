@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Octokit } from "@octokit/rest";
 vi.mock("../src/env.js", () => ({ env: { githubToken: "test", branchExclude: [] } }));
-import { listOwnedRepos, selectRepos, type OwnedRepo } from "../src/github/discover.js";
+import { activityRepos, listOwnedRepos, selectRepos, type OwnedRepo } from "../src/github/discover.js";
 
 const NOW = new Date("2026-10-29T06:00:00Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
@@ -61,5 +61,39 @@ describe("repo selection", () => {
   });
   it("reads only CASE_REPOS when nothing is owned", () => {
     expect(selectRepos([], ["team/shared"], NOW, cfg)).toEqual({ repos: ["team/shared"], kept: [], quiet: [] });
+  });
+});
+
+
+describe("owner-wide PR and issue search", () => {
+  it("paginates recent activity from any author and retains quiet open collaborator PRs", async () => {
+    const urls: URL[] = [];
+    const fetch = async (url: string) => {
+      const parsed = new URL(url);
+      urls.push(parsed);
+      if (parsed.pathname === "/user") return new Response(JSON.stringify({ login: "CourtneyFradreck" }), { headers: { "content-type": "application/json" } });
+      const q = parsed.searchParams.get("q")!;
+      const page = parsed.searchParams.get("page");
+      const recent = q.includes("updated:");
+      const next = new URL(parsed); next.searchParams.set("page", "2");
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (recent && !page) headers.link = `<${next}>; rel="next"`;
+      const repo = recent ? page ? "second" : "agrilease" : "quiet-pending";
+      const response = new Response(JSON.stringify({ total_count: recent ? 2 : 1, incomplete_results: false,
+        items: [{ repository_url: `https://api.github.com/repos/CourtneyFradreck/${repo}`, user: { login: "icep0ps" } }] }), { headers });
+      Object.defineProperty(response, "url", { value: url });
+      return response;
+    };
+    const active = await activityRepos(NOW, new Octokit({ request: { fetch } }));
+    expect([...active]).toEqual(["courtneyfradreck/agrilease", "courtneyfradreck/second", "courtneyfradreck/quiet-pending"]);
+    const searches = urls.filter((u) => u.pathname === "/search/issues");
+    expect(searches).toHaveLength(3);
+    expect(searches.every((u) => u.searchParams.get("per_page") === "100")).toBe(true);
+    expect(searches.find((u) => u.searchParams.get("q")?.includes("updated:"))?.searchParams.get("q"))
+      .toBe(`user:CourtneyFradreck updated:>=${NOW.toISOString()}`);
+  });
+  it("activity never overrides fork, archive or exclusion filters", () => {
+    const repos = [owned("me/fork", { fork: true }), owned("me/archive", { archived: true }), owned("me/excluded"), owned("me/quiet", { pushedAt: null })];
+    expect(selectRepos(repos, [], NOW, { exclude: ["excluded"], activeDays: 14 }, new Set(repos.map((r) => r.repo))).repos).toEqual(["me/quiet"]);
   });
 });

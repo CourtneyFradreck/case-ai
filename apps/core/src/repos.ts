@@ -1,19 +1,26 @@
 import { pool } from "./db.js";
 import { env } from "./env.js";
-import { listOwnedRepos, selectRepos, type OwnedRepo } from "./github/discover.js";
+import { activityRepos, listOwnedRepos, selectRepos, type OwnedRepo } from "./github/discover.js";
 import { logFailure, reason, type RepoTarget } from "./github/collect.js";
 import type { BranchCache, RepoSnapshot } from "./types.js";
 
 // The repos to read this run. Discovery runs every time; if listing fails, CASE_REPOS entries and
 // repos discovered earlier that were active then are read instead, and error says so.
-export async function resolveRepos(now: Date, manual: string[] = env.repos, cfg = { exclude: env.repoExclude, activeDays: env.repoActiveDays }) {
+export async function resolveRepos(now: Date, manual: string[] = env.repos, cfg = { exclude: env.repoExclude, activeDays: env.repoActiveDays }, windowStart = new Date(now.getTime() - 7 * 86_400_000)) {
   try {
     const owned = await listOwnedRepos();
-    const selection = selectRepos(owned, manual, now, cfg);
+    let activity = new Set<string>();
+    let error: string | undefined;
+    try { activity = await activityRepos(windowStart); }
+    catch (e) {
+      logFailure("(discovery)", "GET /search/issues", e);
+      error = `Couldn't search PR/issue activity (${reason(e)}); quiet repos may be missing`;
+    }
+    const selection = selectRepos(owned, manual, now, cfg, activity);
     await storeDiscovered(selection.kept, selection.repos.filter((r) => manual.some((m) => m.toLowerCase() === r.toLowerCase())));
     console.info(JSON.stringify({ event: "repo_discovery", owned: owned.length, kept: selection.kept.length,
       reading: selection.repos, quiet: selection.quiet }));
-    return { repos: selection.repos };
+    return { repos: selection.repos, ...(error ? { error } : {}) };
   } catch (e) {
     logFailure("(discovery)", "GET /user/repos", e);
     const cutoff = new Date(now.getTime() - cfg.activeDays * 86_400_000);

@@ -24,7 +24,7 @@ import { gateOldBranches, oldBranchesDay } from "./old-branches.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, focusPeriod, leftOpen, pickedRepo, rankNext, ready, ruleFocus, storedFocus, withMissingNext, withPickedRepo, yesterdayFocus } from "./focus.js";
+import { withWaitingReviews, focusKeyboard, focusPeriod, leftOpen, pickedRepo, rankNext, ready, ruleFocus, storedFocus, withMissingNext, withPickedRepo, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -47,7 +47,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   // Quiet mornings compare with the previous scheduled brief, so only scheduled briefs can be quiet.
   const quietCheck = features.quietMornings && source === "schedule";
   try {
-    const { repos, error: listError } = await resolveRepos(now.toJSDate());
+    const { repos, error: listError } = await resolveRepos(now.toJSDate(), undefined, undefined, history.start);
     const snaps = await collectAll(await withBranchCaches(repos), history, config.ignoreAuthors);
     if (listError) snaps.push(failedSnapshot("GitHub", listError));
     await storeSnapshots(runId, snaps);
@@ -99,7 +99,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     // The repo of yesterday's focus keeps a suggestion while it has open NEXT.md items, on both paths.
     const picked = features.focusButtons ? pickedRepo(focusRow, snaps.filter((s) => !s.error).map((s) => s.repo)) : undefined;
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? withPartlyNote(withMissingNext(withPickedRepo(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), next, picked, focusRow?.finding_id), missing), partly) : [];
+    const rulesFocus = features.focusButtons ? withPartlyNote(withWaitingReviews(withMissingNext(withPickedRepo(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), next, picked, focusRow?.finding_id), missing), active.filter((f) => !parked.has(f.id) && !completed.has(f.id))), partly) : [];
     // Busy repos' merged PRs share one line, except when the model writes every brief.
     const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering, newRepos, collapsePrs: env.briefMode !== "all" };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);

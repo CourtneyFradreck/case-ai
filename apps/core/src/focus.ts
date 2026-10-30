@@ -20,6 +20,7 @@ export const MAX_FOCUS = 3;
 // brief (briefs.focus) and logged, never shown.
 function reason(f: Finding): string {
   switch (f.rule) {
+    case "pr_waiting": return "Someone is waiting on your review";
     case "failing_ci": return "CI is failing on the default branch";
     case "issue_comments": return "New comments are waiting for a reply";
     case "next_item": return `Open in NEXT.md, and ${f.repo.split("/").pop()} has recent commits`;
@@ -80,7 +81,7 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
   const planned = next.filter((f) => f.rule === "next_item" && ready(f) && active.has(f.repo))
     // Stable sort keeps NEXT.md order within a repo.
     .sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)) || active.get(a.repo)! - active.get(b.repo)!);
-  return [...planned, ...attention].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
+  return [...attention.filter((f) => f.rule === "pr_waiting"), ...planned, ...attention.filter((f) => f.rule !== "pr_waiting")].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
 }
 
 export const PICKED_REASON = "Repo you picked yesterday";
@@ -263,4 +264,11 @@ export function yesterdayFocus(focus: { item_text: string; short_label?: string 
     summary: `You picked: ${name}. No commits in ${repo} ${period.label}`,
     sources: [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
   }];
+}
+
+export function withWaitingReviews(focus: ValidFocus[], findings: Finding[]): ValidFocus[] {
+  const waiting = findings.filter((f) => f.rule === "pr_waiting").sort(byPriority);
+  const ids = new Set(waiting.map((f) => f.id));
+  return [...waiting.map((f) => ({ text: action(f), reason: reason(f), sources: [f] })),
+    ...focus.filter((i) => !i.sources.some((f) => ids.has(f.id)))].slice(0, MAX_FOCUS);
 }

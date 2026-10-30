@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ query: vi.fn(), listOwnedRepos: vi.fn() }));
+const m = vi.hoisted(() => ({ query: vi.fn(), listOwnedRepos: vi.fn(), activityRepos: vi.fn() }));
 vi.mock("../src/db.js", () => ({ pool: { query: m.query } }));
 vi.mock("../src/env.js", () => ({ env: { githubToken: "test", repos: ["team/shared"], repoExclude: [], repoActiveDays: 14, branchExclude: [] } }));
-vi.mock("../src/github/discover.js", async (actual) => ({ ...(await actual<object>()), listOwnedRepos: m.listOwnedRepos }));
+vi.mock("../src/github/discover.js", async (actual) => ({ ...(await actual<object>()), listOwnedRepos: m.listOwnedRepos, activityRepos: m.activityRepos }));
 import { knownRepos, resolveRepos, storeBranchCaches, withBranchCaches } from "../src/repos.js";
 import { snap } from "./fixtures.js";
 
@@ -16,6 +16,7 @@ describe("repo resolution", () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     m.query.mockResolvedValue({ rows: [] });
+    m.activityRepos.mockResolvedValue(new Set());
   });
   it("stores every kept owned repo, active or quiet, with its source", async () => {
     m.listOwnedRepos.mockResolvedValue([owned("me/active", "2026-10-28T00:00:00Z"), owned("me/quiet", "2026-01-01T00:00:00Z"), owned("team/shared", "2026-01-01T00:00:00Z")]);

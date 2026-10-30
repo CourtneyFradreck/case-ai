@@ -99,14 +99,14 @@ export function prSteps(titles: string[]): string | undefined {
 }
 
 // One line for a busy repo's merged PRs, linking to its merged PR list: "7 PRs merged (#2–#8), covering Phases 0–4."
-function prSummary(repo: string, merges: Finding[]): string {
+function prSummary(repo: string, merges: Finding[], w?: Window): string {
   const nums = merges.map((f) => f.activity?.kind === "pr" ? f.activity.number : 0).sort((a, b) => a - b);
   const steps = prSteps(merges.map((f) => f.activity?.kind === "pr" ? f.activity.title : ""));
   const text = `${nums.length} PRs merged (#${nums[0]}–#${nums.at(-1)})${steps ? `, covering ${steps}` : ""}.`;
-  return `• ${esc(text)} [${link({ label: "PRs", url: `https://github.com/${repo}/pulls?q=is%3Apr+is%3Amerged` })}]`;
+  return `• ${esc(text)} [${link({ label: "PRs", url: `https://github.com/${repo}/pulls?q=is%3Apr+is%3Amerged${w ? `+merged%3A%3E%3D${encodeURIComponent(w.start.toISOString())}+merged%3A%3C${encodeURIComponent(w.end.toISOString())}` : ""}` })}]`;
 }
 
-function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = [], collapsePrs = false): string[] {
+function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = [], collapsePrs = false, w?: Window): string[] {
   const groups = new Map<string, { amount: number; items: ValidItem[] }>();
   for (const item of items) {
     const f = item.sources[0];
@@ -127,7 +127,7 @@ function recapLines(items: ValidItem[], model = false, logs: ActivityLog[] = [],
       const collapse = collapsePrs && merges.length > MAX_PR_LINES;
       const lines = group.items.sort((a, b) => recapKind(a.sources[0]) - recapKind(b.sources[0]) || activityAmount(b.sources[0]) - activityAmount(a.sources[0]))
         .flatMap((item) => !collapse || !merges.includes(item) ? [`• ${esc(recapText(item.sources[0], model ? item.text : undefined))} ${modelLinks(item)}`]
-          : item === merges[0] ? [prSummary(repo, merges.map((i) => i.sources[0]))] : []);
+          : item === merges[0] ? [prSummary(repo, merges.map((i) => i.sources[0]), w)] : []);
       return ["", `<b>${esc(repo.split("/").pop()!)}</b>`, ...lines, ...(logGroups.get(repo) ?? []).map((log) => `• ${esc(log.text)}`)];
     });
 }
@@ -251,7 +251,7 @@ export function render(findings: Finding[], snaps: RepoSnapshot[], w: Window, ma
     .filter((f) => f.severity !== "info" && !cited.has(f.id))
     .sort((a, b) => rank[a.severity] - rank[b.severity]);
   const yesterday = findings.filter((f) => f.severity === "info");
-  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs, greeting.collapsePrs), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen), ...newRepoLines(greeting.newRepos)];
+  const parts = [...header(greeting, yesterday, w), ...sections([...attention.flatMap((f) => line(f, greeting.days)), ...collapsedLine(greeting.collapsed), ...doneLines(greeting.done)], recapLines(yesterday.map((f) => ({ text: f.summary, sources: [f] })), false, greeting.logs, greeting.collapsePrs, w), w, focusLines(focus, greeting.days), leadLines(greeting.previousFocus)), ...leftOpenLine(greeting.leftOpen), ...newRepoLines(greeting.newRepos)];
 
   return finish(parts, snaps, maxChars, footer);
 }

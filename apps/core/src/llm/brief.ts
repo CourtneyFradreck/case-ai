@@ -7,7 +7,7 @@ import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
 import { validate, type DropReason, type Shortened } from "./validate.js";
-import { withMissingNext, withPickedRepo } from "../focus.js";
+import { withWaitingReviews, withMissingNext, withPickedRepo } from "../focus.js";
 import { selfReported, withPartlyNote } from "../self-reports.js";
 
 // previousFocus is rendered at the top of the recap and never sent to the model.
@@ -76,6 +76,7 @@ export async function generateModelBrief(findings: Finding[], snaps: RepoSnapsho
     meta.json.addedBack = result.addedBack;
     if (cfg.focus && cfg.picked) result.brief.focus = withPickedRepo(result.brief.focus, findings, cfg.picked.repo, cfg.picked.findingId);
     if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
+    if (cfg.focus) result.brief.focus = withWaitingReviews(result.brief.focus, findings.filter((f) => !cfg.parked?.has(f.id)));
     result.brief.focus = withPartlyNote(result.brief.focus, cfg.partly);
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));
     return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { logs: cfg.logs, userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen, newRepos: cfg.newRepos }), focus: result.brief.focus };

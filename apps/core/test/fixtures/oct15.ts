@@ -57,7 +57,7 @@ export function oct15Fixture() {
     openPrs: [], openedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, createdAt: at, updatedAt: at }],
     mergedPrs: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at, commits: prCommits.length }],
     recentlyMerged: [{ number: 2, title: mergedPr.title, url: mergedPr.html_url, draft: false, headRef: mergedPr.head.ref, updatedAt: at, mergedAt: at }],
-    newIssues: [{ number: 1, title: issue.title, url: issue.html_url, createdAt: at, state: "open", mine: true }],
+    newIssues: [{ number: 1, title: issue.title, url: issue.html_url, createdAt: at, state: "open", mine: true, author: "CourtneyFradreck" }],
     // Issue #1 is your own trial checklist, so it isn't counted as an open issue needing attention.
     closedIssues: [], comments: [], openIssueCount: 0,
     branches: branches.map((b) => ({ name: b.name, sha: b.commit.sha, lastCommitAt: b.name === "main" ? direct.commit.committer.date : featureCommits.at(-1)!.commit.committer.date, aheadBy: b.name === "main" ? 0 : 9, url: `${url}/tree/${b.name}` })),

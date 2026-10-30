@@ -8,8 +8,8 @@ import { DateTime } from "luxon";
 const gh = vi.hoisted(() => ({
   paginate: vi.fn(),
   repos: { get: vi.fn(), getContent: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
-  pulls: { list: vi.fn(), listCommits: vi.fn() },
-  issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn() },
+  pulls: { list: vi.fn(), listCommits: vi.fn(), listReviews: vi.fn(), listReviewComments: vi.fn() },
+  issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn(), listComments: vi.fn(), listEventsForTimeline: vi.fn() },
   users: { getAuthenticated: vi.fn() },
   actions: { listRepoWorkflows: vi.fn(), listWorkflowRunsForRepo: vi.fn() },
 }));
@@ -482,5 +482,84 @@ describe("branch cache", () => {
   it("reads the branches when there is no cache", async () => {
     const [s] = await collectAll(["me/demo"], { start: NOW, end: NOW, label: "test" }, []);
     expect(s.branches.map((b) => b.name)).toEqual(["main", "fresh"]);
+  });
+});
+
+
+describe("collaborator fork PRs", () => {
+  const repo = "CourtneyFradreck/agrilease";
+  const w = { start: new Date("2026-10-28T00:00:00Z"), end: new Date("2026-10-30T00:00:00Z"), label: "yesterday" };
+  const pr = { number: 51, title: "feat: overhaul app experience and environment setup", html_url: `https://github.com/${repo}/pull/51`,
+    user: { login: "icep0ps" }, head: { ref: "overhaul", repo: { fork: true } }, draft: false,
+    created_at: "2026-10-29T10:00:00Z", updated_at: "2026-10-29T10:00:00Z" };
+  const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: [] };
+  beforeEach(() => {
+    vi.resetAllMocks();
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "CourtneyFradreck" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, pushed_at: "2026-01-01T00:00:00Z" } });
+    gh.repos.getContent.mockRejectedValue({ status: 404 });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.paginate.mockImplementation(async (endpoint) => endpoint === gh.pulls.list ? [pr] : []);
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+  });
+  it("makes a stale base repo active and renders the author's waiting review", async () => {
+    const { selectRepos } = await import("../src/github/discover.js");
+    const selection = selectRepos([{ repo, fork: false, archived: false, pushedAt: "2026-01-01T00:00:00Z", private: false, defaultBranch: "main" }], [], w.end, { exclude: [], activeDays: 14 }, new Set([repo.toLowerCase()]));
+    const snaps = await collectAll(selection.repos, w, []);
+    expect(snaps[0].openPrs[0]).toMatchObject({ author: "icep0ps", waitingOnYou: true });
+    const findings = runRules(snaps, w.end, cfg, w);
+    expect(render(findings, snaps, w, 3800)).toContain('icep0ps opened PR #51');
+    expect(render(findings, snaps, w, 3800)).toContain('waiting on your review');
+    const { ruleFocus } = await import("../src/focus.js");
+    expect(ruleFocus(findings, [], snaps, w.end, cfg)[0].reason).toBe("Someone is waiting on your review");
+  });
+  it.each(["review", "inline comment", "discussion comment"])("does not mark a PR waiting after my old %s", async (kind) => {
+    const endpoint = kind === "review" ? gh.pulls.listReviews : kind === "inline comment" ? gh.pulls.listReviewComments : gh.issues.listComments;
+    gh.paginate.mockImplementation(async (e) => e === gh.pulls.list ? [pr] : e === endpoint ? [{ user: { login: "courtneyfradreck" }, submitted_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" }] : []);
+    const snaps = await collectAll([repo], w, []);
+    expect(snaps[0].error).toBeUndefined();
+    expect(runRules(snaps, w.end, cfg, w).some((f) => f.rule === "pr_waiting")).toBe(false);
+  });
+  it("surfaces review requests and inline comments from others on my PR", async () => {
+    gh.paginate.mockImplementation(async (e) => {
+      if (e === gh.pulls.list) return [{ ...pr, user: { login: "CourtneyFradreck" } }];
+      if (e === gh.pulls.listReviewComments) return [{ id: 90, user: { login: "icep0ps" }, created_at: pr.created_at, html_url: `${pr.html_url}#discussion_r90` }];
+      if (e === gh.issues.listEventsForTimeline) return [{ id: 91, event: "review_requested", actor: { login: "icep0ps" }, created_at: pr.created_at }];
+      return [];
+    });
+    const snaps = await collectAll([repo], w, []);
+    const findings = runRules(snaps, w.end, cfg, w);
+    expect(findings.find((f) => f.rule === "review_requested")?.summary).toContain("icep0ps requested a review on PR #51");
+    expect(findings.find((f) => f.rule === "issue_comments")?.summary).toContain("from icep0ps");
+    expect(findings.some((f) => f.rule === "pr_waiting")).toBe(false);
+  });
+  it("does not invent a waiting review when history cannot be read", async () => {
+    gh.paginate.mockImplementation(async (e) => {
+      if (e === gh.pulls.listReviews) throw new Error("unavailable");
+      return e === gh.pulls.list ? [pr] : [];
+    });
+    const [s] = await collectAll([repo], w, []);
+    expect(s.error).toBeUndefined();
+    expect(s.warnings?.[0]).toContain("Couldn't read review history");
+    expect(s.openPrs[0].waitingOnYou).toBeUndefined();
+  });
+  it("prioritizes a waiting review over my active NEXT.md work", async () => {
+    const snaps = await collectAll([repo], w, []);
+    snaps[0].branches = [{ name: "main", sha: "x", aheadBy: 0, lastCommitAt: pr.created_at, url: "u" }];
+    const { finding } = await import("./fixtures.js");
+    const next = finding({ id: "next", repo, rule: "next_item", summary: "Next in " + repo + ": finish setup", intent: { itemId: "x", section: null, state: "open" } });
+    const { ruleFocus, withWaitingReviews } = await import("../src/focus.js");
+    const findings = runRules(snaps, w.end, cfg, w);
+    expect(ruleFocus(findings, [next], snaps, w.end, cfg)[0].sources[0].rule).toBe("pr_waiting");
+    expect(withWaitingReviews([{ text: next.summary, reason: "planned", sources: [next] }], findings)[0].reason).toBe("Someone is waiting on your review");
+  });
+  it("keeps the same finding across quiet days and uses the existing streak collapse", async () => {
+    const snaps = await collectAll([repo], w, []);
+    const first = runRules(snaps, w.end, cfg).find((f) => f.rule === "pr_waiting")!;
+    const later = runRules(snaps, new Date("2026-11-01T00:00:00Z"), cfg).find((f) => f.rule === "pr_waiting")!;
+    expect(later.id).toBe(first.id);
+    expect(later.summary).toContain("still waiting on your review, 3 days");
+    const { collapseRepeats } = await import("../src/streaks.js");
+    expect(collapseRepeats([later], new Map([[later.id, 3]]), 3).collapsed).toEqual([later]);
   });
 });

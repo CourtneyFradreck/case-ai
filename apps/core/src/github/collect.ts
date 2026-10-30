@@ -182,6 +182,40 @@ async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[
       logFailure(fullName, "GET /repos/{owner}/{repo}/issues/comments", e);
     }
 
+    // Review history is lifetime history: yesterday's window cannot prove you never replied.
+    const waiting = new Set<number>();
+    const sameUser = (login: string | undefined) => !!myLogin && login?.toLowerCase() === myLogin.toLowerCase();
+    for (const p of [...open, ...closed.filter((p) => inWindow(p.updated_at, w))]) {
+      if (!myLogin || !p.user?.login) continue;
+      try {
+        const params = { owner, repo, pull_number: p.number, per_page: 100 };
+        const [reviews, inline, discussion] = await Promise.all([
+          gh.paginate(gh.pulls.listReviews, params),
+          gh.paginate(gh.pulls.listReviewComments, params),
+          gh.paginate(gh.issues.listComments, { owner, repo, issue_number: p.number, per_page: 100 }),
+        ]);
+        if (open.some((o) => o.number === p.number) && owner.toLowerCase() === myLogin.toLowerCase() && !sameUser(p.user.login) &&
+            ![...reviews, ...inline, ...discussion].some((c) => sameUser(c.user?.login))) waiting.add(p.number);
+        for (const c of [...reviews, ...inline]) {
+          const createdAt = "created_at" in c ? c.created_at : c.submitted_at;
+          if (!createdAt || !inWindow(createdAt, w) || !c.user?.login || c.user.type === "Bot" || ignoreAuthors.includes(c.user.login)) continue;
+          comments.push({ id: c.id, issueNumber: p.number, issueTitle: p.title, isPr: true,
+            author: c.user.login, url: c.html_url ?? p.html_url, createdAt, mine: sameUser(c.user.login) });
+        }
+        if (sameUser(p.user.login)) {
+          const events = await gh.paginate(gh.issues.listEventsForTimeline, { owner, repo, issue_number: p.number, per_page: 100 });
+          for (const e of events) {
+            if (!("id" in e) || e.event !== "review_requested" || !("created_at" in e) || !inWindow(e.created_at, w) || !("actor" in e) || !e.actor || sameUser(e.actor.login)) continue;
+            comments.push({ id: e.id!, issueNumber: p.number, issueTitle: p.title, isPr: true,
+              author: e.actor.login, url: p.html_url, createdAt: e.created_at!, mine: false, reviewRequest: true });
+          }
+        }
+      } catch (e) {
+        logFailure(fullName, "PR review history", e, { number: p.number });
+        warnings.push(`Couldn't read review history for PR #${p.number} in ${short} (${reason(e)})`);
+      }
+    }
+
     // 5. CI: latest completed run per workflow on the default branch
     const ciRuns: CiRun[] = [];
     try {
@@ -224,27 +258,28 @@ async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[
       createdAt: meta.created_at,
       commits: [...seen.values()],
       openPrs: open.map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        ...(waiting.has(p.number) ? { waitingOnYou: true } : {}),
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
       })),
       openedPrs: [...open, ...closed].filter((p) => inWindow(p.created_at, w)).map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
       })),
       mergedPrs: merged.map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at, commits: prCommits.get(p.number),
       })),
       recentlyMerged: closed.filter((p) => p.merged_at).map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
       })),
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state, mine: byMe(i) })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, author: i.user?.login, createdAt: i.created_at, state: i.state, mine: byMe(i) })),
       closedIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.closed_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, author: i.user?.login, closedAt: i.closed_at! })),
       comments,
       openIssueCount: othersOpen,
       branches,
