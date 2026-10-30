@@ -1,12 +1,64 @@
-import { Octokit } from "@octokit/rest";
 import { env } from "../env.js";
+import { gh } from "./client.js";
 import { inWindow, type Window } from "../time.js";
 import { parseNext } from "../intent/parse.js";
-import type { RepoSnapshot, Branch, Commit, CiRun, IssueComment, NextFile } from "../types.js";
+import type { RepoSnapshot, Branch, BranchCache, Commit, CiRun, IssueComment, NextFile } from "../types.js";
 
-const gh = new Octokit({ auth: env.githubToken, userAgent: "case-ai" });
+const COMPARE = "GET /repos/{owner}/{repo}/compare/{basehead}";
+const GET_COMMIT = "GET /repos/{owner}/{repo}/commits/{ref}";
 
-export async function collectAll(repos: string[], w: Window, ignoreAuthors: string[]) {
+// Branches whose compare returned 404 (no common history with the default branch), by repo, base
+// and branch, with the head SHA seen then. They are skipped quietly until the head changes.
+// Kept in memory, so the first run after a restart checks them once more.
+const noCommonHistory = new Map<string, string>();
+export const forgetNoCommonHistory = () => noCommonHistory.clear();
+
+// Glob match for branch names: * and ? stay within one path segment, ** crosses segments.
+export function matchesGlob(name: string, glob: string): boolean {
+  const re = glob.split("**").map((part) => part.split("*")
+    .map((p) => p.split("?").map((t) => t.replace(/[.+^${}()|[\]\\]/g, "\\$&")).join("[^/]"))
+    .join("[^/]*")).join(".*");
+  return new RegExp(`^${re}$`).test(name);
+}
+
+export const statusOf = (e: any): number | undefined => typeof e?.status === "number" ? e.status : undefined;
+
+// Why a call failed, for the brief: the status with a hint for auth failures, else the error message.
+export function reason(e: any): string {
+  const status = statusOf(e);
+  if (status === 401) return "401: check the token";
+  if (status === 403) return "403: check the token's access or rate limit";
+  return status ? String(status) : String(e?.message ?? e);
+}
+
+// Every GitHub failure is logged with its endpoint and status, whether or not the brief mentions it.
+export function logFailure(repo: string, endpoint: string, e: any, extra: Record<string, unknown> = {}) {
+  const url = e?.request?.url ? `${e.request.method ?? "GET"} ${String(e.request.url).replace(/^https:\/\/api\.github\.com/, "")}` : undefined;
+  console.warn(JSON.stringify({ event: "github_error", repo, endpoint: url ?? endpoint, status: statusOf(e) ?? null,
+    ...extra, message: String(e?.message ?? e).slice(0, 200) }));
+}
+
+const logSkip = (repo: string, branch: string, why: string) =>
+  console.info(JSON.stringify({ event: "github_branch_skipped", repo, branch, reason: why }));
+
+const shortName = (fullName: string) => fullName.split("/").pop()!;
+
+// A repo-level call that failed; its message is shown in the brief in place of the repo.
+class RepoError extends Error {}
+
+async function repoCall<T>(fullName: string, what: string, endpoint: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (e) {
+    logFailure(fullName, endpoint, e);
+    throw new RepoError(`Couldn't read ${what} in ${shortName(fullName)} (${reason(e)})`);
+  }
+}
+
+// A repo to read, with its branches as last read if any.
+export interface RepoTarget { repo: string; branchCache?: BranchCache }
+
+export async function collectAll(repos: (string | RepoTarget)[], w: Window, ignoreAuthors: string[]) {
   let myLogin: string | null = null;
   try {
     const { data } = await gh.users.getAuthenticated();
@@ -17,59 +69,55 @@ export async function collectAll(repos: string[], w: Window, ignoreAuthors: stri
   const out: RepoSnapshot[] = [];
   // 3 repos at a time: fast, and gentle on the API
   for (let i = 0; i < repos.length; i += 3) {
-    const batch = repos.slice(i, i + 3).map((r) => collectRepo(r, w, ignoreAuthors, myLogin));
+    const batch = repos.slice(i, i + 3).map((r) => collectRepo(typeof r === "string" ? { repo: r } : r, w, ignoreAuthors, myLogin));
     out.push(...(await Promise.all(batch)));
   }
   return out;
 }
 
-async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
+async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[], myLogin: string | null): Promise<RepoSnapshot> {
+  const fullName = target.repo;
   const [owner, repo] = fullName.split("/");
-  const empty: RepoSnapshot = {
-    repo: fullName, private: false, defaultBranch: "main", createdAt: "",
-    commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
-    closedIssues: [], comments: [], openIssueCount: 0,
-    next: { status: "error", error: "not collected" },
-  };
+  const short = shortName(fullName);
+  // Branches skipped for an unexpected reason: one short line at the end of the brief.
+  const warnings: string[] = [];
 
   try {
-    const { data: meta } = await gh.repos.get({ owner, repo });
+    let meta;
+    try {
+      ({ data: meta } = await gh.repos.get({ owner, repo }));
+    } catch (e) {
+      logFailure(fullName, "GET /repos/{owner}/{repo}", e);
+      const why = statusOf(e) === 404 ? "404: not found, or the token can't see it" : reason(e);
+      throw new RepoError(`Couldn't access ${fullName} (${why})`);
+    }
     const base = meta.default_branch;
     const since = w.start.toISOString();
     const until = w.end.toISOString();
     const next = await collectNext(owner, repo, fullName, base);
 
-    // 1. Branches: head date and whether unmerged
-    const branchList = await gh.paginate(gh.repos.listBranches, { owner, repo, per_page: 100 });
-    const branches: Branch[] = [];
-    for (const b of branchList) {
-      const { data: c } = await gh.repos.getCommit({ owner, repo, ref: b.commit.sha });
-      let aheadBy = 0;
-      if (b.name !== base) {
-        const { data: cmp } = await gh.repos.compareCommitsWithBasehead({
-          owner, repo, basehead: `${base}...${b.name}`, per_page: 1,
-        });
-        aheadBy = cmp.ahead_by;
-      }
-      branches.push({
-        name: b.name,
-        sha: b.commit.sha,
-        lastCommitAt: c.commit.committer?.date ?? c.commit.author?.date ?? "",
-        aheadBy,
-        url: `https://github.com/${fullName}/tree/${encodeURI(b.name)}`,
-      });
-    }
+    // 1. Branches: head date and whether unmerged. Unchanged until the repo is pushed to, so the
+    // cached read is reused while pushed_at and the default branch are the same.
+    const cache = target.branchCache;
+    const cached = !!cache && !!meta.pushed_at && cache.pushedAt === meta.pushed_at && cache.base === base;
+    if (cached) console.info(JSON.stringify({ event: "github_branches_cached", repo: fullName, pushedAt: meta.pushed_at }));
+    const branches = cached
+      ? cache.branches.filter((b) => !excludedBy(b.name, base))
+      : await readBranches(owner, repo, fullName, base, warnings);
 
     // 2. PRs and the commits already covered by a merge in this window.
-    const open = await gh.paginate(gh.pulls.list, { owner, repo, state: "open", per_page: 100 });
-    const { data: closed } = await gh.pulls.list({
-      owner, repo, state: "closed", sort: "updated", direction: "desc", per_page: 50,
-    });
+    const open = await repoCall(fullName, "open PRs", "GET /repos/{owner}/{repo}/pulls",
+      () => gh.paginate(gh.pulls.list, { owner, repo, state: "open", per_page: 100 }));
+    const { data: closed } = await repoCall(fullName, "closed PRs", "GET /repos/{owner}/{repo}/pulls",
+      () => gh.pulls.list({ owner, repo, state: "closed", sort: "updated", direction: "desc", per_page: 50 }));
     const merged = closed.filter((p) => inWindow(p.merged_at, w));
     const mergedShas = new Set<string>();
+    const prCommits = new Map<number, number>();
     for (const p of merged) {
-      const commits = await gh.paginate(gh.pulls.listCommits, { owner, repo, pull_number: p.number, per_page: 100 });
+      const commits = await repoCall(fullName, `commits of PR #${p.number}`, "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits",
+        () => gh.paginate(gh.pulls.listCommits, { owner, repo, pull_number: p.number, per_page: 100 }));
       for (const c of commits) mergedShas.add(c.sha);
+      prCommits.set(p.number, commits.length);
     }
 
     // 3. Walk the default branch first so shared SHAs belong to it, then
@@ -78,9 +126,14 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     const activeBranches = branches.filter((b) => new Date(b.lastCommitAt) >= w.start)
       .sort((a, b) => Number(b.name === base) - Number(a.name === base));
     for (const b of activeBranches) {
-      const list = await gh.paginate(gh.repos.listCommits, {
-        owner, repo, sha: b.name, since, until, per_page: 100,
-      });
+      let list;
+      try {
+        list = await gh.paginate(gh.repos.listCommits, { owner, repo, sha: b.name, since, until, per_page: 100 });
+      } catch (e) {
+        logFailure(fullName, "GET /repos/{owner}/{repo}/commits", e, { branch: b.name });
+        warnings.push(`Skipped commits on ${b.name} in ${short} (${reason(e)})`);
+        continue;
+      }
       for (const c of list) {
         const author = c.author?.login ?? c.commit.author?.name ?? "unknown";
         if (c.parents.length > 1 || mergedShas.has(c.sha) || seen.has(c.sha) ||
@@ -98,15 +151,15 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
     }
 
     // 4. Issues (this endpoint also returns PRs, so filter them out)
-    const issues = await gh.paginate(gh.issues.listForRepo, {
-      owner, repo, state: "all", since, per_page: 100,
-    });
+    const issues = await repoCall(fullName, "issues", "GET /repos/{owner}/{repo}/issues",
+      () => gh.paginate(gh.issues.listForRepo, { owner, repo, state: "all", since, per_page: 100 }));
     const issuesByNumber = new Map(issues.map((i) => [i.number, i]));
     // Unknown identity counts as yours, as for comments: it must never turn issues into requests for attention.
     const byMe = (i: { user?: { login?: string } | null }) => myLogin === null || i.user?.login === myLogin;
     // Open issues someone else opened. Issues you opened (a trial checklist, a reminder) are notes, not requests;
     // new comments on them from others still come through as issue_comments.
-    const openIssues = await gh.paginate(gh.issues.listForRepo, { owner, repo, state: "open", per_page: 100 });
+    const openIssues = await repoCall(fullName, "open issues", "GET /repos/{owner}/{repo}/issues",
+      () => gh.paginate(gh.issues.listForRepo, { owner, repo, state: "open", per_page: 100 }));
     const othersOpen = openIssues.filter((i) => !i.pull_request && !byMe(i)).length;
     const comments: IssueComment[] = [];
     try {
@@ -124,8 +177,43 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
           mine: myLogin === null || author === myLogin,
         });
       }
-    } catch {
+    } catch (e) {
       // Comments are optional; retain all other repo data if unavailable.
+      logFailure(fullName, "GET /repos/{owner}/{repo}/issues/comments", e);
+    }
+
+    // Review history is lifetime history: yesterday's window cannot prove you never replied.
+    const waiting = new Set<number>();
+    const sameUser = (login: string | undefined) => !!myLogin && login?.toLowerCase() === myLogin.toLowerCase();
+    for (const p of [...open, ...closed.filter((p) => inWindow(p.updated_at, w))]) {
+      if (!myLogin || !p.user?.login) continue;
+      try {
+        const params = { owner, repo, pull_number: p.number, per_page: 100 };
+        const [reviews, inline, discussion] = await Promise.all([
+          gh.paginate(gh.pulls.listReviews, params),
+          gh.paginate(gh.pulls.listReviewComments, params),
+          gh.paginate(gh.issues.listComments, { owner, repo, issue_number: p.number, per_page: 100 }),
+        ]);
+        if (open.some((o) => o.number === p.number) && owner.toLowerCase() === myLogin.toLowerCase() && !sameUser(p.user.login) &&
+            ![...reviews, ...inline, ...discussion].some((c) => sameUser(c.user?.login))) waiting.add(p.number);
+        for (const c of [...reviews, ...inline]) {
+          const createdAt = "created_at" in c ? c.created_at : c.submitted_at;
+          if (!createdAt || !inWindow(createdAt, w) || !c.user?.login || c.user.type === "Bot" || ignoreAuthors.includes(c.user.login)) continue;
+          comments.push({ id: c.id, issueNumber: p.number, issueTitle: p.title, isPr: true,
+            author: c.user.login, url: c.html_url ?? p.html_url, createdAt, mine: sameUser(c.user.login) });
+        }
+        if (sameUser(p.user.login)) {
+          const events = await gh.paginate(gh.issues.listEventsForTimeline, { owner, repo, issue_number: p.number, per_page: 100 });
+          for (const e of events) {
+            if (!("id" in e) || e.event !== "review_requested" || !("created_at" in e) || !inWindow(e.created_at, w) || !("actor" in e) || !e.actor || sameUser(e.actor.login)) continue;
+            comments.push({ id: e.id!, issueNumber: p.number, issueTitle: p.title, isPr: true,
+              author: e.actor.login, url: p.html_url, createdAt: e.created_at!, mine: false, reviewRequest: true });
+          }
+        }
+      } catch (e) {
+        logFailure(fullName, "PR review history", e, { number: p.number });
+        warnings.push(`Couldn't read review history for PR #${p.number} in ${short} (${reason(e)})`);
+      }
     }
 
     // 5. CI: latest completed run per workflow on the default branch
@@ -135,8 +223,9 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
       try {
         const workflows = await gh.paginate(gh.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
         activeWorkflowIds = new Set(workflows.filter((w) => w.state === "active").map((w) => w.id));
-      } catch {
+      } catch (e) {
         // Keep CI data when workflow metadata is unavailable.
+        logFailure(fullName, "GET /repos/{owner}/{repo}/actions/workflows", e);
       }
       const { data } = await gh.actions.listWorkflowRunsForRepo({
         owner, repo, branch: base, exclude_pull_requests: true, per_page: 30,
@@ -155,49 +244,111 @@ async function collectRepo(fullName: string, w: Window, ignoreAuthors: string[],
           finishedAt: r.updated_at,
         });
       }
-    } catch {
+    } catch (e) {
       // Actions disabled or none configured: no CI findings for this repo
+      logFailure(fullName, "GET /repos/{owner}/{repo}/actions/runs", e);
     }
 
     return {
       repo: fullName,
       error: undefined,
+      ...(meta.pushed_at ? { pushedAt: meta.pushed_at } : {}),
       private: meta.private,
       defaultBranch: base,
       createdAt: meta.created_at,
       commits: [...seen.values()],
       openPrs: open.map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        ...(waiting.has(p.number) ? { waitingOnYou: true } : {}),
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
       })),
       openedPrs: [...open, ...closed].filter((p) => inWindow(p.created_at, w)).map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: !!p.draft, headRef: p.head.ref, updatedAt: p.updated_at, createdAt: p.created_at,
       })),
       mergedPrs: merged.map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
-        draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
+        draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at, commits: prCommits.get(p.number),
       })),
       recentlyMerged: closed.filter((p) => p.merged_at).map((p) => ({
-        number: p.number, title: p.title, url: p.html_url,
+        number: p.number, title: p.title, url: p.html_url, author: p.user?.login,
         draft: false, headRef: p.head.ref, updatedAt: p.updated_at, mergedAt: p.merged_at,
       })),
       newIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.created_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, createdAt: i.created_at, state: i.state, mine: byMe(i) })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, author: i.user?.login, createdAt: i.created_at, state: i.state, mine: byMe(i) })),
       closedIssues: issues
         .filter((i) => !i.pull_request && inWindow(i.closed_at, w))
-        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, closedAt: i.closed_at! })),
+        .map((i) => ({ number: i.number, title: i.title, url: i.html_url, author: i.user?.login, closedAt: i.closed_at! })),
       comments,
       openIssueCount: othersOpen,
       branches,
       ciRuns,
       next,
+      ...(warnings.length ? { warnings } : {}),
     };
   } catch (e: any) {
-    return { ...empty, error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };
+    if (e instanceof RepoError) return failedSnapshot(fullName, e.message);
+    console.warn(JSON.stringify({ event: "collect_error", repo: fullName, message: String(e?.message ?? e).slice(0, 200) }));
+    return failedSnapshot(fullName, `Couldn't read ${fullName} (${reason(e)})`);
   }
 }
+
+// The CASE_BRANCH_EXCLUDE glob a branch matches; the default branch is never excluded.
+const excludedBy = (name: string, base: string) =>
+  name === base ? undefined : (env.branchExclude ?? []).find((g) => matchesGlob(name, g));
+
+// A branch that can't be read is skipped, never the repo; excluded branches are logged only.
+async function readBranches(owner: string, repo: string, fullName: string, base: string, warnings: string[]): Promise<Branch[]> {
+  const short = shortName(fullName);
+  const branchList = await repoCall(fullName, "branches", "GET /repos/{owner}/{repo}/branches",
+    () => gh.paginate(gh.repos.listBranches, { owner, repo, per_page: 100 }));
+  const branches: Branch[] = [];
+  for (const b of branchList) {
+    const glob = excludedBy(b.name, base);
+    if (glob) { logSkip(fullName, b.name, `excluded by ${glob}`); continue; }
+    const orphanKey = `${fullName}\0${base}\0${b.name}`;
+    if (noCommonHistory.get(orphanKey) === b.commit.sha) { logSkip(fullName, b.name, `no common history with ${base}`); continue; }
+    let endpoint = GET_COMMIT;
+    try {
+      const { data: c } = await gh.repos.getCommit({ owner, repo, ref: b.commit.sha });
+      let aheadBy = 0;
+      if (b.name !== base) {
+        endpoint = COMPARE;
+        const { data: cmp } = await gh.repos.compareCommitsWithBasehead({
+          owner, repo, basehead: `${base}...${b.name}`, per_page: 1,
+        });
+        aheadBy = cmp.ahead_by;
+      }
+      branches.push({
+        name: b.name,
+        sha: b.commit.sha,
+        lastCommitAt: c.commit.committer?.date ?? c.commit.author?.date ?? "",
+        aheadBy,
+        url: `https://github.com/${fullName}/tree/${encodeURI(b.name)}`,
+      });
+    } catch (e) {
+      logFailure(fullName, endpoint, e, { branch: b.name });
+      // GitHub's compare returns 404 when the branch shares no history with the base.
+      if (endpoint === COMPARE && statusOf(e) === 404) {
+        noCommonHistory.set(orphanKey, b.commit.sha);
+        warnings.push(`Skipped branch ${b.name} in ${short} (no common history with ${base})`);
+      } else {
+        warnings.push(`Skipped branch ${b.name} in ${short} (${reason(e)})`);
+      }
+    }
+  }
+  return branches;
+}
+
+// A repo that couldn't be read: safe empty data, and the sentence the brief shows.
+export const failedSnapshot = (repo: string, error: string): RepoSnapshot => ({
+  repo, private: false, defaultBranch: "main", createdAt: "",
+  commits: [], openPrs: [], openedPrs: [], mergedPrs: [], newIssues: [], branches: [], ciRuns: [],
+  closedIssues: [], comments: [], openIssueCount: 0,
+  next: { status: "error", error: "not collected" },
+  error,
+});
 
 // NEXT.md is optional: a failure here never marks the whole repo as unreadable.
 async function collectNext(owner: string, repo: string, fullName: string, base: string): Promise<NextFile> {
@@ -212,8 +363,9 @@ async function collectNext(owner: string, repo: string, fullName: string, base: 
       const { data: commits } = await gh.repos.listCommits({ owner, repo, path: "NEXT.md", sha: base, per_page: 1 });
       const last = commits[0]?.commit;
       lastChangedAt = last?.committer?.date ?? last?.author?.date ?? null;
-    } catch {
+    } catch (e) {
       // The items are still usable without a change date; next_stale just skips.
+      logFailure(fullName, "GET /repos/{owner}/{repo}/commits", e, { path: "NEXT.md" });
     }
     return {
       status: "ok",
@@ -224,6 +376,7 @@ async function collectNext(owner: string, repo: string, fullName: string, base: 
     };
   } catch (e: any) {
     if (e?.status === 404) return { status: "missing" };
-    return { status: "error", error: e?.status ? `GitHub ${e.status}` : String(e?.message ?? e) };
+    logFailure(fullName, "GET /repos/{owner}/{repo}/contents/{path}", e, { path: "NEXT.md" });
+    return { status: "error", error: `Couldn't read NEXT.md in ${shortName(fullName)} (${reason(e)})` };
   }
 }

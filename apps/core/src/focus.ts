@@ -11,6 +11,8 @@ import { esc } from "./render.js";
 import { fid } from "./id.js";
 import { daysSince, type Window } from "./time.js";
 import { clip, focusLabel } from "./labels.js";
+import { DateTime } from "luxon";
+import { today } from "./time.js";
 
 export const MAX_FOCUS = 3;
 
@@ -18,6 +20,7 @@ export const MAX_FOCUS = 3;
 // brief (briefs.focus) and logged, never shown.
 function reason(f: Finding): string {
   switch (f.rule) {
+    case "pr_waiting": return "Someone is waiting on your review";
     case "failing_ci": return "CI is failing on the default branch";
     case "issue_comments": return "New comments are waiting for a reply";
     case "next_item": return `Open in NEXT.md, and ${f.repo.split("/").pop()} has recent commits`;
@@ -78,7 +81,32 @@ export function ruleFocus(findings: Finding[], next: Finding[], snaps: RepoSnaps
   const planned = next.filter((f) => f.rule === "next_item" && ready(f) && active.has(f.repo))
     // Stable sort keeps NEXT.md order within a repo.
     .sort((a, b) => Number(late.has(a.id)) - Number(late.has(b.id)) || active.get(a.repo)! - active.get(b.repo)!);
-  return [...planned, ...attention].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
+  return [...attention.filter((f) => f.rule === "pr_waiting"), ...planned, ...attention.filter((f) => f.rule !== "pr_waiting")].slice(0, MAX_FOCUS).map((f) => ({ text: action(f), reason: reason(f), sources: [f] }));
+}
+
+export const PICKED_REASON = "Repo you picked yesterday";
+
+// The repo yesterday's focus was in: the one stored with it, else a repo the focus text names by its
+// short name ("finish 1710 phase 1 and 3"), longest name first so "case-ai-web" beats "case-ai".
+export function pickedRepo(focus: { item_text: string; repo: string | null } | undefined, repos: string[]): string | undefined {
+  if (!focus) return;
+  if (focus.repo && repos.includes(focus.repo)) return focus.repo;
+  const text = focus.item_text.toLowerCase();
+  return [...repos].sort((a, b) => b.length - a.length).find((r) => {
+    const name = r.split("/").pop()!.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(text);
+  });
+}
+
+// The picked repo keeps at least one suggestion while it has an open NEXT.md item ready to start: yesterday's
+// focus item if still open, else its first. It goes first, written by code, so it is shown even when the model
+// never saw the repo (private repos aren't sent). next is already ranked and free of parked or finished items.
+export function withPickedRepo(focus: ValidFocus[], next: Finding[], repo: string | undefined, focusFindingId?: string | null): ValidFocus[] {
+  if (!repo || focus.some((i) => i.sources.some((f) => f.repo === repo))) return focus;
+  const items = next.filter((f) => f.rule === "next_item" && f.repo === repo && ready(f));
+  const f = items.find((i) => i.id === focusFindingId) ?? items[0];
+  if (!f) return focus;
+  return [{ text: action(f), reason: PICKED_REASON, sources: [f] }, ...focus].slice(0, MAX_FOCUS);
 }
 
 // An active repo with no NEXT.md takes the last suggestion, on the rule and model paths alike, so it is
@@ -204,8 +232,12 @@ export const withoutAge = (text: string) => text
 // An info finding for yesterday's focus: the one the user picked (by button, typed or /focus; the line is never
 // inferred), and how many commits its repo had over the period, on every branch. When none landed there, it says
 // which repo the commits went to. It leads the recap and is never sent to the model.
-export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string } | undefined, snaps: RepoSnapshot[], period: FocusPeriod): Finding[] {
+export function yesterdayFocus(focus: { item_text: string; short_label?: string | null; repo: string | null; created_at: Date; status?: string; checkin?: "done" | "partly" | "none" | null } | undefined, snaps: RepoSnapshot[], period: FocusPeriod, date?: string): Finding[] {
   if (!focus) return [];
+  if (focus.checkin) return [{
+    id: fid("checkin", date ?? today(DateTime.fromJSDate(focus.created_at))), rule: "self_checkin", severity: "info", repo: focus.repo ?? "",
+    summary: `You picked: ${withoutAge(focus.short_label || focus.item_text)}, ${{ done: "done", partly: "partly done", none: "didn't get to it" }[focus.checkin]}`, sources: [{ label: "you", kind: "self_reported" }],
+  }];
   const snapshot = focus.repo ? snaps.find((s) => s.repo === focus.repo && !s.error) : undefined;
   const base = { id: fid("yesterday_focus", focus.item_text, focus.created_at.toISOString()), rule: "yesterday_focus", severity: "info" as const };
   // Without a readable repo there is nothing to check commits against.
@@ -232,4 +264,11 @@ export function yesterdayFocus(focus: { item_text: string; short_label?: string 
     summary: `You picked: ${name}. No commits in ${repo} ${period.label}`,
     sources: [{ label: "repo", url: `https://github.com/${snapshot.repo}` }],
   }];
+}
+
+export function withWaitingReviews(focus: ValidFocus[], findings: Finding[]): ValidFocus[] {
+  const waiting = findings.filter((f) => f.rule === "pr_waiting").sort(byPriority);
+  const ids = new Set(waiting.map((f) => f.id));
+  return [...waiting.map((f) => ({ text: action(f), reason: reason(f), sources: [f] })),
+    ...focus.filter((i) => !i.sources.some((f) => ids.has(f.id)))].slice(0, MAX_FOCUS);
 }

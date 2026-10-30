@@ -29,7 +29,7 @@ describe("focus storage", () => {
     const until = new Date("2026-10-17T22:00:00Z");
     await setFocusStatus("2026-10-14", "snoozed", until);
     expect(pool.query.mock.calls[0][0]).toContain("WHERE id = (SELECT id FROM core.focus WHERE date=$1 ORDER BY created_at DESC, id DESC LIMIT 1)");
-    expect(pool.query.mock.calls[0][1]).toEqual(["2026-10-14", "snoozed", until]);
+    expect(pool.query.mock.calls[0][1]).toEqual(["2026-10-14", "snoozed", until, expect.any(Date)]);
     pool.query.mockResolvedValueOnce({ rows: [{ finding_id: "b" }] });
     expect(await snoozedFocusIds(new Date("2026-10-15T05:00:00Z"))).toEqual(new Set(["b"]));
     expect(pool.query.mock.calls[1][0]).toContain("status='snoozed' AND status_until > $1");

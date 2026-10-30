@@ -16,6 +16,25 @@ if (briefMode !== "rules" && briefMode !== "command" && briefMode !== "all") {
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || undefined;
 const telegramChatId = process.env.TELEGRAM_CHAT_ID?.trim() || undefined;
 
+// Comma-separated list: trims spaces and surrounding quotes on each entry and drops empties.
+const list = (v: string) => v.split(",").map((s) => s.trim().replace(/^["']+|["']+$/g, "").trim()).filter(Boolean);
+
+// Optional: repos always read, even when quiet or not owned. Discovery finds the rest.
+// An entry that isn't owner/repo can only fail to collect, so it is left out with a warning.
+const repos = list(process.env.CASE_REPOS ?? "").filter((r) => {
+  if (/^[\w.-]+\/[\w.-]+$/.test(r)) return true;
+  console.warn(`Ignoring CASE_REPOS entry "${r}": expected owner/repo.`);
+  return false;
+});
+
+// Discovered repos are read only if pushed to within this many days.
+let repoActiveDays = 14;
+const activeDays = process.env.CASE_REPO_ACTIVE_DAYS?.trim();
+if (activeDays) {
+  if (/^\d+$/.test(activeDays) && Number(activeDays) > 0) repoActiveDays = Number(activeDays);
+  else console.warn("Invalid CASE_REPO_ACTIVE_DAYS: expected a whole number of days; using 14.");
+}
+
 let delivery = (process.env.CASE_DELIVERY ?? "n8n").trim();
 if (delivery !== "n8n" && delivery !== "core") {
   console.warn("Invalid CASE_DELIVERY: expected n8n or core; using n8n.");
@@ -33,7 +52,12 @@ export const env = {
   databaseUrl: need("DATABASE_URL"),
   apiKey: need("CASE_API_KEY"),
   githubToken: need("GITHUB_TOKEN"),
-  repos: need("CASE_REPOS").split(",").map((r) => r.trim()).filter(Boolean),
+  repos,
+  // Globs for owned repos never discovered, matched against owner/repo and the bare repo name.
+  repoExclude: list(process.env.CASE_REPO_EXCLUDE ?? ""),
+  repoActiveDays,
+  // Globs for branches never compared or walked, e.g. asset branches with no common history.
+  branchExclude: list(process.env.CASE_BRANCH_EXCLUDE ?? "pr-assets/*"),
   telegramBotToken,
   telegramChatId,
 };

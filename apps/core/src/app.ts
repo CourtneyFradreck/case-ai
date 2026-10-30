@@ -3,6 +3,8 @@ import { env } from "./env.js";
 import { runBrief, BusyError } from "./pipeline.js";
 import { handleUpdate, isOwnerUpdate } from "./telegram-update.js";
 
+import { runCheckin } from "./checkin.js";
+
 export const app = new Hono();
 
 const requireKey: MiddlewareHandler = async (c, next) => {
@@ -10,6 +12,11 @@ const requireKey: MiddlewareHandler = async (c, next) => {
   await next();
 };
 app.use("/brief", requireKey);
+app.use("/checkin", requireKey);
+app.post("/checkin", async (c) => {
+  try { return c.json(await runCheckin()); }
+  catch (e) { console.error(e); return c.json({ error: "checkin_failed" }, 500); }
+});
 app.use("/telegram/*", requireKey);
 
 app.get("/health", (c) => c.json({ ok: true }));

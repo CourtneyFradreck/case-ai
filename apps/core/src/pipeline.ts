@@ -2,15 +2,20 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DateTime } from "luxon";
 import { env } from "./env.js";
+import { logsInWindow } from "./logs.js";
+import { completedFocusIds, answeredCheckinFocus } from "./checkin.js";
+import { logFindings, partlyForNextBrief, withPartlyNote } from "./self-reports.js";
+import { inWindow } from "./time.js";
 import { features } from "./features.js";
 import { pool } from "./db.js";
 import { pastWeekWindow } from "./time.js";
 import { activityTimes, selectRecap } from "./recap.js";
 import { isQuietMorning, quietText } from "./quiet.js";
-import { collectAll } from "./github/collect.js";
+import { collectAll, failedSnapshot } from "./github/collect.js";
+import { markAnnounced, resolveRepos, storeBranchCaches, unannouncedRepos, withBranchCaches } from "./repos.js";
 import { runRules } from "./rules/index.js";
 import { runIntentRules } from "./intent/rules.js";
-import { render } from "./render.js";
+import { newRepoText, render } from "./render.js";
 import { startRun, finishRun, storeSnapshots, storeNextItems, markMissingReported, storeFindings, storeBrief, previousBriefAt, snoozedFocusIds, storeBriefMessageId, storeBriefFocus, getFocus, previousRuns, activeSnoozes, storeBriefSnoozable, storeBriefSentText } from "./store.js";
 import { snoozable, snoozeButtonRow, withoutSnoozed } from "./snooze.js";
 import type { InlineKeyboardButton } from "./telegram.js";
@@ -19,7 +24,7 @@ import { gateOldBranches, oldBranchesDay } from "./old-branches.js";
 import { ZONE } from "./time.js";
 import { sendMessage } from "./telegram.js";
 import { generateModelBrief, fallbackMeta, type BriefMeta } from "./llm/brief.js";
-import { focusKeyboard, focusPeriod, leftOpen, rankNext, ready, ruleFocus, storedFocus, withMissingNext, yesterdayFocus } from "./focus.js";
+import { withWaitingReviews, focusKeyboard, focusPeriod, leftOpen, pickedRepo, rankNext, ready, ruleFocus, storedFocus, withMissingNext, withPickedRepo, yesterdayFocus } from "./focus.js";
 import type { ValidFocus } from "./llm/schema.js";
 
 const config = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "config.json"), "utf8"));
@@ -42,25 +47,39 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
   // Quiet mornings compare with the previous scheduled brief, so only scheduled briefs can be quiet.
   const quietCheck = features.quietMornings && source === "schedule";
   try {
-    const snaps = await collectAll(env.repos, history, config.ignoreAuthors);
+    const { repos, error: listError } = await resolveRepos(now.toJSDate(), undefined, undefined, history.start);
+    const snaps = await collectAll(await withBranchCaches(repos), history, config.ignoreAuthors);
+    if (listError) snaps.push(failedSnapshot("GitHub", listError));
     await storeSnapshots(runId, snaps);
+    await storeBranchCaches(snaps);
+    // A repo read for the first time gets a line in the brief, until a brief showing it is sent.
+    const newRepos = (await unannouncedRepos(snaps.filter((s) => !s.error).map((s) => s.repo)))
+      .map((repo) => ({ repo, hasNext: snaps.find((s) => s.repo === repo)?.next.status !== "missing" }));
     const { history: intentHistory, missingReported } = await storeNextItems(runId, snaps, now.toJSDate());
-    const { window: w, snapshots } = selectRecap(snaps, now);
+    const weekLogs = await logsInWindow(history);
+    const logTimes = weekLogs.map((log) => log.created_at.toISOString());
+    const { window: w, snapshots } = selectRecap(snaps, now, logTimes);
+    const logs = weekLogs.filter((log) => inWindow(log.created_at.toISOString(), w));
     const findings = runRules(snapshots, now.toJSDate(), config, w);
-    const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported);
-    const focusRow = features.focusButtons || quietCheck ? await getFocus(now.setZone(ZONE).minus({ days: 1 }).toISODate()!) : undefined;
+    const completed = features.focusButtons ? await completedFocusIds() : new Set<string>();
+    const intent = runIntentRules(snapshots, now.toJSDate(), config, intentHistory, missingReported, completed);
+    const focusDate = now.setZone(ZONE).minus({ days: 1 }).toISODate()!;
+    const answered = features.eveningCheckIn ? await answeredCheckinFocus(focusDate) : undefined;
+    const focusRow = answered ?? (features.focusButtons || quietCheck ? await getFocus(focusDate) : undefined);
     // Open NEXT.md items reach the model only as citations for focus suggestions; other intent findings are stored only.
     // Overdue items go last, for the model as for the rule-picked suggestions.
     // A snoozed focus keeps its finding out of suggestions for a few days. An item that waits on an open one above it is left out.
     const parked = features.focusButtons ? await snoozedFocusIds(now.toJSDate()) : new Set<string>();
-    const next = features.focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item" && ready(f) && !parked.has(f.id)), snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
+    const next = features.focusButtons ? rankNext(intent.filter((f) => f.rule === "next_item" && ready(f) && !parked.has(f.id) && !completed.has(f.id)), snaps, now.toJSDate(), config, focusRow?.finding_id) : [];
     // Items a merged PR likely finished get a tick-off line, written by code, instead of a suggestion.
     const done = features.focusButtons ? intent.filter((f) => f.rule === "next_likely_done") : [];
-    const period = features.focusButtons && focusRow ? focusPeriod(await previousBriefAt(runId), w, now.toJSDate()) : undefined;
-    const previousFocus = period ? yesterdayFocus(focusRow, snaps, period) : [];
-    await storeFindings(runId, [...findings, ...intent, ...previousFocus]);
+    const lastBrief = (features.focusButtons || answered) && focusRow ? await previousBriefAt(runId) : undefined;
+    const period = (features.focusButtons || answered) && focusRow ? focusPeriod(lastBrief, w, now.toJSDate()) : undefined;
+    const previousFocus = period ? yesterdayFocus(focusRow, snaps, period, focusDate) : [];
+    const partly = partlyForNextBrief(focusRow, focusDate, now, lastBrief);
+    await storeFindings(runId, [...findings, ...intent, ...previousFocus, ...logFindings(logs)]);
     // An active repo with no NEXT.md takes the last suggestion slot, added in code after the rules or the model pick the rest.
-    const missing = features.focusButtons ? intent.filter((f) => f.rule === "next_missing" && !parked.has(f.id)) : [];
+    const missing = features.focusButtons ? intent.filter((f) => f.rule === "next_missing" && !parked.has(f.id) && !completed.has(f.id)) : [];
     // Snoozed findings are stored as usual but left out of the brief, the model input and the suggestions.
     const unsnoozed = features.snooze ? withoutSnoozed(findings, await activeSnoozes(now.toJSDate())) : findings;
     // Streaks count previous scheduled runs, so only scheduled briefs collapse repeats.
@@ -77,9 +96,12 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     const { kept: active, collapsed, days } = collapsing
       ? collapseRepeats(visible.filter((f) => !leftOpen(f)), countStreaks(visible.map((f) => f.id), past), config.streakCollapseAfter ?? 3)
       : { kept: visible.filter((f) => !leftOpen(f)), collapsed: [], days: new Map<string, number>() };
+    // The repo of yesterday's focus keeps a suggestion while it has open NEXT.md items, on both paths.
+    const picked = features.focusButtons ? pickedRepo(focusRow, snaps.filter((s) => !s.error).map((s) => s.repo)) : undefined;
     // The rule-only brief, and the model's fallback, pick focus suggestions in code.
-    const rulesFocus = features.focusButtons ? withMissingNext(ruleFocus(active.filter((f) => !parked.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), missing) : [];
-    const options = { userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering };
+    const rulesFocus = features.focusButtons ? withPartlyNote(withWaitingReviews(withMissingNext(withPickedRepo(ruleFocus(active.filter((f) => !parked.has(f.id) && !completed.has(f.id)), next, snaps, now.toJSDate(), config, focusRow?.finding_id), next, picked, focusRow?.finding_id), missing), active.filter((f) => !parked.has(f.id) && !completed.has(f.id))), partly) : [];
+    // Busy repos' merged PRs share one line, except when the model writes every brief.
+    const options = { logs, userName: config.userName, now, previousFocus, collapsed, days, done, leftOpen: lingering, newRepos, collapsePrs: env.briefMode !== "all" };
     const renderRules = (footer?: string) => render(active, snaps, w, config.maxBriefChars, footer, options, rulesFocus);
     const ruleText = renderRules();
     let text = ruleText;
@@ -89,7 +111,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
       try {
         const { GeminiBriefModel } = await import("./llm/gemini.js");
         const provider = new GeminiBriefModel(env.geminiApiKey!, env.geminiModel, config.modelTimeoutMs);
-        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked, missing }, provider, now);
+        const result = await generateModelBrief([...active, ...next], snaps, w, { ...config, logs, partly, focus: features.focusButtons, previousFocus, collapsed, days, done, leftOpen: lingering, parked: new Set([...parked, ...completed]), missing, newRepos, picked: picked && { repo: picked, findingId: focusRow?.finding_id ?? null } }, provider, now);
         meta = { model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, json: result.json };
         text = "text" in result ? result.text : renderRules("Rule-only brief: model unavailable");
         if ("text" in result) focus = result.focus;
@@ -100,7 +122,7 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     }
     // Compared as stored, so today's IDs match what the previous run stored.
     const attentionIds = [...findings, ...intent, ...previousFocus].filter((f) => f.severity !== "info").map((f) => f.id);
-    const activity = activityTimes(snaps, now);
+    const activity = [...activityTimes(snaps, now), ...logTimes];
     quiet = quietCheck && isQuietMorning(attentionIds, lastScheduledRun(past), activity, now.setZone(ZONE).startOf("day").toJSDate());
     // The full brief is stored either way; a quiet morning only changes what is sent.
     const sent = quiet ? quietText(activity, now, focusRow?.item_text ?? active.find((f) => f.severity !== "info")?.summary) : text;
@@ -111,6 +133,8 @@ export async function runBrief(source: "schedule" | "command", now: DateTime = D
     // Only a suggestion actually shown starts the week before the repo is suggested again.
     if (!quiet) await markMissingReported([...new Set(focus.flatMap((i) => i.sources).filter((f) => f.rule === "next_missing").map((f) => f.repo))]);
     if (snoozeItems.length) await storeBriefSnoozable(briefId, snoozeItems);
+    // Only a line actually sent counts: a quiet morning or a truncated brief announces it next time.
+    if (!quiet) await markAnnounced(newRepos.filter((r) => sent.includes(newRepoText(r.repo))).map((r) => r.repo));
     await finishRun(runId, snaps.some((s) => s.error) ? "partial" : "ok");
     if (env.delivery === "core") {
       // A failed send returns delivered: false, so n8n sends the text instead and the brief still arrives.

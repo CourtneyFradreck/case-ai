@@ -3,6 +3,9 @@ import { DateTime } from "luxon";
 import { snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({ generate: vi.fn(), collectAll: vi.fn(), storeBrief: vi.fn() }));
+vi.mock("../src/repos.js", () => ({ resolveRepos: async () => ({ repos: ["me/demo"] }), unannouncedRepos: async () => [], markAnnounced: async () => {}, withBranchCaches: async (repos: string[]) => repos, storeBranchCaches: async () => {} }));
+vi.mock("../src/logs.js", () => ({ logsInWindow: async () => [] }));
+vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set() }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: vi.fn() }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
 vi.mock("../src/store.js", () => ({ startRun: async () => 7, finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: async () => ({ history: new Map(), missingReported: new Set() }), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: mocks.storeBrief }));

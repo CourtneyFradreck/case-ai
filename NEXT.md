@@ -64,10 +64,19 @@
 - [x] Redeploy and check the next 07:00 brief: no taga suggestion, one CASE_BRIEF_MODE step, "You picked" line
 - [x] Tick "Merge M2" and the CASE_BRIEF_MODE=command step in NEXT.md on main, so the tick-off line and stale suggestions stop
 
-## M4 Non-code (next)
+## M4 Non-code
 
-Starts after the M3 trial in #4 ends.
-
-- [ ] /log command writing to activity_logs
-- [ ] Evening check-in (~20:00–21:00) asking how today's focus went: Done / Partly / Didn't touch it
-- [ ] Show logged non-code work in the next morning's yesterday section
+- [x] /log and /undo commands writing to activity_logs
+- [x] Evening check-in asking how today's focus went: Done / Partly / Didn't touch it
+- [x] Show logged non-code work in the morning recap without sending logs to the model
+- [x] Count logs and merged PRs in the activity sentence; include check-in completion in suggestions
+- [x] Migrations 013 and 014 deployed; keep both unchanged
+- [x] Latest focus answer wins; yesterday check-in line ends with one full stop
+- [x] Migration 015: daily check-in records, pauses, focus-linked logs; replace checkin_pending
+- [x] Idempotent sends and retries; eveningCheckIn.cutoff defaults to 22:00 Harare
+- [x] /pause and /pause <n> (1–30 days), /unpause; evening check-ins only
+- [x] Late buttons until next-day noon; optional why reply before midnight, then logs
+- [x] Stable self_log / self_checkin findings kept out of model input; Partly note on next day's first brief
+- [ ] Redeploy core/config for migration 015; confirm features.eveningCheckIn and eveningCheckIn.cutoff
+- [ ] Re-import evening-checkin.json with Header Auth and errors workflow; activate its 15:45, 16:15 and 16:45 Africa/Harare triggers, keeping retryOnFail
+- [ ] Verify duplicate sends stay silent, pause/unpause, why then log, midnight text expiry, late buttons and the following morning's recap in production

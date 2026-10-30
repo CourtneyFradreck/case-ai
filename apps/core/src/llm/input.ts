@@ -1,4 +1,5 @@
 import type { Finding, RepoSnapshot } from "../types.js";
+import { selfReported } from "../self-reports.js";
 
 export const SYSTEM_PROMPT = `You are CASE, the user's morning brief assistant. You turn a list of findings about their GitHub repos into a short, plain-English brief for Telegram.
 
@@ -41,6 +42,7 @@ export function buildInput(findings: Finding[], snaps: RepoSnapshot[], windowLab
   const excluded: Finding[] = [];
   const lines: string[] = [];
   for (const f of findings) {
+    if (selfReported(f)) continue;
     // old_branches can span public and private repositories.
     if (!cfg.modelIncludePrivate && f.repo.split(", ").some((r) => privateRepos.has(r))) {
       excluded.push(f);

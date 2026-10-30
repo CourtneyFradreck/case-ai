@@ -28,6 +28,10 @@ const repoName = (repo: string) => repo.split("/").pop()!;
 export function shortLabel(f: { rule: string; repo: string; summary: string }): string {
   const name = repoName(f.repo);
   const pr = /^PR #(\d+) "/.exec(f.summary);
+  if (f.rule === "pr_waiting") {
+    const waiting = /PR #(\d+)/.exec(f.summary);
+    return `PR #${waiting?.[1] ?? "?"} in ${name} waiting on your review`;
+  }
   const branch = /^Branch (\S+) in /.exec(f.summary);
   const thread = /^\d+ new comments? on (PR|issue) #(\d+) "/.exec(f.summary);
   if (f.rule === "idle_pr" && pr) return `idle PR #${pr[1]} in ${name}`;

@@ -1,18 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DateTime } from "luxon";
 import { finding, snap } from "./fixtures.js";
 
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(), query: vi.fn(), release: vi.fn(), collectAll: vi.fn(), runRules: vi.fn(),
   startRun: vi.fn(), finishRun: vi.fn(), storeSnapshots: vi.fn(), storeNextItems: vi.fn(), markMissingReported: vi.fn(), storeFindings: vi.fn(), storeBrief: vi.fn(), previousBriefAt: vi.fn(), storeBriefMessageId: vi.fn(), storeBriefFocus: vi.fn(), getFocus: vi.fn(), sendMessage: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", geminiApiKey: "test", geminiModel: "test-model", repos: ["me/demo"] },
-  features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false },
+  features: { focusButtons: false, streaks: false, snooze: false, quietMornings: false, eveningCheckIn: false },
+  answeredCheckinFocus: vi.fn(),
   previousRuns: vi.fn(), activeSnoozes: vi.fn(), storeBriefSnoozable: vi.fn(), storeBriefSentText: vi.fn(),
   parked: new Set<string>(),
+  logs: [] as { id: string; text: string; tag: string | null; created_at: Date }[],
+  // Plain functions over shared state, so vi.resetAllMocks leaves them working.
+  repos: { list: ["me/demo"], error: undefined as string | undefined, unannounced: new Set<string>(), announced: [] as string[][] },
 }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
+vi.mock("../src/repos.js", () => ({
+  resolveRepos: async () => ({ repos: mocks.repos.list, error: mocks.repos.error }),
+  withBranchCaches: async (repos: string[]) => repos,
+  storeBranchCaches: async () => {},
+  unannouncedRepos: async (repos: string[]) => repos.filter((r) => mocks.repos.unannounced.has(r)),
+  markAnnounced: async (repos: string[]) => { mocks.repos.announced.push(repos); for (const r of repos) mocks.repos.unannounced.delete(r); },
+}));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
+vi.mock("../src/logs.js", () => ({ logsInWindow: async () => mocks.logs }));
+vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set(), answeredCheckinFocus: mocks.answeredCheckinFocus }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
-vi.mock("../src/github/collect.js", () => ({ collectAll: mocks.collectAll }));
+vi.mock("../src/github/collect.js", async (actual) => ({ collectAll: mocks.collectAll, failedSnapshot: (await actual<typeof import("../src/github/collect.js")>()).failedSnapshot }));
 vi.mock("../src/rules/index.js", () => ({ runRules: mocks.runRules }));
 vi.mock("../src/store.js", () => ({ startRun: mocks.startRun, finishRun: mocks.finishRun, storeSnapshots: mocks.storeSnapshots, storeNextItems: mocks.storeNextItems, markMissingReported: mocks.markMissingReported, storeFindings: mocks.storeFindings, storeBrief: mocks.storeBrief, previousBriefAt: mocks.previousBriefAt, snoozedFocusIds: async () => mocks.parked, storeBriefMessageId: mocks.storeBriefMessageId, storeBriefFocus: mocks.storeBriefFocus, getFocus: mocks.getFocus, previousRuns: mocks.previousRuns, activeSnoozes: mocks.activeSnoozes, storeBriefSnoozable: mocks.storeBriefSnoozable, storeBriefSentText: mocks.storeBriefSentText }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage }));
@@ -20,6 +34,11 @@ vi.mock("../src/llm/gemini.js", () => ({ GeminiBriefModel: class { name = "test-
 import { runBrief } from "../src/pipeline.js";
 import { render } from "../src/render.js";
 import { yesterdayWindow } from "../src/time.js";
+
+beforeEach(() => {
+  mocks.logs = []; mocks.features.eveningCheckIn = false;
+  mocks.repos = { list: ["me/demo"], error: undefined, unannounced: new Set(), announced: [] };
+});
 
 describe("model pipeline", () => {
   beforeEach(() => {
@@ -227,6 +246,25 @@ describe("intent findings in the pipeline", () => {
       expect(result.text).not.toContain("NEXT.md");
     });
     const active = () => mocks.collectAll.mockResolvedValue([snap({ next, branches: [{ name: "main", sha: "abc", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: "https://github.com/me/demo/tree/main" }] })]);
+    it.each(["rules", "all"])("stores self reports and adds Partly after validation in %s mode, on the next brief only", async (mode) => {
+      active();
+      mocks.env.briefMode = mode;
+      mocks.features.eveningCheckIn = true;
+      mocks.logs = [{ id: "12", text: "Private pitch edits", tag: "sales", created_at: new Date("2026-10-13T12:00:00Z") }];
+      mocks.answeredCheckinFocus.mockResolvedValue({ item_text: "Secret focus label", repo: "me/demo", finding_id: "next_abcdef0123", checkin: "partly", created_at: new Date("2026-10-13T06:00:00Z") });
+      mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [{ text: "Model progress", sources: ["F1"] }], attention: [], focus: [{ text: "Ship the parser", reason: "Next step", sources: ["F2"] }] }), model: "test-model" });
+      const first = await runBrief("schedule");
+      expect(first.text).toContain("Ship the parser (partly done yesterday)");
+      expect(first.text).toContain("Secret focus label, partly done.");
+      expect(mocks.storeFindings.mock.calls[0][1]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ rule: "self_log", summary: "Private pitch edits", sources: [{ label: "you", kind: "self_reported" }] }),
+        expect.objectContaining({ rule: "self_checkin", severity: "info" }),
+      ]));
+      expect(JSON.stringify(mocks.generate.mock.calls)).not.toMatch(/Private pitch|Secret focus|partly done yesterday/);
+      mocks.previousBriefAt.mockResolvedValue(new Date("2026-10-14T05:00:00Z"));
+      const second = await runBrief("command", DateTime.fromISO("2026-10-14T06:00:00Z"));
+      expect(second.text).not.toContain("(partly done yesterday)");
+    });
     it("adds rule-picked suggestions to the rule-only brief and stores them", async () => {
       active();
       mocks.storeBrief.mockResolvedValue(70);
@@ -541,6 +579,12 @@ describe("quiet mornings in the pipeline", () => {
     expect(mocks.storeBriefSentText).toHaveBeenCalledWith(70, result.text);
     expect(JSON.parse(vi.mocked(console.info).mock.calls[0][0])).toMatchObject({ quiet: true });
   });
+  it("does not quiet a morning with logged activity since the previous scheduled brief", async () => {
+    mocks.logs = [{ id: "1", text: "Pitch edits", tag: null, created_at: new Date("2026-10-13T14:00Z") }];
+    const result = await runBrief("schedule");
+    expect(result.text).toContain("Pitch edits");
+    expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
+  });
   it("asks about yesterday's focus when there is one", async () => {
     mocks.getFocus.mockResolvedValue({ item_text: "Ship the parser", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });
     expect((await runBrief("schedule")).text).toBe("Nothing has moved since Monday. Still on Ship the parser?");
@@ -594,5 +638,166 @@ describe("quiet mornings in the pipeline", () => {
     expect((await runBrief("schedule")).text).toContain("Needs attention");
     expect(mocks.previousRuns).not.toHaveBeenCalled();
     expect(mocks.storeBriefSentText).not.toHaveBeenCalled();
+  });
+});
+
+describe("discovered repos", () => {
+  const demo = snap({ commits: [{ sha: "abc", message: "Progress", url: "https://github.com/me/demo/commit/abc", author: "me", branch: "main", date: "2026-10-13T10:00:00Z" }] });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.env.briefMode = "rules";
+    mocks.env.delivery = "n8n";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.runRules.mockReturnValue([finding()]);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("collects the resolved repos", async () => {
+    mocks.repos.list = ["me/demo", "me/1710"];
+    mocks.collectAll.mockResolvedValue([demo, snap({ repo: "me/1710" })]);
+    await runBrief("schedule");
+    expect(mocks.collectAll).toHaveBeenCalledWith(["me/demo", "me/1710"], expect.anything(), expect.anything());
+  });
+  it("says a first-seen repo was picked up exactly once, noting a missing NEXT.md", async () => {
+    mocks.repos.list = ["me/demo", "me/1710"];
+    mocks.repos.unannounced = new Set(["me/1710"]);
+    mocks.collectAll.mockResolvedValue([demo, snap({ repo: "me/1710", next: { status: "missing" } })]);
+    const first = await runBrief("schedule");
+    expect(first.text).toContain("New repo picked up: 1710\n1710 has no <code>NEXT.md</code> yet");
+    expect(first.text).not.toContain("New repo picked up: demo");
+    expect(mocks.repos.announced).toEqual([["me/1710"]]);
+    const second = await runBrief("schedule");
+    expect(second.text).not.toContain("New repo picked up");
+  });
+  it("leaves out the NEXT.md line when the new repo has one", async () => {
+    mocks.repos.unannounced = new Set(["me/demo"]);
+    mocks.collectAll.mockResolvedValue([{ ...demo, next: { status: "ok", sha: "n", url: "https://github.com/me/demo/blob/main/NEXT.md", lastChangedAt: null, items: [] } }]);
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("New repo picked up: demo");
+    expect(text).not.toContain("has no");
+  });
+  it("doesn't announce a new repo that couldn't be read", async () => {
+    mocks.repos.list = ["me/demo", "me/1710"];
+    mocks.repos.unannounced = new Set(["me/1710"]);
+    mocks.collectAll.mockResolvedValue([demo, snap({ repo: "me/1710", error: "Couldn't read branches in 1710 (500)" })]);
+    const { text } = await runBrief("schedule");
+    expect(text).not.toContain("New repo picked up");
+    expect(mocks.repos.unannounced.has("me/1710")).toBe(true);
+  });
+  it("shows a failed repo listing as an error line and marks the run partial", async () => {
+    mocks.repos.error = "Couldn't list your repos (401: check the token), so only CASE_REPOS and recently active repos were read";
+    mocks.collectAll.mockResolvedValue([demo]);
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("<i>Couldn't list your repos (401: check the token), so only CASE_REPOS and recently active repos were read</i>");
+    expect(mocks.finishRun).toHaveBeenCalledWith(7, "partial");
+  });
+});
+
+// 29 Oct brief: 1710's open NEXT.md items were missing from "Today, I'd suggest" though it was yesterday's focus.
+describe("NEXT.md items from a newly discovered repo", () => {
+  const nextFile = (repo: string, items: [string, string][]) => ({
+    status: "ok" as const, sha: `${repo}-n`, url: `https://github.com/${repo}/blob/main/NEXT.md`, lastChangedAt: "2026-10-12T10:00:00Z",
+    items: items.map(([id, text], n) => ({ id, text, section: "Now", state: "open" as const, line: n + 2 })),
+  });
+  const main = (repo: string) => [{ name: "main", sha: "h", lastCommitAt: "2026-10-13T10:00:00Z", aheadBy: 0, url: `https://github.com/${repo}/tree/main` }];
+  const caseAi = snap({ repo: "me/case-ai", branches: main("me/case-ai"), next: nextFile("me/case-ai", [["c1", "Ship the parser"], ["c2", "Write the docs"]]) });
+  const notes = snap({ repo: "me/CourtNotes", branches: main("me/CourtNotes"), next: nextFile("me/CourtNotes", [["n1", "Tag notes"]]) });
+  const s1710 = (priv: boolean) => snap({ repo: "me/1710", private: priv, branches: main("me/1710"), next: nextFile("me/1710", [["p1", "Finish phase 1"], ["p3", "Finish phase 3"]]) });
+  const reasons = () => vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(String(line))).find((l) => l.event === "brief")?.focusReasons;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.features.focusButtons = true;
+    mocks.env.briefMode = "rules";
+    mocks.env.delivery = "n8n";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.runRules.mockReturnValue([finding()]);
+    mocks.repos.list = ["me/case-ai", "me/CourtNotes", "me/1710"];
+    mocks.repos.unannounced = new Set(["me/1710"]);
+    mocks.getFocus.mockResolvedValue({ item_text: "finish 1710 phase 1 and 3", repo: null, finding_id: null, created_at: new Date("2026-10-13T06:00:00Z") });
+  });
+  afterEach(() => { mocks.features.focusButtons = false; vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("makes every open item a candidate on the repo's first run", async () => {
+    mocks.getFocus.mockResolvedValue(undefined);
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(false)]);
+    const { text } = await runBrief("schedule");
+    const stored = mocks.storeFindings.mock.calls[0][1].filter((f: { rule: string }) => f.rule === "next_item").map((f: { id: string }) => f.id);
+    expect(stored).toEqual(expect.arrayContaining(["next_c1", "next_c2", "next_n1", "next_p1", "next_p3"]));
+    expect(text).toContain("New repo picked up: 1710");
+  });
+  it("sends a public new repo's items to the model on its first run", async () => {
+    mocks.env.briefMode = "all";
+    mocks.getFocus.mockResolvedValue(undefined);
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(false)]);
+    mocks.generate.mockResolvedValue({ raw: JSON.stringify({ yesterday: [], attention: [], focus: [] }), model: "test-model" });
+    await runBrief("schedule");
+    expect(mocks.generate.mock.calls[0][1]).toContain("next_item | me/1710 | Next in me/1710: Finish phase 1");
+  });
+  it("suggests a 1710 item first on the rule path when 1710 was yesterday's focus", async () => {
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(true)]);
+    const { text } = await runBrief("schedule");
+    expect(text).toMatch(/Today, I'd suggest<\/b>\n1\. Finish phase 1 /);
+    expect(reasons()?.[0]).toEqual({ findingId: "next_p1", reason: "Repo you picked yesterday" });
+  });
+  it("adds a 1710 item in code when the model never saw the private repo", async () => {
+    mocks.env.briefMode = "all";
+    mocks.collectAll.mockResolvedValue([caseAi, notes, s1710(true)]);
+    mocks.generate.mockImplementation(async (_system: string, user: string) => {
+      const alias = (text: string) => user.split("\n").find((l) => l.includes(text))!.split(" | ")[0];
+      return { raw: JSON.stringify({ yesterday: [], attention: [], focus: [
+        { text: "Ship the parser", reason: "Open in NEXT.md", sources: [alias("Ship the parser")] },
+        { text: "Write the docs", reason: "Open in NEXT.md", sources: [alias("Write the docs")] },
+        { text: "Tag notes", reason: "Open in NEXT.md", sources: [alias("Tag notes")] },
+      ] }), model: "test-model" };
+    });
+    const { text } = await runBrief("schedule");
+    expect(mocks.generate.mock.calls[0][1]).not.toContain("1710");
+    expect(text).toMatch(/Today, I'd suggest<\/b>\n1\. Finish phase 1 [^\n]*\n2\. Ship the parser [^\n]*\n3\. Write the docs/);
+    expect(reasons()?.[0]).toEqual({ findingId: "next_p1", reason: "Repo you picked yesterday" });
+  });
+});
+
+describe("busy repos' merged PRs in the pipeline", () => {
+  const merges = [2, 3, 4, 5].map((n) => finding({ id: `pr-${n}`, rule: "merged_pr", severity: "info", summary: `Merged PR #${n} "Phase ${n}" in me/demo`,
+    activity: { kind: "pr", action: "Merged", number: n, title: `Phase ${n}` }, sources: [{ label: "PR", url: `https://github.com/me/demo/pull/${n}` }] }));
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T05:00:00Z"));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.env.delivery = "n8n";
+    mocks.query.mockResolvedValue({ rows: [{ ok: true }] });
+    mocks.startRun.mockResolvedValue(7);
+    mocks.storeBrief.mockResolvedValue(70);
+    mocks.storeNextItems.mockResolvedValue({ history: new Map(), missingReported: new Set() });
+    mocks.collectAll.mockResolvedValue([snap()]);
+    mocks.runRules.mockReturnValue(merges);
+    mocks.generate.mockRejectedValue(new Error("down"));
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  it.each(["rules", "command"])("collapses them in %s mode", async (mode) => {
+    mocks.env.briefMode = mode;
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("4 PRs merged (#2–#5), covering Phases 2–5.");
+    expect(text).not.toContain("Merged PR #2");
+  });
+  it("lists them in all mode, even on the rule-only fallback", async () => {
+    mocks.env.briefMode = "all";
+    const { text } = await runBrief("schedule");
+    expect(text).toContain("Rule-only brief: model unavailable");
+    expect(text).toContain('Merged PR #2 "Phase 2"');
+    expect(text).not.toContain("PRs merged (");
   });
 });

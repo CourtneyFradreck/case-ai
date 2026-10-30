@@ -8,14 +8,14 @@ import { DateTime } from "luxon";
 const gh = vi.hoisted(() => ({
   paginate: vi.fn(),
   repos: { get: vi.fn(), getContent: vi.fn(), listBranches: vi.fn(), getCommit: vi.fn(), listCommits: vi.fn(), compareCommitsWithBasehead: vi.fn() },
-  pulls: { list: vi.fn(), listCommits: vi.fn() },
-  issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn() },
+  pulls: { list: vi.fn(), listCommits: vi.fn(), listReviews: vi.fn(), listReviewComments: vi.fn() },
+  issues: { listForRepo: vi.fn(), listCommentsForRepo: vi.fn(), listComments: vi.fn(), listEventsForTimeline: vi.fn() },
   users: { getAuthenticated: vi.fn() },
   actions: { listRepoWorkflows: vi.fn(), listWorkflowRunsForRepo: vi.fn() },
 }));
 vi.mock("@octokit/rest", () => ({ Octokit: class { constructor() { return gh; } } }));
-vi.mock("../src/env.js", () => ({ env: { githubToken: "test" } }));
-import { collectAll } from "../src/github/collect.js";
+vi.mock("../src/env.js", () => ({ env: { githubToken: "test", branchExclude: ["pr-assets/*"] } }));
+import { collectAll, forgetNoCommonHistory, matchesGlob } from "../src/github/collect.js";
 
 describe("workflow collection", () => {
   const states = ["active", "disabled_manually", "disabled_inactivity", "disabled_fork", "deleted"];
@@ -98,9 +98,11 @@ describe("15 Oct commit attribution regression", () => {
     for (const text of [template, model]) {
       expect(text).toContain("9 commits on feat/m2-model-brief");
       expect(text).toContain("A README update on main.");
-      expect(text).toContain('Merged PR #2 "GitHub morning brief pipeline and activity rules".');
+      expect(text).toContain('Merged PR #2 "GitHub morning brief pipeline and activity rules" (5 commits).');
       expect(text).not.toContain("15 commits");
       expect(text).not.toContain("Merge pull request");
+      // The PR's own commits count once, as the merge: 9 unique feature commits and 1 on main, plus the PR.
+      expect(text).toContain("Big case-ai day yesterday: 10 commits, most on feat/m2-model-brief plus a PR merged.");
     }
     expect(model).toBe(template);
   });
@@ -231,7 +233,7 @@ describe("issue activity collection", () => {
   });
   it("keeps safe defaults for a failed repo", async () => {
     gh.repos.get.mockRejectedValue(new Error("unavailable"));
-    expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "unavailable" });
+    expect((await collect())[0]).toMatchObject({ closedIssues: [], comments: [], openIssueCount: 0, error: "Couldn't access me/demo (unavailable)" });
   });
 });
 
@@ -286,7 +288,7 @@ describe("NEXT.md collection", () => {
       ? Array.from({ length: 4 }, (_, n) => ({ number: n, user: { login: "tendai" } })) : []);
     const s = await collect();
     expect(s.error).toBeUndefined();
-    expect(s.next).toEqual({ status: "error", error: "GitHub 500" });
+    expect(s.next).toEqual({ status: "error", error: "Couldn't read NEXT.md in demo (500)" });
     expect(s).toMatchObject({ private: true, defaultBranch: "trunk", openIssueCount: 4 });
     expect(gh.actions.listWorkflowRunsForRepo).toHaveBeenCalled();
   });
@@ -302,5 +304,262 @@ describe("NEXT.md collection", () => {
   it("records an error when NEXT.md is a directory", async () => {
     gh.repos.getContent.mockResolvedValue({ data: [] });
     expect((await collect()).next).toEqual({ status: "error", error: "NEXT.md is not a file" });
+  });
+});
+
+describe("branch globs", () => {
+  it.each([
+    ["pr-assets/phase-1-ios-shell", "pr-assets/*", true],
+    ["pr-assets/a/b", "pr-assets/*", false],
+    ["pr-assets/a/b", "pr-assets/**", true],
+    ["gh-pages", "gh-pages", true],
+    ["gh-pages-old", "gh-pages", false],
+    ["feat.x", "feat?x", true],
+    ["featyx", "feat.x", false],
+  ])("matches %s against %s: %s", (name, glob, expected) => {
+    expect(matchesGlob(name, glob)).toBe(expected);
+  });
+});
+
+describe("per-branch isolation", () => {
+  const httpError = (status: number, url?: string) => Object.assign(new Error(`HTTP ${status}`), { status, ...(url ? { request: { method: "GET", url } } : {}) });
+  const head = (name: string, sha = `${name}-sha`) => ({ name, commit: { sha } });
+  let branches: ReturnType<typeof head>[];
+  let compare: Record<string, number | Error>;
+  const w = { start: new Date(daysAgo(2)), end: new Date(NOW.getTime() + 1000), label: "test" };
+  const collect = async () => (await collectAll(["CourtneyFradreck/1710"], w, []))[0];
+  const logged = (spy: unknown) => (spy as { mock: { calls: unknown[][] } }).mock.calls.map(([line]) => JSON.parse(String(line)));
+  beforeEach(() => {
+    vi.resetAllMocks();
+    forgetNoCommonHistory();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    branches = [head("main"), head("feature"), head("orphan"), head("pr-assets/phase-1-ios-shell")];
+    compare = { feature: 2, orphan: httpError(404, "https://api.github.com/repos/CourtneyFradreck/1710/compare/main...orphan?per_page=1") };
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "me" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, created_at: daysAgo(30) } });
+    gh.repos.getContent.mockResolvedValue({ data: { type: "file", sha: "n", content: Buffer.from("- [ ] Ship\n").toString("base64") } });
+    gh.repos.listCommits.mockResolvedValue({ data: [] });
+    gh.repos.getCommit.mockResolvedValue({ data: { commit: { committer: { date: daysAgo(1) } } } });
+    gh.repos.compareCommitsWithBasehead.mockImplementation(async ({ basehead }) => {
+      const result = compare[basehead.split("...")[1]];
+      if (result instanceof Error) throw result;
+      return { data: { ahead_by: result } };
+    });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockImplementation(async (endpoint, params) => {
+      if (endpoint === gh.repos.listBranches) return branches;
+      if (endpoint === gh.repos.listCommits) return [{ sha: `${params.sha}-c`, html_url: "u", author: { login: "me" }, parents: [{ sha: "p" }],
+        commit: { message: `Work on ${params.sha}`, committer: { date: NOW.toISOString() } } }];
+      return [];
+    });
+  });
+
+  it("keeps the repo when one branch's compare returns 404, skipping only that branch", async () => {
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["main", 0], ["feature", 2]]);
+    expect(s.warnings).toEqual(["Skipped branch orphan in 1710 (no common history with main)"]);
+    expect(s.next).toMatchObject({ status: "ok" });
+    expect(s.commits.map((c) => c.branch)).toEqual(["main", "feature"]);
+    expect(logged(console.warn)).toContainEqual(expect.objectContaining({
+      event: "github_error", repo: "CourtneyFradreck/1710", branch: "orphan", status: 404,
+      endpoint: "GET /repos/CourtneyFradreck/1710/compare/main...orphan?per_page=1",
+    }));
+  });
+  it("skips a branch with no common history quietly until its head changes", async () => {
+    await collect();
+    gh.repos.compareCommitsWithBasehead.mockClear();
+    const again = await collect();
+    expect(again.warnings).toBeUndefined();
+    expect(gh.repos.compareCommitsWithBasehead.mock.calls.map(([p]) => p.basehead)).toEqual(["main...feature"]);
+    expect(logged(console.info)).toContainEqual({ event: "github_branch_skipped", repo: "CourtneyFradreck/1710", branch: "orphan", reason: "no common history with main" });
+    branches[2] = head("orphan", "new-sha");
+    expect((await collect()).warnings).toEqual(["Skipped branch orphan in 1710 (no common history with main)"]);
+  });
+  it("never reads excluded branches and leaves them out of the brief", async () => {
+    const s = await collect();
+    expect(gh.repos.getCommit).not.toHaveBeenCalledWith(expect.objectContaining({ ref: "pr-assets/phase-1-ios-shell-sha" }));
+    expect(gh.repos.compareCommitsWithBasehead).not.toHaveBeenCalledWith(expect.objectContaining({ basehead: "main...pr-assets/phase-1-ios-shell" }));
+    expect(s.branches.map((b) => b.name)).not.toContain("pr-assets/phase-1-ios-shell");
+    expect(s.warnings?.join()).not.toContain("pr-assets");
+    expect(logged(console.info)).toContainEqual({ event: "github_branch_skipped", repo: "CourtneyFradreck/1710", branch: "pr-assets/phase-1-ios-shell", reason: "excluded by pr-assets/*" });
+  });
+  it("compares with the repo's default branch when it isn't main", async () => {
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "trunk", private: false, created_at: daysAgo(30) } });
+    branches = [head("trunk"), head("feature"), head("orphan")];
+    const s = await collect();
+    expect(gh.repos.compareCommitsWithBasehead.mock.calls.map(([p]) => p.basehead)).toEqual(["trunk...feature", "trunk...orphan"]);
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["trunk", 0], ["feature", 2]]);
+    expect(s.warnings).toEqual(["Skipped branch orphan in 1710 (no common history with trunk)"]);
+    expect(gh.repos.getContent).toHaveBeenCalledWith(expect.objectContaining({ ref: "trunk" }));
+  });
+  it("skips a branch on a 422 or other unexpected failure without caching it", async () => {
+    compare = { feature: httpError(422), orphan: 1 };
+    gh.repos.getCommit.mockImplementation(async ({ ref }) => {
+      if (ref === "orphan-sha") throw httpError(500);
+      return { data: { commit: { committer: { date: daysAgo(1) } } } };
+    });
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.branches.map((b) => b.name)).toEqual(["main"]);
+    expect(s.warnings).toEqual(["Skipped branch feature in 1710 (422)", "Skipped branch orphan in 1710 (500)"]);
+    expect((await collect()).warnings).toHaveLength(2);
+  });
+  it("skips commits on a branch whose commit list fails, keeping the others", async () => {
+    const paginate = gh.paginate.getMockImplementation()!;
+    gh.paginate.mockImplementation(async (endpoint, params) => {
+      if (endpoint === gh.repos.listCommits && params.sha === "feature") throw httpError(502);
+      return paginate(endpoint, params);
+    });
+    const s = await collect();
+    expect(s.error).toBeUndefined();
+    expect(s.commits.map((c) => c.branch)).toEqual(["main"]);
+    expect(s.warnings).toContain("Skipped commits on feature in 1710 (502)");
+  });
+  it("reports a repo-level 401 as a repo failure naming the token", async () => {
+    gh.repos.get.mockRejectedValue(httpError(401, "https://api.github.com/repos/CourtneyFradreck/1710"));
+    const s = await collect();
+    expect(s.error).toBe("Couldn't access CourtneyFradreck/1710 (401: check the token)");
+    expect(s.branches).toEqual([]);
+    expect(logged(console.warn)).toContainEqual(expect.objectContaining({ event: "github_error", endpoint: "GET /repos/CourtneyFradreck/1710", status: 401 }));
+  });
+  it("reports a repo-level 404 as not found or not visible", async () => {
+    gh.repos.get.mockRejectedValue(httpError(404));
+    expect((await collect()).error).toBe("Couldn't access CourtneyFradreck/1710 (404: not found, or the token can't see it)");
+  });
+  it("names the repo-level call that failed after the repo was found", async () => {
+    gh.paginate.mockImplementation(async (endpoint) => {
+      if (endpoint === gh.repos.listBranches) throw httpError(500);
+      return [];
+    });
+    const s = await collect();
+    expect(s.error).toBe("Couldn't read branches in 1710 (500)");
+    expect(logged(console.warn)).toContainEqual(expect.objectContaining({ endpoint: "GET /repos/{owner}/{repo}/branches", status: 500 }));
+  });
+});
+
+describe("branch cache", () => {
+  const PUSHED = "2026-10-12T09:00:00Z";
+  const cached = (over = {}) => ({ pushedAt: PUSHED, base: "main", branches: [
+    { name: "main", sha: "m", lastCommitAt: daysAgo(1), aheadBy: 0, url: "https://github.com/me/demo/tree/main" },
+    { name: "keep-open", sha: "k", lastCommitAt: daysAgo(90), aheadBy: 4, url: "https://github.com/me/demo/tree/keep-open" },
+    { name: "pr-assets/shots", sha: "a", lastCommitAt: daysAgo(3), aheadBy: 1, url: "https://github.com/me/demo/tree/pr-assets/shots" },
+  ], ...over });
+  const collect = async (branchCache = cached()) => (await collectAll([{ repo: "me/demo", branchCache }], { start: NOW, end: NOW, label: "test" }, []))[0];
+  beforeEach(() => {
+    vi.resetAllMocks();
+    forgetNoCommonHistory();
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "me" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, pushed_at: PUSHED, created_at: daysAgo(30) } });
+    gh.repos.getContent.mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
+    gh.repos.getCommit.mockResolvedValue({ data: { commit: { committer: { date: daysAgo(1) } } } });
+    gh.repos.compareCommitsWithBasehead.mockResolvedValue({ data: { ahead_by: 7 } });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+    gh.paginate.mockImplementation(async (endpoint) => endpoint === gh.repos.listBranches
+      ? [{ name: "main", commit: { sha: "m2" } }, { name: "fresh", commit: { sha: "f" } }] : []);
+  });
+
+  it("reuses the cached branches without branch or compare calls when pushed_at is unchanged", async () => {
+    const s = await collect();
+    expect(s.pushedAt).toBe(PUSHED);
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["main", 0], ["keep-open", 4]]);
+    expect(gh.paginate).not.toHaveBeenCalledWith(gh.repos.listBranches, expect.anything());
+    expect(gh.repos.getCommit).not.toHaveBeenCalled();
+    expect(gh.repos.compareCommitsWithBasehead).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["the repo was pushed to since", { pushedAt: "2026-10-11T09:00:00Z" }],
+    ["the default branch changed", { base: "trunk" }],
+  ])("reads the branches again when %s", async (_, over) => {
+    const s = await collect(cached(over));
+    expect(s.branches.map((b) => [b.name, b.aheadBy])).toEqual([["main", 0], ["fresh", 7]]);
+    expect(gh.repos.compareCommitsWithBasehead).toHaveBeenCalledWith(expect.objectContaining({ basehead: "main...fresh" }));
+  });
+  it("reads the branches when there is no cache", async () => {
+    const [s] = await collectAll(["me/demo"], { start: NOW, end: NOW, label: "test" }, []);
+    expect(s.branches.map((b) => b.name)).toEqual(["main", "fresh"]);
+  });
+});
+
+
+describe("collaborator fork PRs", () => {
+  const repo = "CourtneyFradreck/agrilease";
+  const w = { start: new Date("2026-10-28T00:00:00Z"), end: new Date("2026-10-30T00:00:00Z"), label: "yesterday" };
+  const pr = { number: 51, title: "feat: overhaul app experience and environment setup", html_url: `https://github.com/${repo}/pull/51`,
+    user: { login: "icep0ps" }, head: { ref: "overhaul", repo: { fork: true } }, draft: false,
+    created_at: "2026-10-29T10:00:00Z", updated_at: "2026-10-29T10:00:00Z" };
+  const cfg = { idlePrDays: 3, staleBranchDays: 7, oldBranchDays: 60, ciMaxAgeDays: 30, activeRepoDays: 7, ignoreBranchPrefixes: [] };
+  beforeEach(() => {
+    vi.resetAllMocks();
+    gh.users.getAuthenticated.mockResolvedValue({ data: { login: "CourtneyFradreck" } });
+    gh.repos.get.mockResolvedValue({ data: { default_branch: "main", private: false, pushed_at: "2026-01-01T00:00:00Z" } });
+    gh.repos.getContent.mockRejectedValue({ status: 404 });
+    gh.pulls.list.mockResolvedValue({ data: [] });
+    gh.paginate.mockImplementation(async (endpoint) => endpoint === gh.pulls.list ? [pr] : []);
+    gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
+  });
+  it("makes a stale base repo active and renders the author's waiting review", async () => {
+    const { selectRepos } = await import("../src/github/discover.js");
+    const selection = selectRepos([{ repo, fork: false, archived: false, pushedAt: "2026-01-01T00:00:00Z", private: false, defaultBranch: "main" }], [], w.end, { exclude: [], activeDays: 14 }, new Set([repo.toLowerCase()]));
+    const snaps = await collectAll(selection.repos, w, []);
+    expect(snaps[0].openPrs[0]).toMatchObject({ author: "icep0ps", waitingOnYou: true });
+    const findings = runRules(snaps, w.end, cfg, w);
+    expect(render(findings, snaps, w, 3800)).toContain('icep0ps opened PR #51');
+    expect(render(findings, snaps, w, 3800)).toContain('waiting on your review');
+    const { ruleFocus } = await import("../src/focus.js");
+    expect(ruleFocus(findings, [], snaps, w.end, cfg)[0].reason).toBe("Someone is waiting on your review");
+  });
+  it.each(["review", "inline comment", "discussion comment"])("does not mark a PR waiting after my old %s", async (kind) => {
+    const endpoint = kind === "review" ? gh.pulls.listReviews : kind === "inline comment" ? gh.pulls.listReviewComments : gh.issues.listComments;
+    gh.paginate.mockImplementation(async (e) => e === gh.pulls.list ? [pr] : e === endpoint ? [{ user: { login: "courtneyfradreck" }, submitted_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" }] : []);
+    const snaps = await collectAll([repo], w, []);
+    expect(snaps[0].error).toBeUndefined();
+    expect(runRules(snaps, w.end, cfg, w).some((f) => f.rule === "pr_waiting")).toBe(false);
+  });
+  it("surfaces review requests and inline comments from others on my PR", async () => {
+    gh.paginate.mockImplementation(async (e) => {
+      if (e === gh.pulls.list) return [{ ...pr, user: { login: "CourtneyFradreck" } }];
+      if (e === gh.pulls.listReviewComments) return [{ id: 90, user: { login: "icep0ps" }, created_at: pr.created_at, html_url: `${pr.html_url}#discussion_r90` }];
+      if (e === gh.issues.listEventsForTimeline) return [{ id: 91, event: "review_requested", actor: { login: "icep0ps" }, created_at: pr.created_at }];
+      return [];
+    });
+    const snaps = await collectAll([repo], w, []);
+    const findings = runRules(snaps, w.end, cfg, w);
+    expect(findings.find((f) => f.rule === "review_requested")?.summary).toContain("icep0ps requested a review on PR #51");
+    expect(findings.find((f) => f.rule === "issue_comments")?.summary).toContain("from icep0ps");
+    expect(findings.some((f) => f.rule === "pr_waiting")).toBe(false);
+  });
+  it("does not invent a waiting review when history cannot be read", async () => {
+    gh.paginate.mockImplementation(async (e) => {
+      if (e === gh.pulls.listReviews) throw new Error("unavailable");
+      return e === gh.pulls.list ? [pr] : [];
+    });
+    const [s] = await collectAll([repo], w, []);
+    expect(s.error).toBeUndefined();
+    expect(s.warnings?.[0]).toContain("Couldn't read review history");
+    expect(s.openPrs[0].waitingOnYou).toBeUndefined();
+  });
+  it("prioritizes a waiting review over my active NEXT.md work", async () => {
+    const snaps = await collectAll([repo], w, []);
+    snaps[0].branches = [{ name: "main", sha: "x", aheadBy: 0, lastCommitAt: pr.created_at, url: "u" }];
+    const { finding } = await import("./fixtures.js");
+    const next = finding({ id: "next", repo, rule: "next_item", summary: "Next in " + repo + ": finish setup", intent: { itemId: "x", section: null, state: "open" } });
+    const { ruleFocus, withWaitingReviews } = await import("../src/focus.js");
+    const findings = runRules(snaps, w.end, cfg, w);
+    expect(ruleFocus(findings, [next], snaps, w.end, cfg)[0].sources[0].rule).toBe("pr_waiting");
+    expect(withWaitingReviews([{ text: next.summary, reason: "planned", sources: [next] }], findings)[0].reason).toBe("Someone is waiting on your review");
+  });
+  it("keeps the same finding across quiet days and uses the existing streak collapse", async () => {
+    const snaps = await collectAll([repo], w, []);
+    const first = runRules(snaps, w.end, cfg).find((f) => f.rule === "pr_waiting")!;
+    const later = runRules(snaps, new Date("2026-11-01T00:00:00Z"), cfg).find((f) => f.rule === "pr_waiting")!;
+    expect(later.id).toBe(first.id);
+    expect(later.summary).toContain("still waiting on your review, 3 days");
+    const { collapseRepeats } = await import("../src/streaks.js");
+    expect(collapseRepeats([later], new Map([[later.id, 3]]), 3).collapsed).toEqual([later]);
   });
 });

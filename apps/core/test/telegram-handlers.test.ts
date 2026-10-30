@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getBriefFocus: vi.fn(), getFocus: vi.fn(), insertFocus: vi.fn(), setFocusStatus: vi.fn(), openNextItems: vi.fn(), setPendingFocus: vi.fn(), takePendingFocus: vi.fn(),
   getBriefSnoozable: vi.fn(), upsertSnooze: vi.fn(), listSnoozes: vi.fn(), deleteSnooze: vi.fn(),
 }));
+vi.mock("../src/repos.js", () => ({ knownRepos: async () => mocks.env.repos }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 vi.mock("../src/features.js", () => ({ features: mocks.features }));
 vi.mock("../src/telegram.js", () => ({ sendMessage: mocks.sendMessage, editMessageReplyMarkup: mocks.editMessageReplyMarkup, editMessageText: mocks.editMessageText }));
@@ -70,7 +71,7 @@ describe("focus button taps", () => {
   it("marks today's focus done", async () => {
     mocks.getFocus.mockResolvedValue(current);
     expect(await onCallbackQuery(tap("f:70:d"), NOW)).toEqual({ answerText: "Marked done" });
-    expect(mocks.setFocusStatus).toHaveBeenCalledWith("2026-10-14", "done");
+    expect(mocks.setFocusStatus).toHaveBeenCalledWith("2026-10-14", "done", null, NOW.toJSDate());
     expect(mocks.editMessageReplyMarkup).toHaveBeenCalledWith(555, { inline_keyboard: [[{ text: "☑️ Done: taga product section branch", callback_data: "f:70:ok" }]] });
   });
   it("snoozes today's focus for three days and offers the suggestions again", async () => {

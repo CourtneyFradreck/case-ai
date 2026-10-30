@@ -54,14 +54,31 @@ describe("opening sentence", () => {
   it("sums up a big day by its busiest repo and branch", () => {
     expect(opening([commits("me/case-ai", "feat/m3-intent", 12)], y)).toBe("Big case-ai day yesterday: 12 commits on feat/m3-intent.");
     expect(opening([commits("me/case-ai", "feat/m2", 15), commits("me/case-ai", "main", 1), commits("me/taga", "main", 2), merged], y))
-      .toBe("Big case-ai day yesterday: 16 commits, most on feat/m2, and 2 elsewhere, and a PR merged.");
+      .toBe("Big case-ai day yesterday: 16 commits, most on feat/m2, 2 commits in taga, and activity in one other repo.");
     expect(opening([commits("me/case-ai", "feat/m3-intent", 12)], { ...y, label: "over the weekend" })).toBe("Big case-ai weekend: 12 commits on feat/m3-intent.");
     expect(opening([commits("me/case-ai", "feat/m3-intent", 12)], { ...y, label: "on Friday" })).toBe("Big case-ai Friday: 12 commits on feat/m3-intent.");
   });
   it("says smaller days plainly, without '1 commit'", () => {
     expect(opening([commits("me/demo", "main", 1)], y)).toBe("Quiet day yesterday: one commit in demo.");
-    expect(opening([commits("me/demo", "main", 4), commits("me/taga", "main", 1)], y)).toBe("Steady day yesterday: 4 commits in demo and 1 elsewhere.");
-    expect(opening([merged], y)).toBe("No commits yesterday, but a PR merged.");
+    expect(opening([commits("me/demo", "main", 4), commits("me/taga", "main", 1)], y)).toBe("Steady day yesterday: 4 commits in demo and one commit in taga.");
+    expect(opening([merged], y)).toBe("Quiet day yesterday: a PR merged in demo.");
+  });
+  // 29 Oct brief: "5 commits in case-ai, and 7 PRs merged and 3 things logged" read as if the PRs were in case-ai.
+  const prIn = (repo: string, number: number) => finding({ id: `${repo}-pr-${number}`, repo, rule: "merged_pr", severity: "info",
+    activity: { kind: "pr", action: "Merged", number, title: `Phase ${number}` } });
+  it("names the repo of every count", () => {
+    const sevenPrs = [2, 3, 4, 5, 6, 7, 8].map((n) => prIn("me/1710", n));
+    expect(opening([commits("me/case-ai", "main", 5), ...sevenPrs], y, 3))
+      .toBe("Steady day yesterday: 7 PRs merged in 1710, 5 commits in case-ai, and 3 things logged.");
+    expect(opening([commits("me/case-ai", "main", 5)], y, 3)).toBe("Steady day yesterday: 5 commits in case-ai and 3 things logged.");
+    expect(opening([commits("me/1710", "main", 2), prIn("me/1710", 9)], y)).toBe("Steady day yesterday: 2 commits plus a PR merged in 1710.");
+  });
+  it("names the two busiest repos and sums up the rest, in one sentence with one 'and'", () => {
+    const text = opening([commits("me/case-ai", "main", 5), prIn("me/1710", 2), prIn("me/1710", 3), commits("me/notes", "main", 1),
+      commits("me/taga", "main", 1), prIn("me/dot", 4)], y, 2)!;
+    expect(text).toBe("Steady day yesterday: 5 commits in case-ai, 2 PRs merged in 1710, activity in 3 other repos, and 2 things logged.");
+    expect(text.match(/\band\b/g)).toHaveLength(1);
+    expect(text.match(/[.!?](?=\s|$)/g)).toHaveLength(1);
   });
   it("is left out when there was no activity, and sits under the date in both renderers", () => {
     expect(opening([], y)).toBeUndefined();
