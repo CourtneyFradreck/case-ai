@@ -77,6 +77,8 @@
 - [x] /pause and /pause <n> (1–30 days), /unpause; evening check-ins only
 - [x] Late buttons until next-day noon; optional why reply before midnight, then logs
 - [x] Stable self_log / self_checkin findings kept out of model input; Partly note on next day's first brief
+- [x] Opening sentence on a fallback day: "Quiet weekend." / "Nothing yesterday." then "You last worked on <day>: ..."
+- [x] Repo discovery: split the activity search into is:issue and is:pr (GitHub returned 422 without them)
 - [ ] Redeploy core/config for migration 015; confirm features.eveningCheckIn and eveningCheckIn.cutoff
 - [ ] Re-import evening-checkin.json with Header Auth and errors workflow; activate its 15:45, 16:15 and 16:45 Africa/Harare triggers, keeping retryOnFail
 - [ ] Verify duplicate sends stay silent, pause/unpause, why then log, midnight text expiry, late buttons and the following morning's recap in production

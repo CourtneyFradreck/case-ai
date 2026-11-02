@@ -38,10 +38,13 @@ export function selectRepos(owned: OwnedRepo[], manual: string[], now: Date, cfg
   return { repos: [...repos.values()], kept, quiet: kept.filter((r) => !active(r) && !repos.has(r.repo.toLowerCase())).map((r) => r.repo) };
 }
 
-// One owner-wide activity search, plus open collaborator PRs so waiting reviews survive quiet days.
+// Owner-wide issue and PR activity, plus open collaborator PRs so waiting reviews survive quiet days.
+// GitHub rejects issue searches without is:issue or is:pr (422), so each query names one.
 export async function activityRepos(start: Date, client = gh): Promise<Set<string>> {
   const { data: user } = await client.users.getAuthenticated();
-  const queries = [`user:${user.login} updated:>=${start.toISOString()}`, `user:${user.login} is:pr is:open -author:${user.login}`];
+  const since = start.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const queries = [`user:${user.login} is:issue updated:>=${since}`, `user:${user.login} is:pr updated:>=${since}`,
+    `user:${user.login} is:pr is:open -author:${user.login}`];
   const results = await Promise.all(queries.map((q) => client.paginate(client.search.issuesAndPullRequests, { q, per_page: 100 })));
   return new Set(results.flat().map((i) => i.repository_url.replace(/^.*\/repos\//, "").toLowerCase()));
 }
