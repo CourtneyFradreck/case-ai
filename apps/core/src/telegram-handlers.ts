@@ -1,11 +1,14 @@
 import { DateTime } from "luxon";
+import { logText, undoLog } from "./logs.js";
+import { onCheckinCallback, onCheckinText, onPauseCommand } from "./checkin.js";
 import { env } from "./env.js";
 import { features, type Feature } from "./features.js";
-import { ZONE } from "./time.js";
+import { today, midnight } from "./time.js";
 import { esc } from "./render.js";
 import { editMessageReplyMarkup, editMessageText, sendMessage, type InlineKeyboardMarkup } from "./telegram.js";
 import { chosenKeyboard, cleanFocusText, doneKeyboard, FOCUS_SNOOZE_DAYS, focusAck, focusKeyboard, focusMenu, nextItemsText, parseCommand, parseFocusCallback, storedLabel } from "./focus.js";
 import { clip } from "./labels.js";
+import { knownRepos } from "./repos.js";
 import type { FocusRow } from "./store.js";
 import { parseSnoozeCallback, snoozedText, snoozeList, snoozeUntil, untilText } from "./snooze.js";
 import {
@@ -17,10 +20,9 @@ import type { TelegramCallbackQuery, TelegramMessage } from "./telegram-update.j
 // Focus taps and commands are behind features.focusButtons, snooze taps and commands behind features.snooze.
 // With a flag off, its taps and plain text are ignored, and its commands reply that they're off.
 
-const COMMAND_FLAGS = { focus: "focusButtons", next: "focusButtons", snoozed: "snooze", unsnooze: "snooze" } as const satisfies Record<string, Feature>;
+const COMMAND_FLAGS = { focus: "focusButtons", next: "focusButtons", snoozed: "snooze", unsnooze: "snooze", checkin: "eveningCheckIn", pause: "eveningCheckIn", unpause: "eveningCheckIn" } as const satisfies Record<string, Feature>;
 
-const today = (now: DateTime) => now.setZone(ZONE).toISODate()!;
-const midnight = (now: DateTime) => now.setZone(ZONE).startOf("day").plus({ days: 1 }).toJSDate();
+
 // answerCallbackQuery text is limited to 200 characters.
 const notice = (text: string) => text.length > 200 ? `${text.slice(0, 199)}…` : text;
 
@@ -32,6 +34,7 @@ const focusText = (row: FocusRow) => {
 
 // Returning answerText shows it as a small notice on the tapped button.
 export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTime = DateTime.now()): Promise<{ answerText?: string } | void> {
+  if (query.data?.startsWith("c:")) return features[COMMAND_FLAGS.checkin] ? onCheckinCallback(query, now) : undefined;
   if (query.data?.startsWith("s:")) return features.snooze ? onSnoozeCallback(query, now) : undefined;
   if (!features.focusButtons) return;
   const callback = parseFocusCallback(query.data);
@@ -69,7 +72,7 @@ export async function onCallbackQuery(query: TelegramCallbackQuery, now: DateTim
       return { answerText: notice(`Focus: ${label}`) };
     }
     if (callback.choice === "done") {
-      await setFocusStatus(today(now), "done");
+      await setFocusStatus(today(now), "done", null, now.toJSDate());
       await setButtons(doneKeyboard(callback.briefId, label));
       return { answerText: "Marked done" };
     }
@@ -138,9 +141,11 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
     await onSnoozeCommand(command, now);
     return;
   }
-  if (!features.focusButtons) return;
+  if (command?.name === "pause" || command?.name === "unpause") return onPauseCommand(command.name, command.arg, now);
+  if (command?.name === "log") return logText(command.arg, "command", now);
+  if (command?.name === "undo") return undoLog(now);
   const chatId = String(message.chat.id);
-  if (command?.name === "focus") {
+  if (features.focusButtons && command?.name === "focus") {
     const text = cleanFocusText(command.arg);
     if (!text) {
       const current = await getFocus(today(now));
@@ -152,16 +157,19 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
     await sendMessage(focusAck(clip(text)));
     return;
   }
-  if (command?.name === "next") {
-    await sendMessage(nextItemsText(await openNextItems(), env.repos, command.arg || undefined));
+  if (features.focusButtons && command?.name === "next") {
+    await sendMessage(nextItemsText(await openNextItems(), await knownRepos(), command.arg || undefined));
     return;
   }
   // Other commands, such as /brief, are n8n's, and leave a pending focus waiting.
   if (command || message.text.trim().startsWith("/")) return;
   const text = cleanFocusText(message.text);
   if (!text) return;
-  const pending = await takePendingFocus(chatId, now.toJSDate());
-  if (!pending) return;
+  const pending = features.focusButtons ? await takePendingFocus(chatId, now.toJSDate()) : undefined;
+  if (!pending) {
+    if (features[COMMAND_FLAGS.checkin]) await onCheckinText(chatId, message.text, now);
+    return;
+  }
   await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo: null, via: "text", briefId: pending.briefId });
   await sendMessage(focusAck(clip(text)));
 }

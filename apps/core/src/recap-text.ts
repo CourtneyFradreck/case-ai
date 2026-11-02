@@ -132,7 +132,10 @@ export function recapText(f: Finding, modelText?: string): string {
     return activity.count > 1 && /^[,:]/.test(text.slice(prefix.length)) && text.startsWith(prefix) && !pasted
       ? sentence(`${prefix}${soFar(activity)}${text.slice(prefix.length)}`) : commitText(activity, f.repo);
   }
-  if (activity) return `${activity.action} ${activity.kind === "pr" ? "PR" : "issue"} #${activity.number} "${stripCommitPrefix(activity.title)}".`;
+  if (activity) {
+    const commits = activity.kind === "pr" && activity.commits ? ` (${activity.commits} ${activity.commits === 1 ? "commit" : "commits"})` : "";
+    return `${activity.action} ${activity.kind === "pr" ? "PR" : "issue"} #${activity.number} "${stripCommitPrefix(activity.title)}"${commits}.`;
+  }
   let text = withoutRepo(modelText ?? f.summary, f.repo);
   if (f.rule === "issue_comments") text = text.replace(/^(.+) commented on (.+), you replied$/, "Replied to comments on $2 (from $1)");
   // Legacy or restored findings may lack structured activity metadata.

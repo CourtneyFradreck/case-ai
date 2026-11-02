@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** M2 done; M3 deployed and in trial ([#4](https://github.com/courtneyfradreck/case-ai/issues/4)); M4 (`/log` and evening check-in) next.
+> **Status:** M2 and M3 done; M4 (`/log` and evening check-in) deployed through migration 014. Check-in hardening in migration 015 is ready for rollout.
 
 ---
 
@@ -48,7 +48,7 @@ n8n: 7am schedule ──> POST /brief
 - **Rules decide the facts.** The model only phrases and prioritises what the rules found.
 - **The model never writes links.** It cites finding IDs, and code turns those into real links. Claims without a valid source are dropped.
 - If the model fails, a plain rule-based brief is sent instead.
-- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze` and `quietMornings`. A flag that is missing counts as `false`; only an explicit `true` turns one on. The shipped `config.json` sets `focusButtons`, `streaks` and `snooze` to `true` and `quietMornings` to `false`. To change one, edit it, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
+- **Feature flags** live under `features` in `apps/core/config.json`: `focusButtons`, `streaks`, `snooze`, `quietMornings` and `eveningCheckIn`. A flag that is missing counts as `false`; only an explicit `true` turns one on. The shipped `config.json` sets `focusButtons`, `streaks` and `snooze` to `true` and `quietMornings` and `eveningCheckIn` to `false`. To change one, edit it, commit and redeploy (config is read at startup). With every flag off, none of these features appear; the recap's commit themes and the weekly old-branches line (below) don't depend on a flag. See [Focus](#focus) and [Less repetition](#less-repetition).
 
 ## Stack
 
@@ -94,8 +94,11 @@ Then open n8n at your domain and add two credentials: a Telegram credential with
 | `CASE_API_KEY`       | Shared secret between n8n and case-core |
 | `N8N_ENCRYPTION_KEY` | Encrypts n8n credentials. Back it up.   |
 | `N8N_HOST`           | Public domain for n8n                   |
-| `GITHUB_TOKEN`       | Read-only GitHub token for the tracked repos |
-| `CASE_REPOS`         | Comma-separated `owner/repo` names |
+| `GITHUB_TOKEN`       | Read-only fine-grained GitHub token with access to **All repositories** and the **Contents** and **Metadata** permissions, so CASE can discover your repos |
+| `CASE_REPOS`         | Optional. Comma-separated `owner/repo` names that are always read, even when quiet or not yours (e.g. repos you collaborate on). Leave it empty to rely on discovery alone. Spaces and quotes around entries are ignored; an entry that isn't `owner/repo` is skipped with a startup warning. |
+| `CASE_REPO_EXCLUDE`  | Optional. Comma-separated globs for owned repos never read, matched against `owner/repo` and the bare repo name, e.g. `sandbox-*,me/old-site`. Empty by default. |
+| `CASE_REPO_ACTIVE_DAYS` | Discovered repos are read only if pushed to within this many days. Defaults to `14`; an invalid value uses `14` with a startup warning. |
+| `CASE_BRANCH_EXCLUDE` | Comma-separated branch globs never read, e.g. asset branches with no common history with the default branch. `*` matches within one path segment, `**` across segments. Defaults to `pr-assets/*`; set it empty to read every branch. |
 | `CASE_BRIEF_MODE`    | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`. |
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather, used when case-core sends messages itself |
 | `TELEGRAM_CHAT_ID`   | Your Telegram chat ID. The only chat case-core accepts updates from; the `/brief` command does nothing until it is set. |
@@ -156,6 +159,8 @@ rclone refreshes the access token in memory but can't save it back without a con
 
 ## NEXT.md
 
+**Which repos are read.** Each brief lists the repos the token's user owns (`GET /user/repos?affiliation=owner`), drops forks, archived repos and `CASE_REPO_EXCLUDE` matches, and reads those pushed to within `CASE_REPO_ACTIVE_DAYS`. Quiet repos get no API calls beyond that listing, so they add no findings. `CASE_REPOS` entries are always read. Every discovered repo is stored in the `repos` table with `first_seen_at`, `last_pushed_at` and `source` (`discovered` or `manual`). The first brief sent after a repo is first read says "New repo picked up: <name>", and "<name> has no NEXT.md yet" when it has none. A repo's branches are read again only when it has been pushed to since the last read. If the listing fails, CASE reads `CASE_REPOS` and the repos discovered earlier that were active, and the brief says so.
+
 CASE reads a `NEXT.md` file at the root of each tracked repo to learn what you plan to do next. Only that exact path on the default branch is read.
 
 ```markdown
@@ -207,6 +212,7 @@ With `features.focusButtons` set to `true` in `apps/core/config.json`, the brief
 
 A finding a suggestion is built on appears in the suggestion instead of in attention, so no fact is stated twice. Every suggestion also has a reason (such as "Open in NEXT.md, and case-ai has recent commits"); reasons are stored with the brief and logged as `focusReasons` on the `brief` event, never shown.
 
+- **Yesterday's repo:** the repo you picked as yesterday's focus (stored with it, or named in its text, e.g. "finish 1710 phase 1 and 3") keeps one suggestion while it has an open `NEXT.md` item ready to start: yesterday's item if still open, else its first. It goes first, with the reason "Repo you picked yesterday", on both paths. It is added in code, so a private repo the model never sees still gets it.
 - **Model brief:** open `NEXT.md` items are sent to the model alongside the other findings, but only as citations for suggestions. They never appear in attention or the recap. The model must cite at least one finding per suggestion, with a reason taken from it (failing CI, comments waiting for a reply, an open `NEXT.md` item), and prefers `NEXT.md` items in repos with commits, then high and medium findings. Suggestions with no valid source, an empty reason, only findings an earlier suggestion already cites, or only a snoozed focus's finding are dropped.
 - **Rule-only brief and fallback:** code picks up to three: active work first, as open `NEXT.md` items from repos with commits in the last `activeRepoDays` (most recently active first), then high findings, then medium. Each gets an action built from the finding and a fixed reason per rule.
 
@@ -277,7 +283,7 @@ High findings are never collapsed; their line gains `(day N)` instead, where N c
 | `/snoozed` | Lists active snoozes, numbered, with the day each comes back |
 | `/unsnooze <n>` | Brings item `n` from `/snoozed` back on the brief |
 
-**Quiet mornings (`"quietMornings": true`).** Scheduled briefs only. If the brief's attention finding IDs are exactly those of the previous scheduled brief, and nothing has happened since that brief's day began (no commits, PRs or issues opened, merged or closed), case-core sends a short message instead:
+**Quiet mornings (`"quietMornings": true`).** Scheduled briefs only. If the brief's attention finding IDs are exactly those of the previous scheduled brief, and nothing has happened since that brief's day began (no logs, commits, PRs or issues opened, merged or closed), case-core sends a short message instead:
 
 ```
 Nothing has moved since Friday. Still on <yesterday's focus, or the top attention item>?
@@ -285,18 +291,51 @@ Nothing has moved since Friday. Still on <yesterday's focus, or the top attentio
 
 It carries the brief's buttons. The full rule and model briefs are still stored in `briefs` (`text`, `rule_text`), and the short message in `briefs.sent_text`. On a Monday after an empty weekend, Sunday's brief is the one compared with. `/brief` always sends the full brief.
 
+## Non-code activity and evening check-in
+
+`/log pitch deck edits #dot` saves one entry for the current Africa/Harare day. `/log` and `/undo` are always available. A leading or trailing `#word` supplies one tag; a leading tag wins when both are present. Other hashtags stay in the text. Tags are lowercased, except a tracked repo match uses that repo's short name (case-insensitive matching). Empty or tag-only entries show usage. Keep the entry, including its tag, under 500 characters; longer entries are rejected. `/undo` removes the most recently created log today, including check-in replies, or says there is nothing to undo.
+
+Migrations 013 and 014 are already deployed and unchanged. New migration `015_checkin_records.sql` runs on core startup: it creates `core.checkins` and `core.pauses`, adds `activity_logs.focus_id`, and drops `core.checkin_pending`. Each check-in has a unique Harare date, its original focus (or kind `open`), delivery status and attempts, message ID, answer, optional reason, and expiry. The answer and timestamp on `core.focus` remain in sync with the check-in record in the same transaction. Existing focus answers and logs are preserved; old reply windows close at deployment. Old buttons are rejected if their message does not match the new record.
+
+Check-ins need `features.eveningCheckIn: true` in `apps/core/config.json`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`. They send through core regardless of `CASE_DELIVERY`. Configure `eveningCheckIn.cutoff` as `HH:mm` in Harare time; the default is `"22:00"`. Runs after that time are recorded as `skipped`. A new day gets a new record; yesterday's failed check-in is never sent the next morning.
+
+`POST /checkin` requires the same key as `/brief`. With the flag off it returns HTTP 200 with `{ "sent": false, "reason": "off" }`. With it on, it asks how today's selected active/done focus went, offering Done / Partly / Didn't touch it. Without a focus it asks for anything worth logging. A successful send returns `{ "sent": true }`; repeat calls return `{ "sent": false, "reason": "sent" }` without sending again. `skipped` and `paused` records also return their status without sending. Pending attempts are serialized; a send error preserves `pending`, increments attempts, and returns HTTP 500 so n8n records the failure and can retry. Telegram delivery and database storage cannot be atomic: a timeout after Telegram accepted a message, or a crash before recording success, can still cause a duplicate on retry.
+
+Button payloads use `c:<checkinId>:<answer>`. Answers are accepted until **12:00 Harare the next day**, and apply to the record's date and focus even after midnight. Done marks that focus done; Partly or Didn't touch it reopens a done focus as active. Snoozed focuses are untouched. A later Done tap in the focus menu also updates an earlier check-in answer. The latest answer wins.
+
+After Partly or Didn't touch it, the edited message asks **“What got in the way? (optional, just reply)”**. The first plain-text reply before that day's midnight becomes the check-in's `reason`; subsequent replies become logs linked to its focus. Done asks for anything else and logs replies directly. All free-text check-in handling closes at **Harare midnight**, earlier than the button expiry. `/log` entries made during that window also link to the focus. A pending focus reply from Something else takes priority, and commands do not consume the optional reason. Turning the flag off ignores check-in taps and replies. An unanswered record is derived from `answer IS NULL AND expires_at < now`, never stored or rendered as Didn't touch it; the existing unanswered You picked line remains unchanged.
+
+| Command | Effect (requires `features.eveningCheckIn`) |
+| ------- | ----------------------------------------- |
+| `/pause` | Skip today's evening check-in; reply with the inclusive end date |
+| `/pause <n>` | Pause for 1–30 Harare days, including today |
+| `/unpause` | Clear active pauses and reopen today's paused record for the next trigger |
+
+Pauses affect only evening check-ins. They do not suppress the morning brief or retract a check-in already sent.
+
+Morning briefs render logs in the selected recap window under repo/tag headings, with untagged entries under Other. Log timestamps participate in window selection and prevent quiet mornings when there is new logged activity. Logs and answered check-ins are stored as info findings (`self_log` / `self_checkin`) with stable IDs (`fid("log", id)` / `fid("checkin", date)`) and `{ "label": "you", "kind": "self_reported" }` provenance instead of a URL. They are rendered by code, never sent to the model, and never treated as GitHub events. The activity sentence counts commits, merged PRs and logs for Steady (3+); Big still needs 10 commits in one repo.
+
+The You picked line includes the recorded answer. Completed focus items are excluded from suggestions; completed NEXT.md steps get a tick-off line and release dependent steps, alongside existing GitHub completion detection. Partly leaves the finding eligible and appends ` (partly done yesterday)` to a matching suggestion in code after validation, on the next day's first brief only. Didn't touch it leaves suggestions unchanged.
+
+Deploy this hardening:
+
+1. Deploy the new code/config and run `docker compose up -d --build core`. Confirm the startup log says `migrated 015_checkin_records.sql`; do not rerun or edit 013/014.
+2. **Re-import** `n8n/workflows/evening-checkin.json` to replace the existing evening workflow. Re-select Header Auth (`x-case-key`) and the errors workflow, then activate it. Keep only one evening workflow active.
+3. Confirm all three Schedule Trigger nodes feed the same HTTP Request node: **15:45, 16:15, and 16:45 Africa/Harare** (testing times). Keep `retryOnFail` enabled. The later triggers retry pending delivery; a recorded success makes them no-ops.
+4. Check a successful send followed by a silent duplicate call, `/pause` and `/unpause`, an optional reason followed by a log, and a late button answer before next-day noon. Confirm the following brief's answer and suggestion agree.
+
 ## Roadmap
 
 - [x] **M0 Skeleton:** stack deployed, `/brief` replies hello
 - [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
-- [ ] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons (in production testing, [#4](https://github.com/courtneyfradreck/case-ai/issues/4))
-- [ ] **M4 Non-code:** `/log` and an evening check-in
+- [x] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
+- [x] **M4 Non-code:** `/log` and evening check-in; durable records, pause controls and retry hardening implemented (015 rollout pending)
 - [ ] **M5 Evaluation:** golden test set, `/wrong` and `/missed` feedback
 
 ## Security notes
 
-- GitHub access uses a fine-grained, read-only token limited to chosen repos.
+- GitHub access uses a fine-grained, read-only token (Contents and Metadata only).
 - The bot only responds to one Telegram chat ID.
 - case-core and Postgres are never exposed publicly.
 - Issue and PR text is treated as untrusted data; the model has no tools and no write access.

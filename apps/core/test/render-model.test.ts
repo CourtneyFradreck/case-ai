@@ -28,11 +28,11 @@ describe("model rendering", () => {
   it("skips empty sections, keeps section order, and includes failed repos", () => {
     const item = { text: "Progress", sources: [finding()] };
     const attention = { text: "Fix CI", sources: [finding({ id: "ci", severity: "high", sources: [{ label: "run", url: "https://github.com/me/demo/actions/runs/1" }] })] };
-    const text = renderModelBrief({ ...empty(), yesterday: [item], attention: [attention] }, [snap({ error: "GitHub 404" })], w, 3800, { userName: "Courtney", now: DateTime.fromISO("2026-10-14T05:00:00Z") });
+    const text = renderModelBrief({ ...empty(), yesterday: [item], attention: [attention] }, [snap({ error: "Couldn't access me/demo (404: not found, or the token can't see it)" })], w, 3800, { userName: "Courtney", now: DateTime.fromISO("2026-10-14T05:00:00Z") });
     expect(text).toContain("<b>Good morning, Courtney.</b>");
     expect(text.indexOf("Needs attention")).toBeLessThan(text.indexOf("<b>Yesterday</b>"));
     expect(text).not.toContain("Today, I'd suggest");
-    expect(text).toContain("Couldn't read: me/demo (GitHub 404)");
+    expect(text).toContain("<i>Couldn't access me/demo (404: not found, or the token can't see it)</i>");
     expect(renderModelBrief(empty(), [], w, 3800)).not.toMatch(/<b>(?:Yesterday|Over the weekend|On \w+)<\/b>/);
   });
   it("truncates by complete lines with the shared length limit", () => {

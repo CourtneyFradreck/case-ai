@@ -1,21 +1,28 @@
+import type { ActivityLog } from "../logs.js";
 import type { Finding, RepoSnapshot } from "../types.js";
 import type { Window } from "../time.js";
 import { DateTime } from "luxon";
-import { renderModelBrief } from "../render.js";
+import { renderModelBrief, type NewRepo } from "../render.js";
 import { buildInput, type InputConfig } from "./input.js";
 import type { BriefModel } from "./provider.js";
 import { briefJsonSchema, type AliasBrief, type ValidBrief, type ValidFocus } from "./schema.js";
 import { validate, type DropReason, type Shortened } from "./validate.js";
-import { withMissingNext } from "../focus.js";
+import { withWaitingReviews, withMissingNext, withPickedRepo } from "../focus.js";
+import { selfReported, withPartlyNote } from "../self-reports.js";
 
 // previousFocus is rendered at the top of the recap and never sent to the model.
 // collapsed and days (features.streaks) are rendered in code; collapsed findings are never sent.
 // done (likely finished NEXT.md items) and leftOpen (branches and PRs left open) are rendered in code and never sent.
 // parked: findings behind a snoozed focus; the model's suggestions built only on them are dropped.
 // missing: active repos with no NEXT.md; one takes the last suggestion, added in code and never sent.
+// picked: the repo of yesterday's focus; one of its open NEXT.md items is added in code when the model left it out.
 export interface ModelBriefConfig extends InputConfig {
+  logs?: ActivityLog[];
+  partly?: Set<string>;
   modelTimeoutMs: number; maxBriefChars: number; previousFocus?: Finding[];
   collapsed?: Finding[]; days?: Map<string, number>; done?: Finding[]; leftOpen?: Finding[]; parked?: Set<string>; missing?: Finding[];
+  newRepos?: NewRepo[];
+  picked?: { repo: string; findingId: string | null };
 }
 export interface BriefAudit {
   brief: AliasBrief | null;
@@ -60,15 +67,19 @@ function serialize(brief: ValidBrief, aliasToFinding: Map<string, Finding>, find
 }
 
 export async function generateModelBrief(findings: Finding[], snaps: RepoSnapshot[], w: Window, cfg: ModelBriefConfig, provider: BriefModel, now: DateTime = DateTime.now()): Promise<ModelBriefResult> {
+  findings = findings.filter((f) => !selfReported(f));
   const input = buildInput(findings, snaps, w.label, cfg);
   const meta: BriefMeta = { model: provider.name, json: { brief: null, aliases: Object.fromEntries([...input.aliasToFinding].map(([alias, f]) => [alias, f.id])), raw: null, responses: [], dropped: [], addedBack: [], attempts: 0, fallbackReason: null, fallbackDetail: null } };
   const complete = (result: Extract<ReturnType<typeof validate>, { ok: true }>) => {
     meta.json.dropped = result.dropped;
     meta.json.shortened = result.shortened;
     meta.json.addedBack = result.addedBack;
+    if (cfg.focus && cfg.picked) result.brief.focus = withPickedRepo(result.brief.focus, findings, cfg.picked.repo, cfg.picked.findingId);
     if (cfg.focus && cfg.missing?.length) result.brief.focus = withMissingNext(result.brief.focus, cfg.missing);
+    if (cfg.focus) result.brief.focus = withWaitingReviews(result.brief.focus, findings.filter((f) => !cfg.parked?.has(f.id)));
+    result.brief.focus = withPartlyNote(result.brief.focus, cfg.partly);
     Object.assign(meta.json, serialize(result.brief, input.aliasToFinding, [...findings, ...(cfg.missing ?? [])]));
-    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen }), focus: result.brief.focus };
+    return { ...meta, text: renderModelBrief(result.brief, snaps, w, cfg.maxBriefChars, { logs: cfg.logs, userName: cfg.userName, now, focus: cfg.focus, previousFocus: cfg.previousFocus, collapsed: cfg.collapsed, days: cfg.days, done: cfg.done, leftOpen: cfg.leftOpen, newRepos: cfg.newRepos }), focus: result.brief.focus };
   };
   if (!input.aliasToFinding.size) {
     const result = validate('{"yesterday":[],"attention":[],"focus":[]}', input.aliasToFinding, findings, cfg.focus, cfg.parked);

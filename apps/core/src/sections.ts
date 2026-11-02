@@ -2,8 +2,8 @@ import type { Finding } from "./types.js";
 import type { ValidBrief, ValidItem } from "./llm/schema.js";
 
 // Comments and issue/PR events can cite different URLs for the same item.
-const sourceKeys = (f: Finding) => f.sources.map((s) =>
-  s.url.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+)(?:[?#/]|$)/)?.[1] ?? s.url);
+const sourceKeys = (f: Finding) => f.sources.flatMap((s) => s.kind === "self_reported" ? [] : [
+  s.url.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+)(?:[?#/]|$)/)?.[1] ?? s.url]);
 const generic = (f: Finding) => ["open_issues", "open_pr"].includes(f.rule);
 
 // Open NEXT.md items are plans, not activity or problems: they may back a focus suggestion only.

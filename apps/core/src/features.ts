@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-export const FEATURES = ["focusButtons", "snooze", "streaks", "quietMornings"] as const;
+export const FEATURES = ["focusButtons", "snooze", "streaks", "quietMornings", "eveningCheckIn"] as const;
 export type Feature = typeof FEATURES[number];
 export type Features = Record<Feature, boolean>;
 

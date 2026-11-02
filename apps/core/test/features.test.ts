@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FEATURES, features, readFeatures } from "../src/features.js";
 
-const off = { focusButtons: false, snooze: false, streaks: false, quietMornings: false };
+const off = { focusButtons: false, snooze: false, streaks: false, quietMornings: false, eveningCheckIn: false };
 
 describe("feature flags", () => {
   it("treats a missing features object or key as false", () => {

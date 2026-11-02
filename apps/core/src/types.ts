@@ -1,10 +1,11 @@
 export type Severity = "high" | "medium" | "low" | "info";
 
-export interface Source { label: string; url: string }
+export type Source = { label: string; url: string; kind?: never }
+  | { label: string; kind: "self_reported"; url?: never };
 
 export type Activity =
   | { kind: "commits"; count: number; branch: string; messages: string[]; branchTotal?: number }
-  | { kind: "pr" | "issue"; action: "Opened" | "Merged" | "Closed"; number: number; title: string };
+  | { kind: "pr" | "issue"; action: "Opened" | "Merged" | "Closed"; number: number; title: string; author?: string; commits?: number };
 
 export interface Finding {
   id: string;
@@ -21,14 +22,16 @@ export interface Finding {
 }
 
 export interface Commit { sha: string; message: string; url: string; author: string; date: string; branch: string; parentSha?: string }
-export interface Pr { number: number; title: string; url: string; draft: boolean; headRef: string; updatedAt: string; createdAt?: string; mergedAt?: string | null }
-export interface Issue { number: number; title: string; url: string; createdAt: string; state?: string; mine?: boolean }
-export interface ClosedIssue { number: number; title: string; url: string; closedAt: string }
+export interface Pr { author?: string; waitingOnYou?: boolean; number: number; title: string; url: string; draft: boolean; headRef: string; updatedAt: string; createdAt?: string; mergedAt?: string | null; commits?: number }
+export interface Issue { author?: string; number: number; title: string; url: string; createdAt: string; state?: string; mine?: boolean }
+export interface ClosedIssue { author?: string; number: number; title: string; url: string; closedAt: string }
 export interface IssueComment {
   id: number; issueNumber: number; issueTitle: string; isPr: boolean;
-  author: string; url: string; createdAt: string; mine: boolean;
+  author: string; url: string; createdAt: string; mine: boolean; reviewRequest?: boolean;
 }
 export interface Branch { name: string; sha: string; lastCommitAt: string; aheadBy: number; url: string }
+// Branches as read when the repo was last pushed to at pushedAt, with base as the default branch.
+export interface BranchCache { pushedAt: string; base: string; branches: Branch[] }
 export interface CiRun { workflowId: number; workflowName: string; conclusion: string | null; url: string; finishedAt: string }
 
 export interface NextItem {
@@ -58,5 +61,7 @@ export interface RepoSnapshot {
   branches: Branch[];
   ciRuns: CiRun[];        // latest completed run per workflow on default branch
   next: NextFile;         // NEXT.md on the default branch
-  error?: string;         // set if this repo couldn't be read
+  error?: string;         // set if this repo couldn't be read: a sentence naming what failed
+  warnings?: string[];
+  pushedAt?: string;      // the repo's pushed_at when read    // branches skipped for an unexpected reason; the rest of the repo was read
 }

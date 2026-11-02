@@ -1,6 +1,8 @@
 import { DateTime } from "luxon";
 
 export const ZONE = "Africa/Harare";
+export const today = (now: DateTime) => now.setZone(ZONE).toISODate()!;
+export const midnight = (now: DateTime) => now.setZone(ZONE).startOf("day").plus({ days: 1 }).toJSDate();
 
 export interface Window { start: Date; end: Date; label: string }
 

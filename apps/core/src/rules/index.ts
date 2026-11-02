@@ -35,8 +35,17 @@ export function failingCi(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[
     });
 }
 
+export function waitingPrs(s: RepoSnapshot, now: Date): Finding[] {
+  return s.openPrs.filter((p) => p.waitingOnYou).map((p) => {
+    const days = daysSince(p.createdAt ?? p.updatedAt, now);
+    return { id: fid("pr_waiting", s.repo, String(p.number)), rule: "pr_waiting", severity: "medium",
+      repo: s.repo, summary: `${p.author} opened PR #${p.number} "${p.title}" in ${s.repo} \u2014 ${days > 1 ? `still waiting on your review, ${days} days` : "waiting on your review"}`,
+      sources: [{ label: "PR", url: p.url }], target: `PR #${p.number}`, ageDays: days };
+  });
+}
+
 export function idlePrs(s: RepoSnapshot, now: Date, cfg: RuleConfig): Finding[] {
-  return s.openPrs.filter((p) => !p.draft).flatMap((p) => {
+  return s.openPrs.filter((p) => !p.draft && !p.waitingOnYou).flatMap((p) => {
     const days = daysSince(p.updatedAt, now);
     if (days < cfg.idlePrDays) return [];
     return [{
@@ -135,7 +144,7 @@ export function openedPrs(s: RepoSnapshot): Finding[] {
   return s.openedPrs.filter((p) => !merged.has(p.number)).map((p) => ({
     id: fid("opened_pr", s.repo, String(p.number)), rule: "opened_pr", severity: "info",
     repo: s.repo, summary: `Opened PR #${p.number} "${p.title}" in ${s.repo}`,
-    activity: { kind: "pr" as const, action: "Opened" as const, number: p.number, title: p.title },
+    activity: { kind: "pr" as const, action: "Opened" as const, number: p.number, title: p.title, author: p.author },
     sources: [{ label: "PR", url: p.url }],
   }));
 }
@@ -147,7 +156,7 @@ export function mergedPrs(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Merged PR #${p.number} "${p.title}" in ${s.repo}`,
-    activity: { kind: "pr" as const, action: "Merged" as const, number: p.number, title: p.title },
+    activity: { kind: "pr" as const, action: "Merged" as const, number: p.number, title: p.title, author: p.author, ...(p.commits ? { commits: p.commits } : {}) },
     sources: [{ label: "PR", url: p.url }],
   }));
 }
@@ -159,7 +168,7 @@ export function newIssues(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Opened issue #${i.number} "${i.title}" in ${s.repo}`,
-    activity: { kind: "issue" as const, action: "Opened" as const, number: i.number, title: i.title },
+    activity: { kind: "issue" as const, action: "Opened" as const, number: i.number, title: i.title, author: i.author },
     sources: [{ label: "issue", url: i.url }],
   }));
 }
@@ -171,7 +180,7 @@ export function closedIssues(s: RepoSnapshot): Finding[] {
     severity: "info",
     repo: s.repo,
     summary: `Closed issue #${i.number} "${i.title}" in ${s.repo}`,
-    activity: { kind: "issue" as const, action: "Closed" as const, number: i.number, title: i.title },
+    activity: { kind: "issue" as const, action: "Closed" as const, number: i.number, title: i.title, author: i.author },
     sources: [{ label: "issue", url: i.url }],
   }));
 }
@@ -183,7 +192,12 @@ export function issueComments(s: RepoSnapshot): Finding[] {
   const findings: Finding[] = [];
   for (const [n, comments] of byIssue) {
     comments.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    const others = comments.filter((c) => !c.mine);
+    for (const c of comments.filter((c) => c.reviewRequest)) findings.push({
+      id: fid("review_requested", s.repo, String(c.id)), rule: "review_requested", severity: "medium", repo: s.repo,
+      summary: `${c.author} requested a review on PR #${n} "${c.issueTitle}" in ${s.repo}`,
+      sources: [{ label: "PR", url: c.url }], target: `PR #${n}`,
+    });
+    const others = comments.filter((c) => !c.mine && !c.reviewRequest);
     const mine = comments.filter((c) => c.mine);
     const replied = others.length > 0 && comments[comments.length - 1].mine;
     if (others.length) {
@@ -242,6 +256,7 @@ export function runRules(snaps: RepoSnapshot[], now: Date, cfg: RuleConfig, reca
     ...oldBranches(readable, now, cfg),
     ...readable.flatMap((s) => [
       ...failingCi(s, now, cfg),
+      ...waitingPrs(s, now),
       ...idlePrs(s, now, cfg),
       ...staleBranches(s, now, cfg),
       ...recapCommits(s),

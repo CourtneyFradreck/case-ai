@@ -8,12 +8,15 @@ const mocks = vi.hoisted(() => ({
   storeFindings: vi.fn(), storeBriefFocus: vi.fn(), previousRuns: vi.fn(),
   env: { briefMode: "rules", delivery: "n8n", repos: [] as string[] },
 }));
+vi.mock("../src/repos.js", () => ({ resolveRepos: async () => ({ repos: ["me/demo"] }), unannouncedRepos: async () => [], markAnnounced: async () => {}, withBranchCaches: async (repos: string[]) => repos, storeBranchCaches: async () => {} }));
 vi.mock("../src/env.js", () => ({ env: mocks.env }));
 // As shipped on 22 Oct, whatever config.json holds now.
 vi.mock("../src/features.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/features.js")>()),
   features: { focusButtons: true, snooze: false, streaks: false, quietMornings: false },
 }));
+vi.mock("../src/logs.js", () => ({ logsInWindow: async () => [] }));
+vi.mock("../src/checkin.js", () => ({ completedFocusIds: async () => new Set() }));
 vi.mock("../src/db.js", () => ({ pool: { connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: vi.fn() }) } }));
 vi.mock("../src/github/collect.js", () => ({ collectAll: async () => oct22Snapshots() }));
 vi.mock("../src/store.js", () => ({

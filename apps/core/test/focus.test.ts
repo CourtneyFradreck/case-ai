@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { action, chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, rankNext, ready, ruleFocus, storedFocus, withoutAge, yesterdayFocus } from "../src/focus.js";
+import { action, chosenKeyboard, cleanFocusText, focusCallbackData, focusKeyboard, focusPeriod, nextItemsText, parseCommand, parseFocusCallback, pickedRepo, PICKED_REASON, rankNext, ready, ruleFocus, storedFocus, withoutAge, withPickedRepo, yesterdayFocus } from "../src/focus.js";
 import { render, renderModelBrief } from "../src/render.js";
 import { datePassed, itemDate } from "../src/intent/dates.js";
 import { daysAgo, finding, NOW, snap } from "./fixtures.js";
@@ -277,5 +277,49 @@ describe("yesterday's focus", () => {
     const text = render([], [], w, 3800, undefined, { previousFocus: yesterdayFocus(row(null), [], period) });
     expect(text).toMatch(/\n\n• You picked: Ship the parser\.\n\nNothing new in the past week\.$/);
     expect(text).not.toContain("worked on");
+  });
+});
+
+// 29 Oct brief: yesterday's focus was "finish 1710 phase 1 and 3", but three case-ai and CourtNotes items filled the slots.
+describe("the repo picked yesterday", () => {
+  const repos = ["me/case-ai", "me/CourtNotes", "me/1710", "me/case-ai-web"];
+  const pick = (item_text: string, repo: string | null = null) => ({ item_text, repo });
+  it("finds the repo from the stored focus, else from a repo name in its text", () => {
+    expect(pickedRepo(pick("Anything", "me/CourtNotes"), repos)).toBe("me/CourtNotes");
+    expect(pickedRepo(pick("finish 1710 phase 1 and 3"), repos)).toBe("me/1710");
+    expect(pickedRepo(pick("Polish the CASE-AI-WEB landing page"), repos)).toBe("me/case-ai-web");
+    expect(pickedRepo(pick("Ship the case-ai parser"), repos)).toBe("me/case-ai");
+    expect(pickedRepo(pick("finish 17100 things"), repos)).toBeUndefined();
+    expect(pickedRepo(pick("Something else entirely"), repos)).toBeUndefined();
+    expect(pickedRepo(undefined, repos)).toBeUndefined();
+  });
+  const others = [nextItem("me/case-ai", "Ship the parser"), nextItem("me/case-ai", "Write the docs"), nextItem("me/CourtNotes", "Tag notes")];
+  const phase1 = nextItem("me/1710", "Finish phase 1", "p1");
+  const phase3 = nextItem("me/1710", "Finish phase 3", "p3");
+  const full = others.map((f) => ({ text: action(f), reason: "Open in NEXT.md", sources: [f] }));
+  it("puts a 1710 item first, with the reason, when the cap filled without it", () => {
+    const focus = withPickedRepo(full, [...others, phase1, phase3], "me/1710");
+    expect(focus.map((i) => i.text)).toEqual(["Finish phase 1", "Ship the parser", "Write the docs"]);
+    expect(focus[0].reason).toBe(PICKED_REASON);
+    expect(storedFocus(focus)[0]).toMatchObject({ reason: "Repo you picked yesterday", findingId: "next_p1", repo: "me/1710" });
+  });
+  it("prefers yesterday's focus item while it is still open, and skips items waiting on another", () => {
+    expect(withPickedRepo(full, [phase1, phase3], "me/1710", "next_p3")[0].text).toBe("Finish phase 3");
+    const waiting = { ...phase1, intent: { itemId: "p1", section: null, state: "open" as const, waitsOn: "p0" } };
+    expect(withPickedRepo(full, [waiting, phase3], "me/1710")[0].text).toBe("Finish phase 3");
+  });
+  it("changes nothing when a suggestion already comes from the repo, or it has no open items", () => {
+    const has1710 = [full[0], { text: "Finish phase 3", reason: "Open in NEXT.md", sources: [phase3] }];
+    expect(withPickedRepo(has1710, [phase1, phase3], "me/1710")).toBe(has1710);
+    expect(withPickedRepo(full, others, "me/1710")).toBe(full);
+    expect(withPickedRepo(full, [phase1], undefined)).toBe(full);
+  });
+  it("gives the rule path's capped suggestions a 1710 item", () => {
+    const active = [snap({ repo: "me/case-ai", branches: [branch("main", 0)] }), snap({ repo: "me/CourtNotes", branches: [branch("main", 0)] }),
+      snap({ repo: "me/1710", branches: [branch("main", 0)] })];
+    const next = [...others, phase1];
+    const plain = ruleFocus([], next, active, NOW, cfg);
+    expect(plain.map((i) => i.sources[0].repo)).not.toContain("me/1710");
+    expect(withPickedRepo(plain, next, "me/1710").map((i) => i.sources[0].repo)).toEqual(["me/1710", "me/case-ai", "me/case-ai"]);
   });
 });

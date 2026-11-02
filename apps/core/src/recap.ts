@@ -14,10 +14,10 @@ export function activityTimes(snaps: RepoSnapshot[], now: DateTime = DateTime.no
   ]).filter((at): at is string => inWindow(at, history));
 }
 
-export function selectRecap(snaps: RepoSnapshot[], now: DateTime = DateTime.now()) {
+export function selectRecap(snaps: RepoSnapshot[], now: DateTime = DateTime.now(), logTimes: string[] = []) {
   const today = now.setZone(ZONE).startOf("day").setLocale("en");
   const history = pastWeekWindow(now);
-  const activity = activityTimes(snaps, now);
+  const activity = [...activityTimes(snaps, now), ...logTimes];
   const day = (daysAgo: number, label: string, length = 1): Window => ({
     start: today.minus({ days: daysAgo }).toJSDate(),
     end: today.minus({ days: daysAgo - length }).toJSDate(), label,
