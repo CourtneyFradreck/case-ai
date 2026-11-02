@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import { opening, render, renderModelBrief, type GreetingOptions } from "../src/render.js";
 import { finding } from "./fixtures.js";
+import { ZONE } from "../src/time.js";
 
 const w = { start: new Date("2026-10-12T22:00:00Z"), end: new Date("2026-10-13T22:00:00Z"), label: "Tuesday 13 Oct" };
 const morning = DateTime.fromISO("2026-10-14T05:00:00Z");
@@ -56,7 +57,21 @@ describe("opening sentence", () => {
     expect(opening([commits("me/case-ai", "feat/m2", 15), commits("me/case-ai", "main", 1), commits("me/taga", "main", 2), merged], y))
       .toBe("Big case-ai day yesterday: 16 commits, most on feat/m2, 2 commits in taga, and activity in one other repo.");
     expect(opening([commits("me/case-ai", "feat/m3-intent", 12)], { ...y, label: "over the weekend" })).toBe("Big case-ai weekend: 12 commits on feat/m3-intent.");
-    expect(opening([commits("me/case-ai", "feat/m3-intent", 12)], { ...y, label: "on Friday" })).toBe("Big case-ai Friday: 12 commits on feat/m3-intent.");
+  });
+
+  it("says the gap, then the last active day, when the recap falls back to an older day", () => {
+    const friday = { ...y, label: "on Friday" };
+    const at = (iso: string) => DateTime.fromISO(iso, { zone: ZONE });
+    const one = (repo: string) => finding({ id: `pr-${repo}`, repo, rule: "merged_pr", severity: "info", activity: { kind: "pr", action: "Merged", number: 1, title: "x" } });
+    const three = [one("me/1710"), one("me/agrilease"), commits("me/case-ai", "feat/m4", 1)];
+    // Sunday: Saturday was empty.
+    expect(opening(three, friday, 0, at("2026-11-01T07:00"))).toBe("Nothing yesterday. You last worked on Friday: a PR merged in 1710, a PR merged in agrilease, and activity in one other repo.");
+    // Monday: the whole weekend was empty.
+    expect(opening([one("me/1710")], friday, 0, at("2026-11-02T07:00"))).toBe("Quiet weekend. You last worked on Friday: a PR merged in 1710.");
+    // Wednesday falling back to Monday.
+    expect(opening([commits("me/case-ai", "feat/m3-intent", 12)], { ...y, label: "on Monday" }, 0, at("2026-11-04T07:00")))
+      .toBe("Nothing yesterday. You last worked on Monday: 12 commits in case-ai.");
+    expect(opening([], { ...y, label: "on Monday" }, 2, at("2026-11-04T07:00"))).toBe("Nothing yesterday. You last worked on Monday: 2 things logged.");
   });
   it("says smaller days plainly, without '1 commit'", () => {
     expect(opening([commits("me/demo", "main", 1)], y)).toBe("Quiet day yesterday: one commit in demo.");

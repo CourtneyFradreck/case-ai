@@ -155,10 +155,19 @@ export function repoStats(recap: Finding[]) {
 // count: "Steady day yesterday: 7 PRs merged in 1710, 5 commits in case-ai, and 3 things logged."
 // The two busiest repos are named; the rest are summed up. "Big" when the busiest repo had 10 commits or more.
 // Nothing when the period had no activity.
-export function opening(recap: Finding[], w: Window, logs = 0): string | undefined {
+export function opening(recap: Finding[], w: Window, logs = 0, now?: DateTime): string | undefined {
   if (!w.label || (!recap.length && !logs)) return;
   const repos = repoStats(recap);
   const logged = logs ? [`${logs} ${logs === 1 ? "thing" : "things"} logged`] : [];
+  // A fallback to an older day ("on Friday") says the gap first, then the last active day, with no Steady/Quiet/Big:
+  // "Quiet weekend. You last worked on Friday: a PR merged in 1710." or "Nothing yesterday. You last worked on ...".
+  if (w.label.startsWith("on ")) {
+    const gap = now?.setZone(ZONE).weekday === 1 ? "Quiet weekend." : "Nothing yesterday.";
+    const parts = [...repos.map((s) => `${[s.commits ? count(s.commits, "commit") : "", s.merged ? `${prs(s.merged)} merged` : ""]
+      .filter(Boolean).join(" plus ")} in ${s.repo.split("/").pop()}`).slice(0, 2),
+      ...(repos.length > 2 ? [`activity in ${count(repos.length - 2, "other repo")}`] : []), ...logged];
+    return `${gap} You last worked ${w.label}: ${parts.length ? list(parts) : "PR and issue updates"}.`;
+  }
   // "day yesterday", "weekend", "Friday".
   const when = w.label === "yesterday" ? "day yesterday" : w.label.replace(/^on |^over the /, "");
   if (!repos.length) return logs ? `No commits ${w.label}, but ${logged[0]}.` : `No commits ${w.label}, just PR and issue updates.`;
@@ -185,7 +194,7 @@ function header(options: GreetingOptions, recap: Finding[] = [], w?: Window): st
   const hour = today.hour;
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const name = options.userName?.trim();
-  const line = w && opening(recap, w, options.logs?.length);
+  const line = w && opening(recap, w, options.logs?.length, today);
   return [`<b>${greeting}${name ? `, ${esc(name)}` : ""}.</b>`, today.toFormat("cccc, d LLL yyyy"), ...(line ? ["", esc(line)] : [])];
 }
 
