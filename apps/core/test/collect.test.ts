@@ -502,6 +502,15 @@ describe("collaborator fork PRs", () => {
     gh.paginate.mockImplementation(async (endpoint) => endpoint === gh.pulls.list ? [pr] : []);
     gh.actions.listWorkflowRunsForRepo.mockResolvedValue({ data: { workflow_runs: [] } });
   });
+  it.each([
+    ["a bot", { ...pr, user: { login: "dependabot[bot]", type: "Bot" } }],
+    ["an ignored author", { ...pr, user: { login: "renovate" } }],
+    ["untouched for over 30 days", { ...pr, created_at: "2025-11-01T00:00:00Z", updated_at: "2025-11-01T00:00:00Z" }],
+  ])("never treats a PR from %s as waiting on your review", async (_, p) => {
+    gh.paginate.mockImplementation(async (endpoint) => endpoint === gh.pulls.list ? [p] : []);
+    const snaps = await collectAll([repo], w, ["renovate"]);
+    expect(snaps[0].openPrs[0].waitingOnYou).toBeUndefined();
+  });
   it("makes a stale base repo active and renders the author's waiting review", async () => {
     const { selectRepos } = await import("../src/github/discover.js");
     const selection = selectRepos([{ repo, fork: false, archived: false, pushedAt: "2026-01-01T00:00:00Z", private: false, defaultBranch: "main" }], [], w.end, { exclude: [], activeDays: 14 }, new Set([repo.toLowerCase()]));

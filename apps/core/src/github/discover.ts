@@ -1,5 +1,5 @@
 import { gh } from "./client.js";
-import { matchesGlob } from "./collect.js";
+import { matchesGlob, WAITING_PR_DAYS } from "./collect.js";
 
 export interface OwnedRepo {
   repo: string; fork: boolean; archived: boolean;
@@ -42,9 +42,12 @@ export function selectRepos(owned: OwnedRepo[], manual: string[], now: Date, cfg
 // GitHub rejects issue searches without is:issue or is:pr (422), so each query names one.
 export async function activityRepos(start: Date, client = gh): Promise<Set<string>> {
   const { data: user } = await client.users.getAuthenticated();
-  const since = start.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const since = iso(start);
+  // Open collaborator PRs keep a repo active only while someone has touched them recently; bots never do.
+  const waitingSince = iso(new Date(Date.now() - WAITING_PR_DAYS * 86_400_000));
   const queries = [`user:${user.login} is:issue updated:>=${since}`, `user:${user.login} is:pr updated:>=${since}`,
-    `user:${user.login} is:pr is:open -author:${user.login}`];
+    `user:${user.login} is:pr is:open -author:${user.login} -author:app/dependabot -author:app/renovate updated:>=${waitingSince}`];
   const results = await Promise.all(queries.map((q) => client.paginate(client.search.issuesAndPullRequests, { q, per_page: 100 })));
-  return new Set(results.flat().map((i) => i.repository_url.replace(/^.*\/repos\//, "").toLowerCase()));
+  return new Set(results.flat().filter((i) => i.user?.type !== "Bot").map((i) => i.repository_url.replace(/^.*\/repos\//, "").toLowerCase()));
 }

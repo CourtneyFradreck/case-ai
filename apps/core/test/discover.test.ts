@@ -74,7 +74,7 @@ describe("owner-wide PR and issue search", () => {
       if (parsed.pathname === "/user") return new Response(JSON.stringify({ login: "CourtneyFradreck" }), { headers: { "content-type": "application/json" } });
       const q = parsed.searchParams.get("q")!;
       const page = parsed.searchParams.get("page");
-      const recent = q.includes("updated:");
+      const recent = q.includes("updated:") && !q.includes("is:open");
       const next = new URL(parsed); next.searchParams.set("page", "2");
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (recent && !page) headers.link = `<${next}>; rel="next"`;
@@ -92,8 +92,11 @@ describe("owner-wide PR and issue search", () => {
     // GitHub answers 422 to a search without is:issue or is:pr.
     expect(searches.every((u) => /\bis:(issue|pr)\b/.test(u.searchParams.get("q")!))).toBe(true);
     const since = NOW.toISOString().replace(/\.\d{3}Z$/, "Z");
-    expect(new Set(searches.map((u) => u.searchParams.get("q")).filter((q) => q?.includes("updated:"))))
+    expect(new Set(searches.map((u) => u.searchParams.get("q")).filter((q) => q?.includes("updated:") && !q.includes("is:open"))))
       .toEqual(new Set([`user:CourtneyFradreck is:issue updated:>=${since}`, `user:CourtneyFradreck is:pr updated:>=${since}`]));
+    // Open collaborator PRs count only while recently updated, and never from bots.
+    const waiting = searches.map((u) => u.searchParams.get("q")!).find((q) => q.includes("is:open"))!;
+    expect(waiting).toMatch(/-author:app\/dependabot .*updated:>=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
   });
   it("activity never overrides fork, archive or exclusion filters", () => {
     const repos = [owned("me/fork", { fork: true }), owned("me/archive", { archived: true }), owned("me/excluded"), owned("me/quiet", { pushedAt: null })];
