@@ -58,6 +58,9 @@ async function repoCall<T>(fullName: string, what: string, endpoint: string, cal
 // A repo to read, with its branches as last read if any.
 export interface RepoTarget { repo: string; branchCache?: BranchCache }
 
+// A collaborator PR stops counting as waiting on your review after this many days without updates.
+export const WAITING_PR_DAYS = 30;
+
 export async function collectAll(repos: (string | RepoTarget)[], w: Window, ignoreAuthors: string[]) {
   let myLogin: string | null = null;
   try {
@@ -194,7 +197,9 @@ async function collectRepo(target: RepoTarget, w: Window, ignoreAuthors: string[
           gh.paginate(gh.pulls.listReviewComments, params),
           gh.paginate(gh.issues.listComments, { owner, repo, issue_number: p.number, per_page: 100 }),
         ]);
+        // Bots, ignored authors and PRs untouched for WAITING_PR_DAYS never count as waiting on you.
         if (open.some((o) => o.number === p.number) && owner.toLowerCase() === myLogin.toLowerCase() && !sameUser(p.user.login) &&
+            p.user.type !== "Bot" && !ignoreAuthors.includes(p.user.login) && Date.parse(p.updated_at) >= w.end.getTime() - WAITING_PR_DAYS * 86_400_000 &&
             ![...reviews, ...inline, ...discussion].some((c) => sameUser(c.user?.login))) waiting.add(p.number);
         for (const c of [...reviews, ...inline]) {
           const createdAt = "created_at" in c ? c.created_at : c.submitted_at;
