@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** M2 and M3 done; M4 (`/log` and evening check-in) deployed through migration 014. Check-in hardening in migration 015 is ready for rollout.
+> **Status:** M0 to M4 done; M4 (`/log` and evening check-in) is deployed through migration 015. M5 is in progress: `/wrong`, `/missed` and `/feedback` are built (migration 017), and the golden test set is next.
 
 ---
 
@@ -335,7 +335,7 @@ Deploy this hardening:
 - [x] **M1 Rule-only brief:** GitHub collector and rule checks, plain brief at 7am
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
 - [x] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
-- [x] **M4 Non-code:** `/log` and evening check-in; durable records, pause controls and retry hardening implemented (015 rollout pending)
+- [x] **M4 Non-code:** `/log` and evening check-in; durable records, pause controls and retry hardening (migration 015 deployed)
 - [ ] **M5 Evaluation:** in progress (feedback commands shipped); golden test set next
 
 ## Security notes
