@@ -255,8 +255,13 @@ Buttons on an earlier day's brief no longer set a focus. `Something else` asks w
 | `/focus <text>` | Sets today's focus, replacing any earlier choice for the day |
 | `/focus` | Shows today's focus by its label, with the full text on a second line |
 | `/next [repo]` | Lists open `NEXT.md` items, grouped by repo, for all tracked repos or one (`owner/repo` or just `repo`) |
+| `/wrong <text>` | Notes something a brief got wrong, in `core.feedback` |
+| `/missed <text>` | Notes something a brief should have mentioned, in `core.feedback` |
+| `/feedback` | Lists the last 10 unresolved notes, newest first; `/feedback done <id>` resolves one |
 
 `/snoozed` and `/unsnooze` are under [Less repetition](#less-repetition).
+
+`/wrong` and `/missed` are always on. Sent as a reply to a brief, they link that brief; otherwise the latest brief case-core delivered (needs `CASE_DELIVERY=core`), or none. Notes are up to 500 characters and are never sent to the model or shown in a brief.
 
 Every choice is kept in `core.focus`; the latest one for a date is that day's focus.
 
@@ -331,7 +336,7 @@ Deploy this hardening:
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
 - [x] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
 - [x] **M4 Non-code:** `/log` and evening check-in; durable records, pause controls and retry hardening implemented (015 rollout pending)
-- [ ] **M5 Evaluation:** golden test set, `/wrong` and `/missed` feedback
+- [ ] **M5 Evaluation:** in progress (feedback commands shipped); golden test set next
 
 ## Security notes
 
