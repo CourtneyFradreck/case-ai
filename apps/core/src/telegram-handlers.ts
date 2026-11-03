@@ -3,6 +3,7 @@ import { logText, undoLog } from "./logs.js";
 import { onCheckinCallback, onCheckinText, onPauseCommand } from "./checkin.js";
 import { env } from "./env.js";
 import { features, type Feature } from "./features.js";
+import { onFeedbackCommand, reportFeedback } from "./feedback.js";
 import { today, midnight } from "./time.js";
 import { esc } from "./render.js";
 import { editMessageReplyMarkup, editMessageText, sendMessage, type InlineKeyboardMarkup } from "./telegram.js";
@@ -144,6 +145,9 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
   if (command?.name === "pause" || command?.name === "unpause") return onPauseCommand(command.name, command.arg, now);
   if (command?.name === "log") return logText(command.arg, "command", now);
   if (command?.name === "undo") return undoLog(now);
+  // Feedback is always on and never reaches the model or a brief.
+  if (command?.name === "wrong" || command?.name === "missed") return reportFeedback(command.name, command.arg, message.reply_to_message?.message_id);
+  if (command?.name === "feedback") return onFeedbackCommand(command.arg, now);
   const chatId = String(message.chat.id);
   if (features.focusButtons && command?.name === "focus") {
     const text = cleanFocusText(command.arg);
