@@ -28,7 +28,7 @@
 - [x] quietMornings: short "Nothing has moved" message when attention and activity are unchanged
 - [x] Turn on streaks (set "streaks": true in apps/core/config.json, redeploy) and watch a week of briefs
 - [x] Turn on snooze (needs CASE_DELIVERY=core for the buttons; /snoozed works either way)
-- [ ] Turn on quietMornings once streaks look right; check briefs.sent_text against text on quiet days
+- [x] Turn on quietMornings once streaks look right; check briefs.sent_text against text on quiet days
 
 ## 22 Oct brief fixes
 
@@ -46,13 +46,12 @@
 
 ## Follow-ups from the 22 Oct deploy check
 
-- [ ] Rewrite NEXT.md-derived suggestions as plain actions instead of quoting the raw item text
+- [x] Rewrite NEXT.md-derived suggestions as plain actions instead of quoting the raw item text (model briefs; the rule-only fallback still quotes)
 - [x] Within one NEXT.md section, suggest only the first open item (sections are ordered steps)
-- [ ] Yesterday's focus line: say when the focused item is done (e.g. "Done, PR #3"), instead of only counting commits
+- [x] Yesterday's focus line: say when the focused item is done (e.g. "Done, PR #3"), instead of only counting commits (check-in answers)
 - [x] Yesterday-line [commit] link should be a compare link (or dropped) when it covers many commits
 - [x] Check why the open-issue line disappeared after #1 closed and #4 opened
-- [ ] Confirm a manual /brief doesn't become the anchor for the next scheduled brief's yesterday window
-- [ ] Done detection: keyword-only matches show the tick-off line but don't suppress the suggestion; add per-repo stopwords (repo name, words common to that repo's PRs) for matching and commit themes
+- [x] Confirm a manual /brief doesn't become the anchor for the next scheduled brief's yesterday window (recap windows are calendar days; streaks and quiet mornings use the last scheduled run)
 
 ## 23 Oct brief fixes (#4, trial day 1)
 
@@ -79,4 +78,18 @@
 - [x] Stable self_log / self_checkin findings kept out of model input; Partly note on next day's first brief
 - [x] Redeploy core/config for migration 015; confirm features.eveningCheckIn and eveningCheckIn.cutoff
 - [x] Re-import evening-checkin.json with Header Auth and errors workflow; activate its 15:45, 16:15 and 16:45 Africa/Harare triggers, keeping retryOnFail
-- [ ] Verify duplicate sends stay silent, pause/unpause, why then log, midnight text expiry, late buttons and the following morning's recap in production
+- [x] Verify duplicate sends stay silent, pause/unpause, why then log, midnight text expiry, late buttons and the following morning's recap in production (#8)
+
+## Wrap-up
+
+- [ ] Move the evening check-in triggers from 15:45 / 16:15 / 16:45 to 20:00 / 20:30 / 21:00 (cutoff 22:00 still fits)
+- [ ] Check the focus check-in path the next time a focus is picked: Partly, then the why reply, then a log, then the next morning's line
+- [ ] M5: /wrong and /missed commands writing to core.feedback
+- [ ] Two weeks of normal use with no new bugs, then tag v1.0 and tick M5 in the README
+
+## Parked
+
+Not suggested; revisit after v1.0.
+
+- Done detection: keyword-only matches show the tick-off line but don't suppress the suggestion; per-repo stopwords for matching and commit themes
+- Commit-theme wording names words from messages ("covering Messages, cropped and Courtney") rather than themes
