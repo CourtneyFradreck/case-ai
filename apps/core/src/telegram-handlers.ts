@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import { logText, undoLog } from "./logs.js";
+import { logText, parseTag, undoLog } from "./logs.js";
 import { onCheckinCallback, onCheckinText, onPauseCommand } from "./checkin.js";
 import { env } from "./env.js";
 import { features, type Feature } from "./features.js";
@@ -150,13 +150,14 @@ export async function onTextMessage(message: TelegramMessage, now: DateTime = Da
   if (command?.name === "feedback") return onFeedbackCommand(command.arg, now);
   const chatId = String(message.chat.id);
   if (features.focusButtons && command?.name === "focus") {
-    const text = cleanFocusText(command.arg);
+    const { text: raw, repo } = parseTag(command.arg, await knownRepos());
+    const text = cleanFocusText(raw);
     if (!text) {
       const current = await getFocus(today(now));
       await sendMessage(current ? focusText(current) : "No focus set for today. Send /focus followed by what you'll work on.");
       return;
     }
-    await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo: null, via: "command", briefId: null });
+    await insertFocus({ date: today(now), text, label: clip(text), findingId: null, repo, via: "command", briefId: null });
     await takePendingFocus(chatId);
     await sendMessage(focusAck(clip(text)));
     return;
