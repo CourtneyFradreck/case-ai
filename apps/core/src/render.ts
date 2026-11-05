@@ -4,7 +4,7 @@ import { ZONE, type Window } from "./time.js";
 import { DateTime } from "luxon";
 import type { ValidBrief, ValidFocus, ValidItem } from "./llm/schema.js";
 import { deduplicateFindings, focusOnly, organizeBrief } from "./sections.js";
-import { activityAmount, bulletText, recapKind, recapText, withoutRepeatedAside } from "./recap-text.js";
+import { activityAmount, bulletText, recapKind, recapText, sentence, withoutRepeatedAside } from "./recap-text.js";
 import { closingLine } from "./llm/closing.js";
 import { shortLabel } from "./streaks.js";
 import { plural } from "./plural.js";
@@ -219,7 +219,7 @@ const doneLines = (findings: Finding[] = []) =>
 const leadLines = (findings: Finding[] = []) =>
   findings.map((f) => {
     const links = f.sources.filter((s) => s.kind !== "self_reported");
-    return `• ${esc(f.summary)}.${links.length ? ` [${links.map(link).join(", ")}]` : ""}`;
+    return `• ${esc(sentence(f.summary))}${links.length ? ` [${links.map(link).join(", ")}]` : ""}`;
   });
 
 function finish(parts: string[], snaps: RepoSnapshot[], maxChars: number, footer?: string): string {
