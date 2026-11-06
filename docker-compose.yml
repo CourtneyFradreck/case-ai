@@ -36,7 +36,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
+    networks:
+      default:
+        aliases: [case-core]
   n8n:
     image: n8nio/n8n:latest
     restart: unless-stopped
