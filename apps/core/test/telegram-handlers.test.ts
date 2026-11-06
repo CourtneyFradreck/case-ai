@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DateTime } from "luxon";
 
 const mocks = vi.hoisted(() => ({
-  env: { telegramChatId: "42", repos: ["me/demo", "me/other"] },
+  env: { telegramChatId: "42", repos: ["me/demo", "me/other", "me/alfred"] },
   features: { focusButtons: true, snooze: false },
   sendMessage: vi.fn(), editMessageReplyMarkup: vi.fn(), editMessageText: vi.fn(),
   getBriefFocus: vi.fn(), getFocus: vi.fn(), insertFocus: vi.fn(), setFocusStatus: vi.fn(), openNextItems: vi.fn(), setPendingFocus: vi.fn(), takePendingFocus: vi.fn(),
@@ -143,6 +143,16 @@ describe("focus text and commands", () => {
     expect(mocks.insertFocus).toHaveBeenCalledWith({ date: "2026-10-14", text: "Review the backup restore", label: "Review the backup restore", findingId: null, repo: null, via: "command", briefId: null });
     expect(mocks.takePendingFocus).toHaveBeenCalledWith("42");
     expect(mocks.sendMessage).toHaveBeenCalledWith("Got it, Review the backup restore today. I'll check in tomorrow.");
+  });
+  it("parses a leading or trailing #tag on /focus and links a matching repo", async () => {
+    await onTextMessage(message("/focus #alfred pick phase 1 tasks"), NOW);
+    await onTextMessage(message("/focus pick phase 1 tasks #ALFRED"), NOW);
+    await onTextMessage(message("/focus #unknown pick phase 1 tasks"), NOW);
+    expect(mocks.insertFocus.mock.calls).toEqual([
+      [{ date: "2026-10-14", text: "pick phase 1 tasks", label: "pick phase 1 tasks", findingId: null, repo: "me/alfred", via: "command", briefId: null }],
+      [{ date: "2026-10-14", text: "pick phase 1 tasks", label: "pick phase 1 tasks", findingId: null, repo: "me/alfred", via: "command", briefId: null }],
+      [{ date: "2026-10-14", text: "pick phase 1 tasks", label: "pick phase 1 tasks", findingId: null, repo: null, via: "command", briefId: null }],
+    ]);
   });
   it("shows today's focus, or how to set one, for a bare /focus", async () => {
     mocks.getFocus.mockResolvedValueOnce({ item_text: "Fix <CI>", repo: null, finding_id: null, created_at: new Date() })

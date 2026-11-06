@@ -84,7 +84,7 @@
 
 - [ ] Move the evening check-in triggers from 15:45 / 16:15 / 16:45 to 20:00 / 20:30 / 21:00 (cutoff 22:00 still fits)
 - [ ] Check the focus check-in path the next time a focus is picked: Partly, then the why reply, then a log, then the next morning's line
-- [ ] M5: /wrong and /missed commands writing to core.feedback
+- [x] M5: /wrong and /missed commands writing to core.feedback
 - [ ] Two weeks of normal use with no new bugs, then tag v1.0 and tick M5 in the README
 
 ## Parked
