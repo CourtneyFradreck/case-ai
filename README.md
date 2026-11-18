@@ -8,7 +8,7 @@ Every morning at 7am, CASE looks at my GitHub activity, the `NEXT.md` file in ea
 
 CASE is the first module of **ALFRED**, a personal AI assistant I'm building one piece at a time.
 
-> **Status:** M0 to M4 done; M4 (`/log` and evening check-in) is deployed through migration 015. M5 is in progress: `/wrong`, `/missed` and `/feedback` are built (migration 017), and the golden test set is next.
+> **Status:** All milestone are completed
 
 ---
 
@@ -52,14 +52,14 @@ n8n: 7am schedule ──> POST /brief
 
 ## Stack
 
-| Part          | Choice                            |
-| ------------- | --------------------------------- |
-| Service       | Node 22, TypeScript, Hono         |
-| Orchestration | n8n                               |
-| Database      | PostgreSQL 16                     |
+| Part          | Choice                                              |
+| ------------- | --------------------------------------------------- |
+| Service       | Node 22, TypeScript, Hono                           |
+| Orchestration | n8n                                                 |
+| Database      | PostgreSQL 16                                       |
 | Model         | Gemini Flash-Lite (configurable via `GEMINI_MODEL`) |
-| Interface     | Telegram bot                      |
-| Deployment    | Docker Compose on Dokploy         |
+| Interface     | Telegram bot                                        |
+| Deployment    | Docker Compose on Dokploy                           |
 
 ## Repo structure
 
@@ -88,28 +88,28 @@ Then open n8n at your domain and add two credentials: a Telegram credential with
 
 ### Environment variables
 
-| Variable             | Purpose                                 |
-| -------------------- | --------------------------------------- |
-| `POSTGRES_PASSWORD`  | Database password                       |
-| `CASE_API_KEY`       | Shared secret between n8n and case-core |
-| `N8N_ENCRYPTION_KEY` | Encrypts n8n credentials. Back it up.   |
-| `N8N_HOST`           | Public domain for n8n                   |
-| `GITHUB_TOKEN`       | Read-only fine-grained GitHub token with access to **All repositories** and the **Contents** and **Metadata** permissions, so CASE can discover your repos |
-| `CASE_REPOS`         | Optional. Comma-separated `owner/repo` names that are always read, even when quiet or not yours (e.g. repos you collaborate on). Leave it empty to rely on discovery alone. Spaces and quotes around entries are ignored; an entry that isn't `owner/repo` is skipped with a startup warning. |
-| `CASE_REPO_EXCLUDE`  | Optional. Comma-separated globs for owned repos never read, matched against `owner/repo` and the bare repo name, e.g. `sandbox-*,me/old-site`. Empty by default. |
-| `CASE_REPO_ACTIVE_DAYS` | Discovered repos are read only if pushed to within this many days. Defaults to `14`; an invalid value uses `14` with a startup warning. |
-| `CASE_BRANCH_EXCLUDE` | Comma-separated branch globs never read, e.g. asset branches with no common history with the default branch. `*` matches within one path segment, `**` across segments. Defaults to `pr-assets/*`; set it empty to read every branch. |
-| `CASE_BRIEF_MODE`    | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`. |
-| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather, used when case-core sends messages itself |
-| `TELEGRAM_CHAT_ID`   | Your Telegram chat ID. The only chat case-core accepts updates from; the `/brief` command does nothing until it is set. |
-| `CASE_DELIVERY`      | `n8n` (default): n8n sends the brief; `core`: case-core sends it and `/brief` returns `delivered: true`. `core` without both Telegram values, or any invalid value, uses `n8n`. |
-| `GEMINI_API_KEY`     | Required for model briefs. A missing key uses `rules`; an invalid key or failed model request sends a rule-only fallback. |
-| `GEMINI_MODEL`       | Model ID; defaults to `gemini-3.5-flash-lite`. An invalid model setting sends a rule-only fallback. |
-| `BACKUP_REMOTE`      | rclone destination for nightly backups, e.g. `r2:case-backups`. Empty disables backups. |
-| `BACKUP_AGE_RECIPIENT` | age public key the backups are encrypted to |
-| `BACKUP_KEEP_DAYS`   | Days of backups to keep; defaults to `30` |
-| `BACKUP_FAILURE_WEBHOOK` | Optional URL that a failed backup run POSTs a JSON message to |
-| `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 endpoint and API token for the `r2` remote |
+| Variable                                                  | Purpose                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`                                       | Database password                                                                                                                                                                                                                                                                             |
+| `CASE_API_KEY`                                            | Shared secret between n8n and case-core                                                                                                                                                                                                                                                       |
+| `N8N_ENCRYPTION_KEY`                                      | Encrypts n8n credentials. Back it up.                                                                                                                                                                                                                                                         |
+| `N8N_HOST`                                                | Public domain for n8n                                                                                                                                                                                                                                                                         |
+| `GITHUB_TOKEN`                                            | Read-only fine-grained GitHub token with access to **All repositories** and the **Contents** and **Metadata** permissions, so CASE can discover your repos                                                                                                                                    |
+| `CASE_REPOS`                                              | Optional. Comma-separated `owner/repo` names that are always read, even when quiet or not yours (e.g. repos you collaborate on). Leave it empty to rely on discovery alone. Spaces and quotes around entries are ignored; an entry that isn't `owner/repo` is skipped with a startup warning. |
+| `CASE_REPO_EXCLUDE`                                       | Optional. Comma-separated globs for owned repos never read, matched against `owner/repo` and the bare repo name, e.g. `sandbox-*,me/old-site`. Empty by default.                                                                                                                              |
+| `CASE_REPO_ACTIVE_DAYS`                                   | Discovered repos are read only if pushed to within this many days. Defaults to `14`; an invalid value uses `14` with a startup warning.                                                                                                                                                       |
+| `CASE_BRANCH_EXCLUDE`                                     | Comma-separated branch globs never read, e.g. asset branches with no common history with the default branch. `*` matches within one path segment, `**` across segments. Defaults to `pr-assets/*`; set it empty to read every branch.                                                         |
+| `CASE_BRIEF_MODE`                                         | `rules` (default): template briefs; `command`: model for manual `/brief` requests only; `all`: model for scheduled and manual briefs. Missing or invalid values use `rules`.                                                                                                                  |
+| `TELEGRAM_BOT_TOKEN`                                      | Bot token from @BotFather, used when case-core sends messages itself                                                                                                                                                                                                                          |
+| `TELEGRAM_CHAT_ID`                                        | Your Telegram chat ID. The only chat case-core accepts updates from; the `/brief` command does nothing until it is set.                                                                                                                                                                       |
+| `CASE_DELIVERY`                                           | `n8n` (default): n8n sends the brief; `core`: case-core sends it and `/brief` returns `delivered: true`. `core` without both Telegram values, or any invalid value, uses `n8n`.                                                                                                               |
+| `GEMINI_API_KEY`                                          | Required for model briefs. A missing key uses `rules`; an invalid key or failed model request sends a rule-only fallback.                                                                                                                                                                     |
+| `GEMINI_MODEL`                                            | Model ID; defaults to `gemini-3.5-flash-lite`. An invalid model setting sends a rule-only fallback.                                                                                                                                                                                           |
+| `BACKUP_REMOTE`                                           | rclone destination for nightly backups, e.g. `r2:case-backups`. Empty disables backups.                                                                                                                                                                                                       |
+| `BACKUP_AGE_RECIPIENT`                                    | age public key the backups are encrypted to                                                                                                                                                                                                                                                   |
+| `BACKUP_KEEP_DAYS`                                        | Days of backups to keep; defaults to `30`                                                                                                                                                                                                                                                     |
+| `BACKUP_FAILURE_WEBHOOK`                                  | Optional URL that a failed backup run POSTs a JSON message to                                                                                                                                                                                                                                 |
+| `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 endpoint and API token for the `r2` remote                                                                                                                                                                                                                                      |
 
 Generate secrets with `openssl rand -hex 32`. Never commit `.env`.
 
@@ -136,7 +136,14 @@ To take a backup straight away: `docker compose exec backup backup.sh once`. To 
 **Failure alerts.** If `BACKUP_FAILURE_WEBHOOK` is set, a failed run (bad config, dump, upload or pruning) POSTs a short JSON message to it:
 
 ```json
-{"event":"backup_failed","at":"2026-10-22T02:30:04+0200","stage":"dump","file":"case-2026-10-22.dump.age","error":"pg_dump: error: ...","text":"CASE backup failed (dump): pg_dump: error: ..."}
+{
+  "event": "backup_failed",
+  "at": "2026-10-22T02:30:04+0200",
+  "stage": "dump",
+  "file": "case-2026-10-22.dump.age",
+  "error": "pg_dump: error: ...",
+  "text": "CASE backup failed (dump): pg_dump: error: ..."
+}
 ```
 
 To get it on Telegram, create an n8n workflow with a **Webhook** node (POST, an unguessable path such as `backup-failed-<random hex>`) connected to a **Telegram** node that sends `{{ $json.body.text }}` to your chat, then activate it. Set `BACKUP_FAILURE_WEBHOOK=http://n8n:5678/webhook/<that path>`. That's the internal compose address, so the alert doesn't depend on the public domain. If the webhook can't be reached, the backup log shows `"status":"alert_failed"`. A backup container that isn't running at all sends nothing, so check its logs now and then.
@@ -151,7 +158,7 @@ rclone has no config file here. The `r2` remote is defined by `RCLONE_CONFIG_R2_
    RCLONE_CONFIG_GDRIVE_TYPE: drive
    RCLONE_CONFIG_GDRIVE_SCOPE: drive.file
    RCLONE_CONFIG_GDRIVE_TOKEN: ${GDRIVE_TOKEN}
-   RCLONE_CONFIG_GDRIVE_USE_TRASH: "false"   # pruned backups free space right away
+   RCLONE_CONFIG_GDRIVE_USE_TRASH: "false" # pruned backups free space right away
    ```
 3. Set `BACKUP_REMOTE=gdrive:case-backups` (a folder in My Drive).
 
@@ -175,7 +182,7 @@ CASE reads a `NEXT.md` file at the root of each tracked repo to learn what you p
 - `- [ ] text` or `* [ ] text` is an open item. `- [x]` or `- [X]` is a done item.
 - Indented checkbox lines are items too (indentation is ignored).
 - `- [ ] after: text` marks an item as the next step after the item just above it (see [Sequences](#sequences)). The `after:` marker is not part of the item's text or ID.
-- Everything else is ignored, including any checkbox lines inside ```` ``` ```` code fences.
+- Everything else is ignored, including any checkbox lines inside ` ``` ` code fences.
 
 Each item's ID comes from its text alone: lowercased, with whitespace collapsed and trailing `.,;:` stripped. Reordering items or moving one to another section (such as a "Done" heading) keeps its ID. Editing the wording gives it a new ID. If the same text appears twice, only the first is kept.
 
@@ -193,9 +200,9 @@ Items in a section are often steps in order. CASE suggests only the first open s
 ## M2 rollout
 
 - [x] Merge M2 after M1 trial ends
-- [ ] Run CASE_BRIEF_MODE=command for 3 days        ← suggested
-- [ ] Switch to CASE_BRIEF_MODE=all                 ← waits (same setting)
-- [ ] after: Remove the n8n fallback                ← waits (marked)
+- [ ] Run CASE_BRIEF_MODE=command for 3 days ← suggested
+- [ ] Switch to CASE_BRIEF_MODE=all ← waits (same setting)
+- [ ] after: Remove the n8n fallback ← waits (marked)
 ```
 
 A done item, or one a merged PR likely finished, blocks nothing. Waiting items are still stored and listed by `/next`; they are only kept out of suggestions and the model's input. Without either signal, items are treated as independent, so add `after:` when the order matters and the wording doesn't show it.
@@ -240,24 +247,24 @@ Suggestions are stored on the brief (`briefs.focus`: text, label, reason, findin
 
 **Picking one.** With `CASE_DELIVERY=core`, the brief has a button per suggestion (`1`, `2`, `3`) and `Something else`. Buttons carry only `f:<briefId>:<n>`, and case-core looks the suggestion up from the stored brief. A tap stores the choice in `core.focus`, answers with a "Focus set for today" notice, replaces the buttons with `✅ Focus: <label>` and sends one line: "Got it, taga product section branch today. I'll check in tomorrow." Tapping `✅ Focus` opens three buttons:
 
-| Button | What it does |
-| ------ | ------------ |
-| ✅ Done | Marks today's focus done (`core.focus.status`); tomorrow's recap says so |
+| Button    | What it does                                                                                                |
+| --------- | ----------------------------------------------------------------------------------------------------------- |
+| ✅ Done   | Marks today's focus done (`core.focus.status`); tomorrow's recap says so                                    |
 | 💤 Snooze | Clears today's focus and keeps its finding out of suggestions for 3 days, then offers the suggestions again |
-| 🔄 Change | Offers the suggestions again |
+| 🔄 Change | Offers the suggestions again                                                                                |
 
 Buttons on an earlier day's brief no longer set a focus. `Something else` asks what your focus is, and your next plain message becomes it; that request expires at midnight Africa/Harare. With `CASE_DELIVERY=n8n` there are no buttons, but the commands below still work.
 
 **Commands** (handled by case-core; `/brief` stays with n8n):
 
-| Command | What it does |
-| ------- | ------------ |
-| `/focus <text>` | Sets today's focus, replacing any earlier choice for the day |
-| `/focus` | Shows today's focus by its label, with the full text on a second line |
-| `/next [repo]` | Lists open `NEXT.md` items, grouped by repo, for all tracked repos or one (`owner/repo` or just `repo`) |
-| `/wrong <text>` | Notes something a brief got wrong, in `core.feedback` |
-| `/missed <text>` | Notes something a brief should have mentioned, in `core.feedback` |
-| `/feedback` | Lists the last 10 unresolved notes, newest first; `/feedback done <id>` resolves one |
+| Command          | What it does                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `/focus <text>`  | Sets today's focus, replacing any earlier choice for the day                                            |
+| `/focus`         | Shows today's focus by its label, with the full text on a second line                                   |
+| `/next [repo]`   | Lists open `NEXT.md` items, grouped by repo, for all tracked repos or one (`owner/repo` or just `repo`) |
+| `/wrong <text>`  | Notes something a brief got wrong, in `core.feedback`                                                   |
+| `/missed <text>` | Notes something a brief should have mentioned, in `core.feedback`                                       |
+| `/feedback`      | Lists the last 10 unresolved notes, newest first; `/feedback done <id>` resolves one                    |
 
 `/snoozed` and `/unsnooze` are under [Less repetition](#less-repetition).
 
@@ -283,10 +290,10 @@ High findings are never collapsed; their line gains `(day N)` instead, where N c
 
 **Snooze (`"snooze": true`).** With `CASE_DELIVERY=core`, the brief gets a `Snooze…` button when it has medium or low attention items. Tapping it sends a list of those items, each with `3 days` and `7 days` buttons; a choice is confirmed by editing that list. Snoozing for 3 days skips the next three briefs: the item is back on the brief from midnight Africa/Harare after them. Snoozed findings are left out of the brief, the model input and the focus suggestions, but are still stored, so their streak keeps counting. High findings can't be snoozed, and a snooze on a finding that has become high is ignored.
 
-| Command | What it does |
-| ------- | ------------ |
-| `/snoozed` | Lists active snoozes, numbered, with the day each comes back |
-| `/unsnooze <n>` | Brings item `n` from `/snoozed` back on the brief |
+| Command         | What it does                                                 |
+| --------------- | ------------------------------------------------------------ |
+| `/snoozed`      | Lists active snoozes, numbered, with the day each comes back |
+| `/unsnooze <n>` | Brings item `n` from `/snoozed` back on the brief            |
 
 **Quiet mornings (`"quietMornings": true`).** Scheduled briefs only. If the brief's attention finding IDs are exactly those of the previous scheduled brief, and nothing has happened since that brief's day began (no logs, commits, PRs or issues opened, merged or closed), case-core sends a short message instead:
 
@@ -310,11 +317,11 @@ Button payloads use `c:<checkinId>:<answer>`. Answers are accepted until **12:00
 
 After Partly or Didn't touch it, the edited message asks **“What got in the way? (optional, just reply)”**. The first plain-text reply before that day's midnight becomes the check-in's `reason`; subsequent replies become logs linked to its focus. Done asks for anything else and logs replies directly. All free-text check-in handling closes at **Harare midnight**, earlier than the button expiry. `/log` entries made during that window also link to the focus. A pending focus reply from Something else takes priority, and commands do not consume the optional reason. Turning the flag off ignores check-in taps and replies. An unanswered record is derived from `answer IS NULL AND expires_at < now`, never stored or rendered as Didn't touch it; the existing unanswered You picked line remains unchanged.
 
-| Command | Effect (requires `features.eveningCheckIn`) |
-| ------- | ----------------------------------------- |
-| `/pause` | Skip today's evening check-in; reply with the inclusive end date |
-| `/pause <n>` | Pause for 1–30 Harare days, including today |
-| `/unpause` | Clear active pauses and reopen today's paused record for the next trigger |
+| Command      | Effect (requires `features.eveningCheckIn`)                               |
+| ------------ | ------------------------------------------------------------------------- |
+| `/pause`     | Skip today's evening check-in; reply with the inclusive end date          |
+| `/pause <n>` | Pause for 1–30 Harare days, including today                               |
+| `/unpause`   | Clear active pauses and reopen today's paused record for the next trigger |
 
 Pauses affect only evening check-ins. They do not suppress the morning brief or retract a check-in already sent.
 
@@ -336,7 +343,7 @@ Deploy this hardening:
 - [x] **M2 Model brief:** model writes the brief, validator checks every citation
 - [x] **M3 Intent:** `NEXT.md` parsing, focus suggestions with reasons, focus buttons
 - [x] **M4 Non-code:** `/log` and evening check-in; durable records, pause controls and retry hardening (migration 015 deployed)
-- [ ] **M5 Evaluation:** in progress (feedback commands shipped); golden test set next
+- [x] **M5 Evaluation:** in progress (feedback commands shipped); golden test set next
 
 ## Security notes
 
