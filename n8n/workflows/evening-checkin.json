@@ -75,10 +75,10 @@
   ],
   "pinData": {},
   "connections": {
-    "Retry at 16:15": {
+    "Retry at 20:30": {
       "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]]
     },
-    "Retry at 16:45": {
+    "Retry at 20:30": {
       "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]]
     },
     "Schedule Trigger": {
