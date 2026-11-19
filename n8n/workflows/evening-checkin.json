@@ -7,7 +7,7 @@
           "interval": [
             {
               "triggerAtHour": 20,
-              "triggerAtMinute": 00
+              "triggerAtMinute": 0
             }
           ]
         }
@@ -36,7 +36,7 @@
     {
       "parameters": {
         "rule": {
-          "interval": [{ "triggerAtHour": 21, "triggerAtMinute": 00 }]
+          "interval": [{ "triggerAtHour": 21, "triggerAtMinute": 0 }]
         }
       },
       "type": "n8n-nodes-base.scheduleTrigger",
@@ -78,7 +78,7 @@
     "Retry at 20:30": {
       "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]]
     },
-    "Retry at 20:30": {
+    "Retry at 21:00": {
       "main": [[{ "node": "HTTP Request", "type": "main", "index": 0 }]]
     },
     "Schedule Trigger": {
