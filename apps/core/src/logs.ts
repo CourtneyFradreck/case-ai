@@ -9,12 +9,17 @@ import { today, type Window } from "./time.js";
 export interface ActivityLog { id: string; text: string; tag: string | null; created_at: Date }
 
 // Prefer the leading tag; all other hashtags are ordinary text.
-export function parseLog(input: string, repos: string[] = env.repos) {
+export function parseTag(input: string, repos: string[] = env.repos) {
   let text = input.trim();
   const match = /^#([\w-]+)(?=\s|$)/.exec(text) ?? /(?:^|\s)#([\w-]+)$/.exec(text);
-  let tag = match?.[1].toLowerCase() ?? null;
+  const tag = match?.[1].toLowerCase() ?? null;
   if (match) text = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim();
-  if (tag) tag = repos.map((r) => r.split("/").pop()!).find((r) => r.toLowerCase() === tag) ?? tag;
+  const repo = tag ? repos.find((r) => r.split("/").pop()!.toLowerCase() === tag) ?? null : null;
+  return { text, tag: repo?.split("/").pop() ?? tag, repo };
+}
+
+export function parseLog(input: string, repos: string[] = env.repos) {
+  const { text, tag } = parseTag(input, repos);
   return { text, tag };
 }
 

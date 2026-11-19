@@ -3,7 +3,7 @@ import { answerCallbackQuery } from "./telegram.js";
 import { onCallbackQuery, onTextMessage } from "./telegram-handlers.js";
 
 // Only the fields case-core reads. Update text is untrusted input.
-export type TelegramMessage = { message_id: number; chat: { id: number }; date?: number; text?: string };
+export type TelegramMessage = { message_id: number; chat: { id: number }; date?: number; text?: string; reply_to_message?: { message_id: number } };
 export type TelegramCallbackQuery = { id: string; from: { id: number }; message?: TelegramMessage; data?: string };
 export type TelegramUpdate = { update_id?: number; message?: TelegramMessage; callback_query?: TelegramCallbackQuery };
 

@@ -278,6 +278,11 @@ describe("yesterday's focus", () => {
     expect(text).toMatch(/\n\n• You picked: Ship the parser\.\n\nNothing new in the past week\.$/);
     expect(text).not.toContain("worked on");
   });
+  it("ends a clipped 'You picked: …' line in '…' with no full stop after it", () => {
+    const clipped = yesterdayFocus({ ...row(null), short_label: "CI failing on me/demo main (build)…" }, [], period);
+    const text = render([], [], recap, 3800, undefined, { previousFocus: clipped });
+    expect(text.split("\n").find((l) => l.includes("You picked:"))).toBe("• You picked: CI failing on me/demo main (build)…");
+  });
 });
 
 // 29 Oct brief: yesterday's focus was "finish 1710 phase 1 and 3", but three case-ai and CourtNotes items filled the slots.
